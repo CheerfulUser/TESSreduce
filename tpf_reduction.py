@@ -372,16 +372,17 @@ def Calculate_shifts(data,mx,my,daofind):
 	if np.nansum(data) > 0:
 		mean, med, std = sigma_clipped_stats(data, sigma=3.0)
 		s = daofind(data - med)
-		x = s['xcentroid']
-		y = s['ycentroid']
-		dist = np.zeros((len(mx),len(x)))
-		dist = dist + np.sqrt((x[np.newaxis,:] - mx[:,np.newaxis])**2 + 
-							  (y[np.newaxis,:] - my[:,np.newaxis])**2)
-		ind = np.argmin(dist,axis=1)
-		indo = np.nanmin(dist) < 1
-		ind = ind[indo]
-		shifts[0,indo] = x[ind] - mx[indo]
-		shifts[1,indo] = y[ind] - my[indo]
+		if type(s) != type(None):
+			x = s['xcentroid']
+			y = s['ycentroid']
+			dist = np.zeros((len(mx),len(x)))
+			dist = dist + np.sqrt((x[np.newaxis,:] - mx[:,np.newaxis])**2 + 
+								  (y[np.newaxis,:] - my[:,np.newaxis])**2)
+			ind = np.argmin(dist,axis=1)
+			indo = np.nanmin(dist) < 1
+			ind = ind[indo]
+			shifts[0,indo] = x[ind] - mx[indo]
+			shifts[1,indo] = y[ind] - my[indo]
 	return shifts
 
 def Centroids_DAO(Flux,Median,TPF=None,parallel = False):
@@ -672,7 +673,7 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True,
 	try:
 		bkg = Background(tpf,mask,parallel=parallel)
 	except:
-		print('Too large for parallel, switching to serial')
+		print('Something went wrong, switching to serial')
 		parallel = False
 		bkg = Background(tpf,mask,parallel=False)
 
@@ -689,8 +690,15 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True,
 
 	if shift:
 		print('calculating centroids')
-		offset = Centroids_DAO(flux,ref,TPF=tpf,parallel=parallel)
+		try:
+			offset = Centroids_DAO(flux,ref,TPF=tpf,parallel=parallel)
+		except:
+			print('Something went wrong, switching to serial')
+			parallel = False
+			offset = Centroids_DAO(flux,ref,TPF=tpf,parallel=parallel)
+
 		flux = Shift_images(offset,flux)
+
 		print('images shifted')
 	
 	lc = make_lc(flux,tpf.astropy_time.mjd,aper=aper,bin_size=bin_size,normalise=normalise)
