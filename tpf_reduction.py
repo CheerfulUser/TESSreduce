@@ -6,6 +6,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
+import lightkurve as lk
+
 from copy import deepcopy
 
 from scipy.ndimage.filters import convolve
