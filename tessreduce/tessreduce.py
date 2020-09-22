@@ -304,16 +304,22 @@ def Background(TPF,Mask,parallel):
 
 	"""
 	mask = deepcopy(Mask)
-	bkg = np.zeros_like(TPF.flux) * np.nan
+	# hack solution for new lightkurve
+	if type(TPF.flux) != np.ndarray:
+		data = TPF.flux.values
+	else:
+		data = TPF.flux
+
+	bkg = np.zeros_like(data) * np.nan
 	
-	strap_mask = np.zeros_like(TPF.flux[0])
+	strap_mask = np.zeros_like(data)
 	straps = pd.read_csv(package_directory + 'tess_straps.csv')['Column'].values + 44 - TPF.column
 	# limit to only straps that are in this fov
 	straps = straps[((straps > 0) & (straps < Mask.shape[1]))]
 	strap_mask[:,straps] = 1
 	big_strap = convolve(strap_mask,np.ones((3,3))) > 0
 	big_mask = convolve((mask==0)*1,np.ones((3,3))) > 0
-	flux = deepcopy(TPF.flux)
+	flux = deepcopy(data)
 	if parallel:
 		num_cores = multiprocessing.cpu_count()
 		bkg = Parallel(n_jobs=num_cores)(delayed(Calculate_bkg)(frame,straps,big_mask,big_strap) for frame in flux)
@@ -337,6 +343,10 @@ def Get_ref(data):
 	reference : array
 		reference array from which the source mask is identified
 	'''
+	# hack solution for new lightkurve
+	if type(data) != np.ndarray:
+		data = data.values
+	
 	d = data[np.nansum(data,axis=(1,2)) > 100]
 	summed = np.nansum(d,axis=(1,2))
 	lim = np.percentile(summed[np.isfinite(summed)],5)
@@ -408,6 +418,10 @@ def Centroids_DAO(Flux,Median,TPF=None,parallel = False):
 	smooth : array
 		smoothed displacement of the centroids compared to the Median
 	"""
+	# hack solution for new lightkurve
+	if type(Flux) != np.ndarray:
+		Flux = Flux.values
+
 	m = Median.copy()
 	f = deepcopy(Flux)#TPF.flux.copy()
 	mean, med, std = sigma_clipped_stats(m, sigma=3.0)
@@ -497,6 +511,10 @@ def Shift_images(Offset,Data,median=False):
 		array shifted to match the offsets given
 
 	"""
+	# hack solution for new lightkurve
+	if type(Data) != np.ndarray:
+		Data = Data.values
+
 	shifted = Data.copy()
 	data = Data.copy()
 	data[data<0] = 0
@@ -527,6 +545,10 @@ def Lightcurve(flux, aper, normalise = False):
 		light curve 
 
 	"""
+	# hack solution for new lightkurve
+	if type(flux) != np.ndarray:
+		flux = flux.values
+
 	aper[aper == 0] = np.nan
 	LC = np.nansum(flux*aper, axis = (1,2))
 	LC[LC == 0] = np.nan
@@ -599,6 +621,10 @@ def make_lc(flux,t,aper= None,bin_size=0,normalise=False):
 	lc : array 
 		light curve for the pixels defined by the aperture
 	"""
+	# hack solution for new lightkurve
+	if type(flux) != np.ndarray:
+		flux = flux.values
+
 	if type(aper) == type(None):
 		aper = np.zeros_like(flux[0])
 		aper[int(aper.shape[0]/2),int(aper.shape[1]/2)] = 1
