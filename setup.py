@@ -27,7 +27,7 @@ REQUIRED = ['numpy',
           'pandas',
           'scipy',
           'astropy',
-          'multiprocessing',
+          'multiprocess',
           'joblib']
 
 # What packages are optional?
