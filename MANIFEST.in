@@ -1,1 +1,2 @@
 include README.md LICENSE
+include tessreduce/tess_straps.csv
