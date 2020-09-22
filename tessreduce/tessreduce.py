@@ -711,7 +711,12 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True,
 		# check to see if the background worked
 		raise ValueError('bkg all nans')
 	
-	flux = tpf.flux - bkg
+	if type(tpf.flux) != np.ndarray:
+		flux = tpf.flux.value
+	else:
+		flux = tpf.flux
+
+	flux = flux - bkg
 	print('background subtracted')
 	ref = Get_ref(flux)
 	#return flux, bkg
