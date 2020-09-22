@@ -21,14 +21,14 @@ REQUIRES_PYTHON = '>=3.6.0'
 VERSION = False#'0.1.0'
 
 # What packages are required for this module to be executed?
-REQUIRED = ['numpy',                     
-          'photutils',
-          'lightkurve',
-          'pandas',
-          'scipy!=1.4.0,!=1.4.1,>=0.19.0',
-          'astropy',
-          'multiprocess',
-          'joblib']
+REQUIRED = ['lightkurve',
+            'numpy',           
+            'photutils',
+            'pandas',
+            'scipy!=1.4.0,!=1.4.1,>=0.19.0',
+            'astropy',
+            'joblib',
+            'multiprocess']
 
 # What packages are optional?
 EXTRAS = {
@@ -113,7 +113,7 @@ setup(
     # py_modules=['mypackage'],
 
     # entry_points={
-    #     'console_scripts': ['mycli=mymodule:cli'],
+    #    'console_scripts': ['mycli=mymodule:cli'],
     # },
     install_requires=REQUIRED,
     extras_require=EXTRAS,
