@@ -313,7 +313,7 @@ def Background(TPF,Mask,parallel):
 
 	bkg = np.zeros_like(data) * np.nan
 	
-	strap_mask = np.zeros_like(data)
+	strap_mask = np.zeros_like(data[0])
 	straps = pd.read_csv(package_directory + 'tess_straps.csv')['Column'].values + 44 - TPF.column
 	# limit to only straps that are in this fov
 	straps = straps[((straps > 0) & (straps < Mask.shape[1]))]
