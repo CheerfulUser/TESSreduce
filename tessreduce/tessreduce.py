@@ -305,6 +305,7 @@ def Background(TPF,Mask,parallel):
 	"""
 	mask = deepcopy(Mask)
 	# hack solution for new lightkurve
+	print(type(TPF.flux))
 	if type(TPF.flux) != np.ndarray:
 		data = TPF.flux.values
 	else:
@@ -346,7 +347,7 @@ def Get_ref(data):
 	# hack solution for new lightkurve
 	if type(data) != np.ndarray:
 		data = data.values
-	
+
 	d = data[np.nansum(data,axis=(1,2)) > 100]
 	summed = np.nansum(d,axis=(1,2))
 	lim = np.percentile(summed[np.isfinite(summed)],5)
