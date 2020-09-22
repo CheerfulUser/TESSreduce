@@ -306,7 +306,7 @@ def Background(TPF,Mask,parallel):
 	mask = deepcopy(Mask)
 	# hack solution for new lightkurve
 	if type(TPF.flux) != np.ndarray:
-		data = TPF.flux.values
+		data = TPF.flux.value
 	else:
 		data = TPF.flux
 
@@ -345,7 +345,7 @@ def Get_ref(data):
 	'''
 	# hack solution for new lightkurve
 	if type(data) != np.ndarray:
-		data = data.values
+		data = data.value
 
 	d = data[np.nansum(data,axis=(1,2)) > 100]
 	summed = np.nansum(d,axis=(1,2))
@@ -420,7 +420,7 @@ def Centroids_DAO(Flux,Median,TPF=None,parallel = False):
 	"""
 	# hack solution for new lightkurve
 	if type(Flux) != np.ndarray:
-		Flux = Flux.values
+		Flux = Flux.value
 
 	m = Median.copy()
 	f = deepcopy(Flux)#TPF.flux.copy()
@@ -513,7 +513,7 @@ def Shift_images(Offset,Data,median=False):
 	"""
 	# hack solution for new lightkurve
 	if type(Data) != np.ndarray:
-		Data = Data.values
+		Data = Data.value
 
 	shifted = Data.copy()
 	data = Data.copy()
@@ -547,7 +547,7 @@ def Lightcurve(flux, aper, normalise = False):
 	"""
 	# hack solution for new lightkurve
 	if type(flux) != np.ndarray:
-		flux = flux.values
+		flux = flux.value
 
 	aper[aper == 0] = np.nan
 	LC = np.nansum(flux*aper, axis = (1,2))
@@ -623,7 +623,7 @@ def make_lc(flux,t,aper= None,bin_size=0,normalise=False):
 	"""
 	# hack solution for new lightkurve
 	if type(flux) != np.ndarray:
-		flux = flux.values
+		flux = flux.value
 
 	if type(aper) == type(None):
 		aper = np.zeros_like(flux[0])
