@@ -1,1 +1,1 @@
-from .tessreduce import * 
+from .core import * 
