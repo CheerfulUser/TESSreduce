@@ -12,7 +12,7 @@ from shutil import rmtree
 from setuptools import find_packages, setup, Command
 
 # Package meta-data.
-NAME = 'TESSreduce'
+NAME = 'tessreduce'
 DESCRIPTION = 'Reduce TESS target pixel files.'
 URL = 'https://github.com/CheerfulUser/TESSreduce'
 EMAIL = 'rridden@stsci.edu'
