@@ -305,7 +305,6 @@ def Background(TPF,Mask,parallel):
 	"""
 	mask = deepcopy(Mask)
 	# hack solution for new lightkurve
-	print(type(TPF.flux))
 	if type(TPF.flux) != np.ndarray:
 		data = TPF.flux.values
 	else:
