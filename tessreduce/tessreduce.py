@@ -596,54 +596,57 @@ def bin_data(flux,t,bin_size):
 	return lc, t[x]
 
 
-def make_lc(flux,t,aper= None,bin_size=0,normalise=False):
-	"""
-	Perform aperature photometry on a time series of images
+def make_lc(flux,t,aperture = None,bin_size=0,normalise=False,clip = False):
+    """
+    Perform aperature photometry on a time series of images
 
-	Parameters
-	----------
-	flux : array
+    Parameters
+    ----------
+    flux : array
 
-	t : array
-		time 
+    t : array
+        time 
 
-	aper : None, list, array
-		aperature to do aperature photometry on.
+    aper : None, list, array
+        aperature to do aperature photometry on.
 
 
-	bin_size : int
-		number of points to average
+    bin_size : int
+        number of points to average
 
-	normalise : bool
-		if true the light curve is normalised to the median
+    normalise : bool
+        if true the light curve is normalised to the median
 
-	Returns
-	-------
-	lc : array 
-		light curve for the pixels defined by the aperture
-	"""
-	# hack solution for new lightkurve
-	if type(flux) != np.ndarray:
-		flux = flux.value
+    Returns
+    -------
+    lc : array 
+        light curve for the pixels defined by the aperture
+    """
+    # hack solution for new lightkurve
+    if type(flux) != np.ndarray:
+        flux = flux.value
 
-	if type(aper) == type(None):
-		aper = np.zeros_like(flux[0])
-		aper[int(aper.shape[0]/2),int(aper.shape[1]/2)] = 1
-		aper = convolve(aper,np.ones((3,3)))
-		temp = np.zeros_like(flux[0])
-	elif type(aper) == list:
-		temp = np.zeros_like(flux[0])
-		temp[aper[0],aper[1]] = 1 
-		aper = temp
-	elif type(aper) == np.ndarray:
-		aper = aper * 1
-	lc = Lightcurve(flux,aper,normalise = normalise)
-	mask = ~sigma_mask(lc)
-	lc[mask] = np.nan
-	if bin_size > 1:
-		lc, t = bin_data(lc,t,bin_size)
-	lc = np.array([t,lc])
-	return lc
+    if type(aperture) == type(None):
+        aper = np.zeros_like(flux[0])
+        aper[int(aper.shape[0]/2),int(aper.shape[1]/2)] = 1
+        aper = tr.convolve(aper,np.ones((3,3)))
+        temp = np.zeros_like(flux[0])
+    elif type(aperture) == list:
+        temp = np.zeros_like(flux[0])
+        temp[aperture[0],aperture[1]] = 1 
+        aper = temp
+    elif type(aperture) == np.ndarray:
+        aper = aperture * 1.
+        plt.figure()
+        plt.imshow(aper)
+    lc = Lightcurve(flux,aper,normalise = normalise)
+    if clip:
+        mask = ~tr.sigma_mask(lc)
+        lc[mask] = np.nan
+    if bin_size > 1:
+        lc, t = bin_data(lc,t,bin_size)
+    lc = np.array([t,lc])
+    return lc
 
 def Quick_reduce(tpf, aper = None, shift = True, parallel = True, 
 					normalise = False, bin_size = 0, all_output = True):
