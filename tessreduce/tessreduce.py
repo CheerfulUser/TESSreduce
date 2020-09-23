@@ -608,7 +608,8 @@ def make_lc(flux,t,aper= None,bin_size=0,normalise=False):
 		time 
 
 	aper : None, list, array
-		aperature to do aperature photometry on 
+		aperature to do aperature photometry on.
+
 
 	bin_size : int
 		number of points to average
@@ -635,7 +636,7 @@ def make_lc(flux,t,aper= None,bin_size=0,normalise=False):
 		temp[aper[0],aper[1]] = 1 
 		aper = temp
 	elif type(aper) == np.ndarray:
-		pass
+		aper = aper * 1
 	lc = Lightcurve(flux,aper,normalise = normalise)
 	mask = ~sigma_mask(lc)
 	lc[mask] = np.nan
@@ -645,7 +646,7 @@ def make_lc(flux,t,aper= None,bin_size=0,normalise=False):
 	return lc
 
 def Quick_reduce(tpf, aper = None, shift = True, parallel = True, 
-					normalise = False, bin_size = 12, all_output = True):
+					normalise = False, bin_size = 0, all_output = True):
 	"""
 	Reduce the images from the target pixel file and make a light curve with aperture photometry.
 	This background subtraction method works well on tpfs > 50x50 pixels.
