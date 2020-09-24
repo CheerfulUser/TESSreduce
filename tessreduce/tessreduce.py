@@ -740,7 +740,7 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True,
 
 		print('images shifted')
 	
-	lc = make_lc(flux,tpf.astropy_time.mjd,aper=aper,bin_size=bin_size,normalise=normalise)
+	lc = make_lc(flux,tpf.astropy_time.mjd,aperture=aper,bin_size=bin_size,normalise=normalise)
 	print('made light curve')
 
 	if all_output:
