@@ -629,7 +629,7 @@ def make_lc(flux,t,aperture = None,bin_size=0,normalise=False,clip = False):
     if type(aperture) == type(None):
         aper = np.zeros_like(flux[0])
         aper[int(aper.shape[0]/2),int(aper.shape[1]/2)] = 1
-        aper = tr.convolve(aper,np.ones((3,3)))
+        aper = convolve(aper,np.ones((3,3)))
         temp = np.zeros_like(flux[0])
     elif type(aperture) == list:
         temp = np.zeros_like(flux[0])
@@ -641,7 +641,7 @@ def make_lc(flux,t,aperture = None,bin_size=0,normalise=False,clip = False):
         plt.imshow(aper)
     lc = Lightcurve(flux,aper,normalise = normalise)
     if clip:
-        mask = ~tr.sigma_mask(lc)
+        mask = ~sigma_mask(lc)
         lc[mask] = np.nan
     if bin_size > 1:
         lc, t = bin_data(lc,t,bin_size)
