@@ -16,6 +16,8 @@ from scipy.ndimage import gaussian_filter
 
 from scipy.signal import savgol_filter
 
+
+from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.interpolate import UnivariateSpline
 
