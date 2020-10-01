@@ -610,55 +610,55 @@ def bin_data(flux,t,bin_size):
 
 
 def Make_lc(t,flux,aperture = None,bin_size=0,normalise=False,clip = False):
-    """
-    Perform aperature photometry on a time series of images
+	"""
+	Perform aperature photometry on a time series of images
 
-    Parameters
-    ----------
-    flux : array
+	Parameters
+	----------
+	flux : array
 
-    t : array
-        time 
+	t : array
+		time 
 
-    aper : None, list, array
-        aperature to do aperature photometry on.
+	aper : None, list, array
+		aperature to do aperature photometry on.
 
 
-    bin_size : int
-        number of points to average
+	bin_size : int
+		number of points to average
 
-    normalise : bool
-        if true the light curve is normalised to the median
+	normalise : bool
+		if true the light curve is normalised to the median
 
-    Returns
-    -------
-    lc : array 
-        light curve for the pixels defined by the aperture
-    """
-    # hack solution for new lightkurve
-    if type(flux) != np.ndarray:
-        flux = flux.value
+	Returns
+	-------
+	lc : array 
+		light curve for the pixels defined by the aperture
+	"""
+	# hack solution for new lightkurve
+	if type(flux) != np.ndarray:
+		flux = flux.value
 
-    if type(aperture) == type(None):
-        aper = np.zeros_like(flux[0])
-        aper[int(aper.shape[0]/2),int(aper.shape[1]/2)] = 1
-        aper = convolve(aper,np.ones((3,3)))
-        temp = np.zeros_like(flux[0])
-    elif type(aperture) == list:
-        temp = np.zeros_like(flux[0])
-        temp[aperture[0],aperture[1]] = 1 
-        aper = temp
-    elif type(aperture) == np.ndarray:
-        aper = aperture * 1.
-         
-    lc = Lightcurve(flux,aper,normalise = normalise)
-    if clip:
-        mask = ~sigma_mask(lc)
-        lc[mask] = np.nan
-    if bin_size > 1:
-        lc, t = bin_data(lc,t,bin_size)
-    lc = np.array([t,lc])
-    return lc
+	if type(aperture) == type(None):
+		aper = np.zeros_like(flux[0])
+		aper[int(aper.shape[0]/2),int(aper.shape[1]/2)] = 1
+		aper = convolve(aper,np.ones((3,3)))
+		temp = np.zeros_like(flux[0])
+	elif type(aperture) == list:
+		temp = np.zeros_like(flux[0])
+		temp[aperture[0],aperture[1]] = 1 
+		aper = temp
+	elif type(aperture) == np.ndarray:
+		aper = aperture * 1.
+		 
+	lc = Lightcurve(flux,aper,normalise = normalise)
+	if clip:
+		mask = ~sigma_mask(lc)
+		lc[mask] = np.nan
+	if bin_size > 1:
+		lc, t = bin_data(lc,t,bin_size)
+	lc = np.array([t,lc])
+	return lc
 
 def Plotter(t,flux):
 	plt.figure()
@@ -787,29 +787,29 @@ def Remove_stellar_variability(lc):
 	trends : array
 		the stellar trends, subtract this from your input lc
 	"""
-    # Make a smoothing value with a significant portion of the total 
-    size = int(lc.shape[1] * 0.04)
-    if size / 2 == int(size/2): size += 1
-    smooth = savgol_filter(lc[1,:],5001,3)
-    mask = sigma_clip(lc[1]-smooth,sigma_upper=3,sigma_lower=10,masked=True).mask
-    ind = np.where(mask)[0]
-    masked = lc.copy()
-    # Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
-    # todo: use findpeaks to get height estimates and change the buffers accordingly
-    for i in ind:
-        masked[:,i-5:i+100] = np.nan
-    finite = np.isfinite(masked[1,:])
-    ## Hack solution doesnt need to worry about interpolation. Assumes that stellar variability 
-    ## is largely continuous over the missing data regions.
-    #f1 = interp1d(lc[0,finite], lc[1,finite], kind='linear',fill_value='extrapolate')
-    #interp = f1(lc[0,:])
-    
-    # Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
-    size = int(lc.shape[1] * 0.005)
-    if size / 2 == int(size/2): size += 1
-    smooth = savgol_filter(lc[1,finite],size,1)
-    # interpolate the smoothed data over the missing time values
-    f1 = interp1d(lc[0,finite], smooth, kind='linear',fill_value='extrapolate')
-    trends = f1(lc[0])
-    # huzzah, we now have a trend that should remove stellar variability, excluding flares.
-    return trends 
+	# Make a smoothing value with a significant portion of the total 
+	size = int(lc.shape[1] * 0.04)
+	if size / 2 == int(size/2): size += 1
+	smooth = savgol_filter(lc[1,:],5001,3)
+	mask = sigma_clip(lc[1]-smooth,sigma_upper=3,sigma_lower=10,masked=True).mask
+	ind = np.where(mask)[0]
+	masked = lc.copy()
+	# Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
+	# todo: use findpeaks to get height estimates and change the buffers accordingly
+	for i in ind:
+		masked[:,i-5:i+100] = np.nan
+	finite = np.isfinite(masked[1,:])
+	## Hack solution doesnt need to worry about interpolation. Assumes that stellar variability 
+	## is largely continuous over the missing data regions.
+	#f1 = interp1d(lc[0,finite], lc[1,finite], kind='linear',fill_value='extrapolate')
+	#interp = f1(lc[0,:])
+	
+	# Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
+	size = int(lc.shape[1] * 0.005)
+	if size / 2 == int(size/2): size += 1
+	smooth = savgol_filter(lc[1,finite],size,1)
+	# interpolate the smoothed data over the missing time values
+	f1 = interp1d(lc[0,finite], smooth, kind='linear',fill_value='extrapolate')
+	trends = f1(lc[0])
+	# huzzah, we now have a trend that should remove stellar variability, excluding flares.
+	return trends 
