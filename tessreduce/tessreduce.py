@@ -38,7 +38,7 @@ package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 
-def Get_TESS(RA,DEC,Size,Sector=None):
+def Get_TESS(RA,DEC,Size=90,Sector=None):
 	"""
 	Use the lightcurve interface with TESScut to get an FFI cutout 
 	of a region around the given coords.
@@ -328,7 +328,7 @@ def Background(TPF,Mask,parallel):
 			bkg[i] = Calculate_bkg(flux[i],straps,big_mask,big_strap)
 	return bkg
 
-def Get_ref(data):
+def Get_ref(data,start = None, stop = None):
 	'''
 	Get refernce image to use for subtraction and mask creation.
 	The image is made from all images with low background light.
@@ -344,14 +344,27 @@ def Get_ref(data):
 		reference array from which the source mask is identified
 	'''
 	# hack solution for new lightkurve
+
 	if type(data) != np.ndarray:
 		data = data.value
+	if (start is None) & (stop is None):
+		d = data[np.nansum(data,axis=(1,2)) > 100]
+		summed = np.nansum(d,axis=(1,2))
+		lim = np.percentile(summed[np.isfinite(summed)],5)
+		ind = np.where((summed < lim))[0]
+		reference = np.nanmedian(d[ind],axis=(0))
+	elif (start is not None) & (stop is None):
+		start = int(start)
+		reference = np.nanmedian(data[start:],axis=(0))
 
-	d = data[np.nansum(data,axis=(1,2)) > 100]
-	summed = np.nansum(d,axis=(1,2))
-	lim = np.percentile(summed[np.isfinite(summed)],5)
-	ind = np.where((summed < lim))[0]
-	reference = np.nanmedian(d[ind],axis=(0))
+	elif (start is None) & (stop is not None):
+		stop = int(stop)
+		reference = np.nanmedian(data[:stop],axis=(0))
+
+	else:
+		start = int(start)
+		stop = int(stop)
+		reference = np.nanmedian(data[start:stop],axis=(0))
 	return reference
 
 def Calculate_shifts(data,mx,my,daofind):
@@ -596,7 +609,7 @@ def bin_data(flux,t,bin_size):
 	return lc, t[x]
 
 
-def make_lc(flux,t,aperture = None,bin_size=0,normalise=False,clip = False):
+def Make_lc(t,flux,aperture = None,bin_size=0,normalise=False,clip = False):
     """
     Perform aperature photometry on a time series of images
 
@@ -637,8 +650,7 @@ def make_lc(flux,t,aperture = None,bin_size=0,normalise=False,clip = False):
         aper = temp
     elif type(aperture) == np.ndarray:
         aper = aperture * 1.
-        plt.figure()
-        plt.imshow(aper)
+         
     lc = Lightcurve(flux,aper,normalise = normalise)
     if clip:
         mask = ~sigma_mask(lc)
@@ -648,8 +660,17 @@ def make_lc(flux,t,aperture = None,bin_size=0,normalise=False,clip = False):
     lc = np.array([t,lc])
     return lc
 
+def Plotter(t,flux):
+	plt.figure()
+	plt.plot(t,flux)
+	plt.ylabel('Counts')
+	plt.xlabel('Time MJD')
+	plt.show()
+	return
+
+
 def Quick_reduce(tpf, aper = None, shift = True, parallel = True, 
-					normalise = False, bin_size = 0, all_output = True):
+					normalise = False, bin_size = 0, plot = True, all_output = True):
 	"""
 	Reduce the images from the target pixel file and make a light curve with aperture photometry.
 	This background subtraction method works well on tpfs > 50x50 pixels.
@@ -740,7 +761,7 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True,
 
 		print('images shifted')
 	
-	lc = make_lc(flux,tpf.astropy_time.mjd,aperture=aper,bin_size=bin_size,normalise=normalise)
+	lc = Make_lc(tpf.astropy_time.mjd,flux,aperture=aper,bin_size=bin_size,normalise=normalise)
 	print('made light curve')
 
 	if all_output:
@@ -749,3 +770,46 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True,
 		return lc
 
 
+
+def Remove_stellar_variability(lc):
+	"""
+	Removes all long term stellar variability, while preserving flares. Input a light curve 
+	with shape (2,n) and it should work!
+
+	Parameters
+	----------
+	lc : array
+		lightcurve with the shape of (2,n), where the first index is time and the second is 
+		flux.
+
+	Outputs
+	-------
+	trends : array
+		the stellar trends, subtract this from your input lc
+	"""
+    # Make a smoothing value with a significant portion of the total 
+    size = int(lc.shape[1] * 0.04)
+    if size / 2 == int(size/2): size += 1
+    smooth = savgol_filter(lc[1,:],5001,3)
+    mask = sigma_clip(lc[1]-smooth,sigma_upper=3,sigma_lower=10,masked=True).mask
+    ind = np.where(mask)[0]
+    masked = lc.copy()
+    # Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
+    # todo: use findpeaks to get height estimates and change the buffers accordingly
+    for i in ind:
+        masked[:,i-5:i+100] = np.nan
+    finite = np.isfinite(masked[1,:])
+    ## Hack solution doesnt need to worry about interpolation. Assumes that stellar variability 
+    ## is largely continuous over the missing data regions.
+    #f1 = interp1d(lc[0,finite], lc[1,finite], kind='linear',fill_value='extrapolate')
+    #interp = f1(lc[0,:])
+    
+    # Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
+    size = int(lc.shape[1] * 0.005)
+    if size / 2 == int(size/2): size += 1
+    smooth = savgol_filter(lc[1,finite],size,1)
+    # interpolate the smoothed data over the missing time values
+    f1 = interp1d(lc[0,finite], smooth, kind='linear',fill_value='extrapolate')
+    trends = f1(lc[0])
+    # huzzah, we now have a trend that should remove stellar variability, excluding flares.
+    return trends 
