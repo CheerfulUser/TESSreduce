@@ -284,6 +284,16 @@ def Calculate_bkg(data,straps,big_mask,big_strap):
 	return frame_bkg
 
 
+def Small_background(tpf,Mask):
+	bkg = np.zeros_like(tpf.flux)
+	flux = tpf.flux
+	lim = np.percentile(flux,10,axis=(1,2))
+	ind = flux > lim[:,np.newaxis,np.newaxis]
+	flux[ind] = np.nan
+	val = np.nanmedian(flux,axis=(1,2))
+	bkg[:,:,:] = val[:,np.newaxis,np.newaxis]
+	return bkg
+
 def Background(TPF,Mask,parallel):
 	"""
 	Calculate the background for the tpf, accounting for straps.
@@ -305,29 +315,34 @@ def Background(TPF,Mask,parallel):
 		background for all frames in the tpf
 
 	"""
-	mask = deepcopy(Mask)
-	# hack solution for new lightkurve
-	if type(TPF.flux) != np.ndarray:
-		data = TPF.flux.value
-	else:
-		data = TPF.flux
+	if (TPF.flux.shape[1] > 30) & (TPF.flux.shape[2] > 30):
+		mask = deepcopy(Mask)
+		# hack solution for new lightkurve
+		if type(TPF.flux) != np.ndarray:
+			data = TPF.flux.value
+		else:
+			data = TPF.flux
 
-	bkg = np.zeros_like(data) * np.nan
-	
-	strap_mask = np.zeros_like(data[0])
-	straps = pd.read_csv(package_directory + 'tess_straps.csv')['Column'].values + 44 - TPF.column
-	# limit to only straps that are in this fov
-	straps = straps[((straps > 0) & (straps < Mask.shape[1]))]
-	strap_mask[:,straps] = 1
-	big_strap = convolve(strap_mask,np.ones((3,3))) > 0
-	big_mask = convolve((mask==0)*1,np.ones((3,3))) > 0
-	flux = deepcopy(data)
-	if parallel:
-		num_cores = multiprocessing.cpu_count()
-		bkg = Parallel(n_jobs=num_cores)(delayed(Calculate_bkg)(frame,straps,big_mask,big_strap) for frame in flux)
+		bkg = np.zeros_like(data) * np.nan
+		
+		strap_mask = np.zeros_like(data[0])
+		straps = pd.read_csv(package_directory + 'tess_straps.csv')['Column'].values + 44 - TPF.column
+		# limit to only straps that are in this fov
+		straps = straps[((straps > 0) & (straps < Mask.shape[1]))]
+		strap_mask[:,straps] = 1
+		big_strap = convolve(strap_mask,np.ones((3,3))) > 0
+		big_mask = convolve((mask==0)*1,np.ones((3,3))) > 0
+		flux = deepcopy(data)
+		if parallel:
+			num_cores = multiprocessing.cpu_count()
+			bkg = Parallel(n_jobs=num_cores)(delayed(Calculate_bkg)(frame,straps,big_mask,big_strap) for frame in flux)
+		else:
+			for i in range(flux.shape[0]):
+				bkg[i] = Calculate_bkg(flux[i],straps,big_mask,big_strap)
 	else:
-		for i in range(flux.shape[0]):
-			bkg[i] = Calculate_bkg(flux[i],straps,big_mask,big_strap)
+		print('Small tpf, using percentile cut background')
+		bkg = Small_background(TPF,Mask)
+
 	return bkg
 
 def Get_ref(data,start = None, stop = None):
@@ -773,7 +788,7 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True,
 
 
 
-def Remove_stellar_variability(lc):
+def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10):
 	"""
 	Removes all long term stellar variability, while preserving flares. Input a light curve 
 	with shape (2,n) and it should work!
@@ -793,7 +808,7 @@ def Remove_stellar_variability(lc):
 	size = int(lc.shape[1] * 0.04)
 	if size / 2 == int(size/2): size += 1
 	smooth = savgol_filter(lc[1,:],5001,3)
-	mask = sigma_clip(lc[1]-smooth,sigma_upper=3,sigma_lower=10,masked=True).mask
+	mask = sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,sigma_lower=sig_low,masked=True).mask
 	ind = np.where(mask)[0]
 	masked = lc.copy()
 	# Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
