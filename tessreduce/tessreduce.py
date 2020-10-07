@@ -735,6 +735,15 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True,
 			light curve
 	"""
 	# make reference
+	if (tpf.flux.shape[1] < 30) & (tpf.flux.shape[2] < 30):
+		small = True	
+	else:
+		small = False
+
+	if small & shift:
+		print('Unlikely to get good shifts from a small tpf, so shift has been set to False')
+		shift = False
+
 	ref = Get_ref(tpf.flux)
 	print('made reference')
 	# make source mask
@@ -807,7 +816,7 @@ def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10):
 	# Make a smoothing value with a significant portion of the total 
 	size = int(lc.shape[1] * 0.04)
 	if size / 2 == int(size/2): size += 1
-	smooth = savgol_filter(lc[1,:],5001,3)
+	smooth = savgol_filter(lc[1,:],size,3)
 	mask = sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,sigma_lower=sig_low,masked=True).mask
 	ind = np.where(mask)[0]
 	masked = lc.copy()
