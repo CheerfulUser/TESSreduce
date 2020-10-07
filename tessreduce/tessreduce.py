@@ -797,7 +797,7 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True,
 
 
 
-def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10,tail_length='auto'):
+def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10, tail_length='auto'):
 	"""
 	Removes all long term stellar variability, while preserving flares. Input a light curve 
 	with shape (2,n) and it should work!
@@ -836,12 +836,13 @@ def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10,tail_leng
 			tail_length = 100
 		else:
 			tail_length = 10
+
 	tail_length = int(tail_length)
 	if type(tail_length) != int:
 		raise ValueError("tail_length must be either 'auto' or an integer")
 
 	for i in ind:
-		masked[:,i-5:i+100] = np.nan
+		masked[:,i-5:i+tail_length] = np.nan
 	finite = np.isfinite(masked[1,:])
 	## Hack solution doesnt need to worry about interpolation. Assumes that stellar variability 
 	## is largely continuous over the missing data regions.
