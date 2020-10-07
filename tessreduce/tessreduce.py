@@ -825,7 +825,8 @@ def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10,tail_leng
 	size = int(lc.shape[1] * 0.04)
 	if size / 2 == int(size/2): size += 1
 	smooth = savgol_filter(lc[1,:],size,3)
-	mask = sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,sigma_lower=sig_low,masked=True).mask
+	mask = sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,
+						sigma_lower=sig_low,masked=True).mask
 	ind = np.where(mask)[0]
 	masked = lc.copy()
 	# Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
@@ -834,7 +835,7 @@ def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10,tail_leng
 		if lc.shape[1] > 4000:
 			tail_length = 100
 		else:
-			tail_length = 50
+			tail_length = 10
 	tail_length = int(tail_length)
 	if type(tail_length) != int:
 		raise ValueError("tail_length must be either 'auto' or an integer")
