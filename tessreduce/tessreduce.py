@@ -797,7 +797,7 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True,
 
 
 
-def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10):
+def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10,tail_buffer='auto'):
 	"""
 	Removes all long term stellar variability, while preserving flares. Input a light curve 
 	with shape (2,n) and it should work!
@@ -807,6 +807,14 @@ def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10):
 	lc : array
 		lightcurve with the shape of (2,n), where the first index is time and the second is 
 		flux.
+	sig_up : float
+		upper sigma clip value 
+	sig_low : float
+		lower sigma clip value
+	tail_buffer : str OR int
+		option for setting the buffer zone of points after the peak. If it is 'auto' it 
+		will be determined through functions, but if its an int then it will take the given 
+		value as the buffer tail length for fine tuning.
 
 	Outputs
 	-------
@@ -822,6 +830,15 @@ def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10):
 	masked = lc.copy()
 	# Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
 	# todo: use findpeaks to get height estimates and change the buffers accordingly
+	if type(tail_buffer) == str:
+		if lc.shape[1] > 4000:
+			tail_buffer = 100
+		else:
+			tail_buffer = 50
+	tail_buffer = int(tail_buffer)
+	if type(tail_buffer) != int:
+		raise ValueError("tail_buffer must be either 'auto' or an integer")
+
 	for i in ind:
 		masked[:,i-5:i+100] = np.nan
 	finite = np.isfinite(masked[1,:])
