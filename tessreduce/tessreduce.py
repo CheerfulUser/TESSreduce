@@ -30,9 +30,13 @@ from astropy.stats import sigma_clip
 import multiprocessing
 from joblib import Parallel, delayed
 
+from .catalog_tools import *
+from .calibration_tools import *
+
 # turn off runtime warnings (lots from logic on nans)
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning) 
+warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
 # set the package directory so we can load in a file later
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
@@ -626,7 +630,7 @@ def bin_data(flux,t,bin_size):
 	return lc, t[x]
 
 
-def Make_lc(t,flux,aperture = None,bin_size=0,normalise=False,clip = False):
+def Make_lc(t,flux,aperture = None,bin_size=0,zeropoint=None,normalise=False,clip = False):
 	"""
 	Perform aperature photometry on a time series of images
 
@@ -675,6 +679,8 @@ def Make_lc(t,flux,aperture = None,bin_size=0,normalise=False,clip = False):
 	if bin_size > 1:
 		lc, t = bin_data(lc,t,bin_size)
 	lc = np.array([t,lc])
+	if zeropoint is not None:
+		lc[1,:] = -2.5*np.log10(lc[1,:]) + zeropoint
 	return lc
 
 def Plotter(t,flux):
@@ -686,7 +692,7 @@ def Plotter(t,flux):
 	return
 
 
-def Quick_reduce(tpf, aper = None, shift = True, parallel = True, 
+def Quick_reduce(tpf, aper = None, shift = True, parallel = True, Calibrate=True,
 					normalise = False, bin_size = 0, plot = True, all_output = True):
 	"""
 	Reduce the images from the target pixel file and make a light curve with aperture photometry.
@@ -787,9 +793,21 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True,
 
 		print('images shifted')
 	
-	lc = Make_lc(tpf.astropy_time.mjd,flux,aperture=aper,bin_size=bin_size,normalise=normalise)
-	print('made light curve')
+	
+	
 
+	zp = None
+	if Calibrate & (tpf.dec >= -30):
+		zp = Get_zeropoint(tpf,flux)[0]
+
+	elif Calibrate & (tpf.dec < -30):
+		print('Target is too far south with Dec = {} for PS1 photometry.'.format(tpf.dec) +
+			' Can not calibrate at this time.')
+
+	lc = Make_lc(tpf.astropy_time.mjd,flux,aperture=aper,bin_size=bin_size,
+				zeropoint = zp,normalise=normalise)
+
+	print('made light curve')
 	if all_output:
 		return lc, flux, ref, bkg
 	else:
@@ -858,3 +876,68 @@ def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10, tail_len
 	trends = f1(lc[0])
 	# huzzah, we now have a trend that should remove stellar variability, excluding flares.
 	return trends 
+
+
+def Get_zeropoint(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
+	"""
+
+	"""
+	if ID is None:
+		ID = tpf.targetid
+	tab = Unified_catalog(tpf,magnitude_limit=18)
+	col = tab.col.values + .5
+	row = tab.row.values + .5
+	pos = np.array([col,row]).T
+
+	median = np.nanmedian(flux,axis=0)
+
+	index, med_cut, stamps = Isolated_stars(pos,tab['tmag'].values,flux,median,Distance=3)
+
+	isolated = tab.iloc[index]
+	ps1ind = np.isfinite(isolated['imag'].values)
+
+	isolated = isolated.iloc[ps1ind]
+	med_cut = med_cut[ps1ind]
+	stamps = stamps[ps1ind]
+	if len(isolated) < 10:
+		raise Warning('Only {} sources used for zerpoint calculation. Errors may be larger than reported'.format(len(isolated)))
+	isolc = np.nansum(stamps,axis=(2,3))
+
+	if diagnostic:
+		plt.figure()
+		plt.title('Isolated reference stars')
+		for i in range(len(isolc)):
+			plt.plot(-2.5*np.log10(isolc[i]))
+			plt.ylabel('System magnitude')
+			plt.xlabel('Frame number')
+			plt.minorticks_on()
+
+	isolated = Reformat_df(isolated)
+	# column names here are just to conform with the calibration code 
+	isolated['tessMeanPSFMag'] = -2.5*np.log10(np.nanmedian(isolc,axis=1))
+	# need to do a proper accounting of errors.
+	isolated['tessMeanPSFMagErr'] = .1
+	#return(isolated)
+	if diagnostic:
+		extinction, good_sources = Tonry_reduce(isolated,plot=True)
+	else: 
+		extinction, good_sources = Tonry_reduce(isolated,plot=False)
+
+	model = np.load(package_directory+'calspec_mags.npy',allow_pickle=True).item()
+
+	compare_ref = np.array([['g-r','r-'+ref],['g-r','i-'+ref],['g-r','y-'+ref],['g-r','g-i']])
+	compare_fit = np.array([['g-r','r-'+fit],['g-r',fit+'-y'],['g-r',fit+'-i'],['g-r',fit+'-z']])
+
+	zp_ref, d_ref = Fit_zeropoint(good_sources,model,compare_ref,extinction,ref)
+	zp_fit, d_fit = Fit_zeropoint(good_sources,model,compare_fit,extinction,fit)
+
+	if diagnostic:
+		c_fit = Make_colours(d_fit,model,compare_fit,Extinction = extinction)
+		zeropointPlotter(zp_fit,zp_ref,c_fit,compare_fit,ID,fit,'figs/'+ID,Close=False)
+		zeropointPlotter(zp_fit,zp_ref,c_fit,compare_fit,ID,fit,'figs/'+ID,Residuals=True,Close=False)
+
+	zero_point = zp_fit
+	zero_point_err = zp_ref
+	zp = np.array([zero_point, zero_point_err])
+	return zp
+
