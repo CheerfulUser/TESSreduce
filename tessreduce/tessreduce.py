@@ -809,7 +809,9 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, Calibrate=True
 
 	print('made light curve')
 	if all_output:
-		return lc, flux, ref, bkg
+		out = {'lc': lc, 'flux':flux,'ref':ref,'bkg':bkg,'zp':zp}
+
+		return out
 	else:
 		return lc
 
