@@ -558,7 +558,7 @@ def Shift_images(Offset,Data,median=False):
 	return shifted
 
 
-def Lightcurve(flux, aper, normalise = False):
+def Lightcurve(flux, aper,zeropoint=20.44, normalise = False):
 	"""
 	Calculate a light curve from a time series of images through aperature photometry.
 
@@ -586,11 +586,19 @@ def Lightcurve(flux, aper, normalise = False):
 	aper[aper == 0] = np.nan
 	LC = np.nansum(flux*aper, axis = (1,2))
 	LC[LC == 0] = np.nan
+	scale = 'counts'
 	for k in range(len(LC)):
 		if np.isnan(flux[k]*aper).all():
 			LC[k] = np.nan
-	if normalise:
+
+	if scale.lower() == 'normalise':
 		LC = LC / np.nanmedian(LC)
+	elif scale.lower() == 'magnitude':
+		LC = -2.5*np.log10(LC) + zeropoint
+	elif scale.lower() == 'flux':
+		LC = -2.5*np.log10(LC) + zeropoint
+		#LC = 10**
+
 	return LC
 
 def bin_data(flux,t,bin_size):
@@ -630,7 +638,7 @@ def bin_data(flux,t,bin_size):
 	return lc, t[x]
 
 
-def Make_lc(t,flux,aperture = None,bin_size=0,zeropoint=None,normalise=False,clip = False):
+def Make_lc(t,flux,aperture = None,bin_size=0,zeropoint=None,scale='counts',clip = False):
 	"""
 	Perform aperature photometry on a time series of images
 
@@ -672,14 +680,14 @@ def Make_lc(t,flux,aperture = None,bin_size=0,zeropoint=None,normalise=False,cli
 	elif type(aperture) == np.ndarray:
 		aper = aperture * 1.
 		 
-	lc = Lightcurve(flux,aper,normalise = normalise)
+	lc = Lightcurve(flux,aper)   #,scale = scale)
 	if clip:
 		mask = ~sigma_mask(lc)
 		lc[mask] = np.nan
 	if bin_size > 1:
 		lc, t = bin_data(lc,t,bin_size)
 	lc = np.array([t,lc])
-	if zeropoint is not None:
+	if (zeropoint is not None) & (scale=='mag'):
 		lc[1,:] = -2.5*np.log10(lc[1,:]) + zeropoint
 	return lc
 
@@ -692,8 +700,8 @@ def Plotter(t,flux):
 	return
 
 
-def Quick_reduce(tpf, aper = None, shift = True, parallel = True, Calibrate=True,
-					normalise = False, bin_size = 0, plot = True, all_output = True):
+def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=True,
+					scale = 'counts', bin_size = 0, plot = True, all_output = True):
 	"""
 	Reduce the images from the target pixel file and make a light curve with aperture photometry.
 	This background subtraction method works well on tpfs > 50x50 pixels.
@@ -712,7 +720,8 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, Calibrate=True
 	parallel : bool
 		if True parallel processing will be used for background estimation and centroid shifts 
 
-	normalise : bool
+	scale : str
+		options = [counts, magnitude, flux, normalise]
 		if True the light curve will be normalised to the median
 
 	bin_size : int
@@ -763,6 +772,7 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, Calibrate=True
 		print('Something went wrong, switching to serial')
 		parallel = False
 		bkg = Background(tpf,mask,parallel=False)
+	bkg = np.array(bkg)
 
 	if np.isnan(bkg).all():
 		# check to see if the background worked
@@ -797,15 +807,15 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, Calibrate=True
 	
 
 	zp = None
-	if Calibrate & (tpf.dec >= -30):
-		zp = Get_zeropoint(tpf,flux)[0]
+	if calibrate & (tpf.dec >= -30):
+		zp = Get_zeropoint(tpf,flux)
 
-	elif Calibrate & (tpf.dec < -30):
+	elif calibrate & (tpf.dec < -30):
 		print('Target is too far south with Dec = {} for PS1 photometry.'.format(tpf.dec) +
 			' Can not calibrate at this time.')
 
 	lc = Make_lc(tpf.astropy_time.mjd,flux,aperture=aper,bin_size=bin_size,
-				zeropoint = zp,normalise=normalise)
+				zeropoint = zp,scale=scale)#,normalise=False)
 
 	print('made light curve')
 	if all_output:
