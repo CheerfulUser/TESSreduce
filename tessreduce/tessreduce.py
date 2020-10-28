@@ -929,6 +929,8 @@ def Get_zeropoint(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
 	isolated['tessMeanPSFMag'] = -2.5*np.log10(np.nanmedian(isolc,axis=1))
 	# need to do a proper accounting of errors.
 	isolated['tessMeanPSFMagErr'] = .1
+	ind = np.nanmedian(isolc,axis=1) > 100 
+	isolated = isolated.iloc[ind]
 	#return(isolated)
 	if diagnostic:
 		extinction, good_sources = Tonry_reduce(isolated,plot=True)

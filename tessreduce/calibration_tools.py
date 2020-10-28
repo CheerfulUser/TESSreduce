@@ -270,7 +270,8 @@ def Dist_tensor(X,Y,K,Colours,fitfilt='',Tensor=False,Plot = False):
     dist_tensor = np.sqrt(x**2 + y**2)
     #print(np.nanmin(dist_tensor,axis=1))
     #print(X + Y +' dist ',dist_tensor.shape)
-    if len(dist_tensor) > 0:
+    
+    if len(dist_tensor[np.isfinite(dist_tensor)]) > 1:
         minind = np.nanargmin(abs(dist_tensor),axis=1)
         mindist = np.nanmin(abs(dist_tensor),axis=1)
         sign = (ob_y[0,:] - locus[1,minind])
