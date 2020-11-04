@@ -806,9 +806,11 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=True
 	
 	
 
-	zp = None
+	zp = 20.44
+	err = None
 	if calibrate & (tpf.dec >= -30):
-		zp = Get_zeropoint(tpf,flux)
+		zp,err = Calibrate_lc(tpf,flux)
+
 
 	elif calibrate & (tpf.dec < -30):
 		print('Target is too far south with Dec = {} for PS1 photometry.'.format(tpf.dec) +
@@ -819,7 +821,7 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=True
 
 	print('made light curve')
 	if all_output:
-		out = {'lc': lc, 'flux':flux,'ref':ref,'bkg':bkg,'zp':zp}
+		out = {'lc': lc,'err':err, 'flux':flux,'ref':ref,'bkg':bkg,'zp':zp}
 
 		return out
 	else:
@@ -827,70 +829,226 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=True
 
 
 
-def Remove_stellar_variability(lc,sig = None, sig_up = 3, sig_low = 10, tail_length='auto'):
-	"""
-	Removes all long term stellar variability, while preserving flares. Input a light curve 
-	with shape (2,n) and it should work!
+def sig_err(data,err=None,sig=3,maxiter=10):
+    if sig is None:
+        sig = 3
+    clipped = data.copy()
+    ind = np.arange(0,len(data))
+    breaker = 0
+    if err is not None:
+        for i in range(maxiter):
+            nonan = np.isfinite(clipped)
+            med = np.average(clipped[nonan],weights=1/err[nonan])
+            #med = np.nanmedian(clipped)
+            std = np.nanstd(clipped)
+            mask = (clipped-1*err > med + 3*std) #| (clipped+1*err < med - 3*std)
+            clipped[mask] = np.nan
+            if ~mask.any():
+                break
 
-	Parameters
-	----------
-	lc : array
-		lightcurve with the shape of (2,n), where the first index is time and the second is 
-		flux.
-	sig_up : float
-		upper sigma clip value 
-	sig_low : float
-		lower sigma clip value
-	tail_length : str OR int
-		option for setting the buffer zone of points after the peak. If it is 'auto' it 
-		will be determined through functions, but if its an int then it will take the given 
-		value as the buffer tail length for fine tuning.
-
-	Outputs
-	-------
-	trends : array
-		the stellar trends, subtract this from your input lc
-	"""
-	# Make a smoothing value with a significant portion of the total 
-	size = int(lc.shape[1] * 0.04)
-	if size / 2 == int(size/2): size += 1
-	smooth = savgol_filter(lc[1,:],size,3)
-	mask = sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,
-						sigma_lower=sig_low,masked=True).mask
-	ind = np.where(mask)[0]
-	masked = lc.copy()
-	# Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
-	# todo: use findpeaks to get height estimates and change the buffers accordingly
-	if type(tail_length) == str:
-		if lc.shape[1] > 4000:
-			tail_length = 100
-		else:
-			tail_length = 10
-
-	tail_length = int(tail_length)
-	if type(tail_length) != int:
-		raise ValueError("tail_length must be either 'auto' or an integer")
-
-	for i in ind:
-		masked[:,i-5:i+tail_length] = np.nan
-	finite = np.isfinite(masked[1,:])
-	## Hack solution doesnt need to worry about interpolation. Assumes that stellar variability 
-	## is largely continuous over the missing data regions.
-	#f1 = interp1d(lc[0,finite], lc[1,finite], kind='linear',fill_value='extrapolate')
-	#interp = f1(lc[0,:])
-	
-	# Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
-	size = int(lc.shape[1] * 0.005)
-	if size / 2 == int(size/2): size += 1
-	smooth = savgol_filter(lc[1,finite],size,1)
-	# interpolate the smoothed data over the missing time values
-	f1 = interp1d(lc[0,finite], smooth, kind='linear',fill_value='extrapolate')
-	trends = f1(lc[0])
-	# huzzah, we now have a trend that should remove stellar variability, excluding flares.
-	return trends 
+        mask = np.isnan(clipped)
+    else:
+        mask = sigma_clip(data).mask
+    return mask
 
 
-def Get_zeropoint(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
+def Identify_masks(Obj):
+    """
+    Uses an iterrative process to find spacially seperated masks in the object mask.
+    """
+    objsub = np.copy(Obj)
+    Objmasks = []
+
+    mask1 = np.zeros((Obj.shape))
+    if np.nansum(objsub) > 0:
+        mask1[np.where(objsub==1)[0]] = 1
+        
+        while np.nansum(objsub) > 0:
+            print(np.nansum(objsub))
+            conv = ((convolve(mask1*1,np.ones(3),mode='constant', cval=0.0)) > 0)*1.0
+            objsub = objsub - mask1
+            objsub[objsub < 0] = 0
+
+            if np.nansum(conv*objsub) > 0:
+
+                mask1 = mask1 + (conv * objsub)
+                mask1 = (mask1 > 0)*1
+            else:
+
+                Objmasks.append(mask1)
+                mask1 = np.zeros((Obj.shape))
+                if np.nansum(objsub) > 0:
+                    mask1[np.where(objsub==1)[0]] = 1
+    return Objmasks
+
+def auto_tail(lc,mask,err = None):
+    if err is not None:
+        higherr = sigma_clip(err,sigma=2).mask
+    else:
+        higherr = False
+    masks = Identify_masks(mask*1)
+    med = np.nanmedian(lc[1][~mask & ~higherr])
+    std = np.nanstd(lc[1][~mask & ~higherr])
+
+    if lc.shape[1] > 4000:
+        tail_length = 100
+        start_length = 10
+
+    else:
+        tail_length = 10
+        start_length = 1
+            
+    for i in range(len(masks)):
+        m = np.argmax(lc[1]*masks[i])
+        sig = (lc[1][m] - med) / std
+        
+        if sig > 20:
+        	sig = 20
+        masks[i][int(m-sig*start_length):int(m+tail_length*sig)] = 1
+        masks[i] = masks[i] > 0
+    summed = np.nansum(masks*1,axis=0)
+    mask = summed > 0 
+    return ~mask
+        
+def Multiple_day_breaks(lc):
+    """
+    If the TESS data has a section of data isolated by at least a day either side,
+    it is likely poor data. Such regions are identified and removed.
+    
+    Inputs:
+    -------
+    Flux - 3d array
+    Time - 1d array
+    
+    Output:
+    -------
+    removed_flux - 3d array
+    """
+    ind = np.where(~np.isnan(lc[1]))[0]
+    breaks = np.array([np.where(np.diff(lc[0][ind]) > .5)[0] +1])
+    breaks = np.insert(breaks,0,0)
+    breaks = np.append(breaks,len(lc[0]))
+    return breaks
+
+def Remove_stellar_variability(lc,err=None,variable=False,sig = None, sig_up = 3, sig_low = 10, tail_length='auto'):
+    """
+    Removes all long term stellar variability, while preserving flares. Input a light curve 
+    with shape (2,n) and it should work!
+
+    Parameters
+    ----------
+    lc : array
+        lightcurve with the shape of (2,n), where the first index is time and the second is 
+        flux.
+    sig_up : float
+        upper sigma clip value 
+    sig_low : float
+        lower sigma clip value
+    tail_length : str OR int
+        option for setting the buffer zone of points after the peak. If it is 'auto' it 
+        will be determined through functions, but if its an int then it will take the given 
+        value as the buffer tail length for fine tuning.
+
+    Outputs
+    -------
+    trends : array
+        the stellar trends, subtract this from your input lc
+    """
+    # Make a smoothing value with a significant portion of the total 
+    trends = np.zeros(lc.shape[1])
+    break_inds = Multiple_day_breaks(lc)
+    
+    
+    if variable:
+        size = int(lc.shape[1] * 0.04)
+        if size // 2 == 0: size += 1
+        smooth = savgol_filter(lc[1,:],size,3)
+        mask = sig_err(lc[1]-smooth,err,sig=sig)
+        #sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,
+        #                    sigma_lower=sig_low,masked=True).mask
+    else:
+        mask = sig_err(lc[1],err,sig=sig)
+        
+    ind = np.where(mask)[0]
+    masked = lc.copy()
+    # Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
+    # todo: use findpeaks to get height estimates and change the buffers accordingly
+    if type(tail_length) == str:
+        if tail_length == 'auto':
+            
+            m = auto_tail(lc,mask,err)
+            masked[:,~m] = np.nan
+            
+            
+        else:
+            if lc.shape[1] > 4000:
+                tail_length = 100
+                start_length = 1
+            else:
+                tail_length = 10
+            for i in ind:
+                masked[:,i-5:i+tail_length] = np.nan
+    else:
+        tail_length = int(tail_length)
+        if type(tail_length) != int:
+            raise ValueError("tail_length must be either 'auto' or an integer")
+        for i in ind:
+            masked[:,i-5:i+tail_length] = np.nan
+    
+    
+    ## Hack solution doesnt need to worry about interpolation. Assumes that stellar variability 
+    ## is largely continuous over the missing data regions.
+    #f1 = interp1d(lc[0,finite], lc[1,finite], kind='linear',fill_value='extrapolate')
+    #interp = f1(lc[0,:])
+
+    # Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
+    size = int(lc.shape[1] * 0.005)
+    if size / 2 == int(size/2): 
+        size += 1
+    for i in range(len(break_inds)-1):
+        section = lc[:,break_inds[i]:break_inds[i+1]]
+        finite = np.isfinite(masked[1,break_inds[i]:break_inds[i+1]])
+        smooth = savgol_filter(section[1,finite],size,1)
+        
+        # interpolate the smoothed data over the missing time values
+        f1 = interp1d(section[0,finite], smooth, kind='linear',fill_value='extrapolate')
+        trends[break_inds[i]:break_inds[i+1]] = f1(section[0])
+    # huzzah, we now have a trend that should remove stellar variability, excluding flares.
+    return trends 
+
+
+def Calculate_err(tpf,flux):
+
+	tab = Unified_catalog(tpf,magnitude_limit=18)
+	if len(tab)> 10:
+		col = tab.col.values + .5
+		row = tab.row.values + .5
+		pos = np.array([col,row]).T
+
+		median = np.nanmedian(flux,axis=0)
+
+		index, med_cut, stamps = Isolated_stars(pos,tab['tmag'].values,flux,median,Distance=3)
+
+		isolated = tab.iloc[index]
+		ps1ind = np.isfinite(isolated['imag'].values)
+
+		isolated = isolated.iloc[ps1ind]
+		med_cut = med_cut[ps1ind]
+		stamps = stamps[ps1ind]
+		isolc = np.nansum(stamps,axis=(2,3))
+		ind = ((np.nanmedian(isolc,axis=1) > 100) & (np.nanmedian(isolc,axis=1)*.1 >= np.nanstd(isolc,axis=1)) 
+				& (np.nanmedian(isolc,axis=1) < 1000))
+		isolc = isolc[ind]
+		isolated = isolated[ind]
+		if len(isolated) < 10:
+			warning.warn('Only {} sources used for zerpoint calculation. Errors may be larger than reported'.format(len(isolated)))
+		err = np.nanstd(isolc-np.nanmedian(isolc,axis=1)[:,np.newaxis],axis=0)
+		return err
+	else:
+		warnings.warn('No reference cataloge sources to isolate stars. Can not calculate error with this method')
+
+
+def Calibrate_lc(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
 	"""
 
 	"""
@@ -911,9 +1069,14 @@ def Get_zeropoint(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
 	isolated = isolated.iloc[ps1ind]
 	med_cut = med_cut[ps1ind]
 	stamps = stamps[ps1ind]
-	if len(isolated) < 10:
-		raise Warning('Only {} sources used for zerpoint calculation. Errors may be larger than reported'.format(len(isolated)))
 	isolc = np.nansum(stamps,axis=(2,3))
+	ind = (np.nanmedian(isolc,axis=1) > 100) & (np.nanmedian(isolc,axis=1)*.1 >= np.nanstd(isolc,axis=1)) & (np.nanmedian(isolc,axis=1) < 1000)
+	isolc = isolc[ind]
+	isolated = isolated[ind]
+	if len(isolated) < 10:
+		warning.warn('Only {} sources used for zerpoint calculation. Errors may be larger than reported'.format(len(isolated)))
+	err = np.nanstd(isolc-np.nanmedian(isolc,axis=1)[:,np.newaxis],axis=0)
+	higherr = sigma_clip(err,sigma=2).mask
 
 	if diagnostic:
 		plt.figure()
@@ -926,11 +1089,10 @@ def Get_zeropoint(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
 
 	isolated = Reformat_df(isolated)
 	# column names here are just to conform with the calibration code 
-	isolated['tessMeanPSFMag'] = -2.5*np.log10(np.nanmedian(isolc,axis=1))
+	isolated['tessMeanPSFMag'] = -2.5*np.log10(np.nanmedian(isolc[:,~higherr],axis=1))
 	# need to do a proper accounting of errors.
 	isolated['tessMeanPSFMagErr'] = .1
-	ind = np.nanmedian(isolc,axis=1) > 100 
-	isolated = isolated.iloc[ind]
+	
 	#return(isolated)
 	if diagnostic:
 		extinction, good_sources = Tonry_reduce(isolated,plot=True)
@@ -953,5 +1115,5 @@ def Get_zeropoint(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
 	zero_point = zp_fit
 	zero_point_err = zp_ref
 	zp = np.array([zero_point, zero_point_err])
-	return zp
+	return zp, err
 

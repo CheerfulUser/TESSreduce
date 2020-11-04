@@ -42,6 +42,8 @@ def Get_Catalogue(tpf, Catalog = 'gaia'):
 		catalog = "I/347/gaia2dis"
 	elif Catalog == 'ps1':
 		catalog = "II/349/ps1"
+	elif Catalog == 'skymapper':
+		catalog = 'II/358/smss'
 	else:
 		raise ValueError("{} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
 
