@@ -811,10 +811,11 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=True
 	if calibrate & (tpf.dec >= -30):
 		zp,err = Calibrate_lc(tpf,flux)
 
-
 	elif calibrate & (tpf.dec < -30):
 		print('Target is too far south with Dec = {} for PS1 photometry.'.format(tpf.dec) +
 			' Can not calibrate at this time.')
+
+		err = Calculate_err(tpf,flux)
 
 	lc = Make_lc(tpf.astropy_time.mjd,flux,aperture=aper,bin_size=bin_size,
 				zeropoint = zp,scale=scale)#,normalise=False)

@@ -8,6 +8,7 @@ from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.coordinates import SkyCoord, Angle
 from copy import deepcopy
+import pandas as pd
 
 def Get_Catalogue(tpf, Catalog = 'gaia'):
 	"""
@@ -153,6 +154,37 @@ def Get_PS1(tpf, magnitude_limit = 18, Offset = 10):
 	return coords, Tessmag
 
 
+def Skymapper_df(sm):
+    a = np.zeros(len(sm['ObjectId']),dtype=np.object)
+    a[:] = 's'
+    b = sm['ObjectId'].values.astype(str).astype(np.object)
+    obj = a+b
+    
+    keep = ['objID','RAJ2000', 'DEJ2000','e_RAJ2000','e_DEJ2000','gmag', 'e_gmag', 'gKmag',
+           'e_gKmag', 'rmag', 'e_rmag', 'rKmag', 'e_rKmag',
+           'imag', 'e_imag', 'iKmag', 'e_iKmag', 'zmag', 'e_zmag',
+           'zKmag', 'e_zKmag', 'ymag', 'e_ymag', 'yKmag', 'e_yKmag',
+           'tmag']
+    df = pd.DataFrame(columns=keep)
+    df['objID'] = obj
+    df['RAJ2000'] = sm['RAICRS'].values
+    df['DEJ2000'] = sm['DEICRS'].values
+
+    df['e_RAJ2000'] = sm['e_RAICRS'].values
+    df['e_DEJ2000'] = sm['e_DEICRS'].values
+
+    df['gmag'] = sm['gPSF'].values
+    df['rmag'] = sm['rPSF'].values
+    df['imag'] = sm['iPSF'].values
+    df['zmag'] = sm['zPSF'].values
+
+    df['gKmag'] = sm['gPetro'].values
+    df['rKmag'] = sm['rPetro'].values
+    df['iKmag'] = sm['iPetro'].values
+    df['zKmag'] = sm['zPetro'].values
+    return df
+
+
 def Unified_catalog(tpf,magnitude_limit=18,offset=10):
 	"""
 	Find all sources present in the TESS field from PS!, and Gaia. Catalogs are cross
@@ -169,22 +201,29 @@ def Unified_catalog(tpf,magnitude_limit=18,offset=10):
 	-------
 		result pd.DataFrame	 Combined catalog
 	"""
-	import pandas as pd
+	
 	pd.options.mode.chained_assignment = None
 	# need to look at how the icrs coords are offset from J2000
 	# Get gaia catalogs 
 	gaia = Get_Catalogue(tpf, Catalog = 'gaia')
 	gaiadist = Get_Catalogue(tpf, Catalog = 'dist')
 	# Get PS1 and structure it
-	ps1 = Get_Catalogue(tpf, Catalog = 'ps1')
-	ps1 = ps1[np.isfinite(ps1.rmag) & np.isfinite(ps1.imag)]# & np.isfinite(result.zmag)& np.isfinite(result.ymag)]
-	ps1 = PS1_to_TESS_mag(ps1)
-	keep = ['objID','RAJ2000', 'DEJ2000','e_RAJ2000','e_DEJ2000','gmag', 'e_gmag', 'gKmag',
-		   'e_gKmag', 'rmag', 'e_rmag', 'rKmag', 'e_rKmag',
-		   'imag', 'e_imag', 'iKmag', 'e_iKmag', 'zmag', 'e_zmag',
-		   'zKmag', 'e_zKmag', 'ymag', 'e_ymag', 'yKmag', 'e_yKmag',
-		   'tmag']
-	result = ps1[keep]
+	if tpf.dec > -30:
+		ps1 = Get_Catalogue(tpf, Catalog = 'ps1')
+		ps1 = ps1[np.isfinite(ps1.rmag) & np.isfinite(ps1.imag)]# & np.isfinite(result.zmag)& np.isfinite(result.ymag)]
+		ps1 = PS1_to_TESS_mag(ps1)
+		keep = ['objID','RAJ2000', 'DEJ2000','e_RAJ2000','e_DEJ2000','gmag', 'e_gmag', 'gKmag',
+			   'e_gKmag', 'rmag', 'e_rmag', 'rKmag', 'e_rKmag',
+			   'imag', 'e_imag', 'iKmag', 'e_iKmag', 'zmag', 'e_zmag',
+			   'zKmag', 'e_zKmag', 'ymag', 'e_ymag', 'yKmag', 'e_yKmag',
+			   'tmag']
+		result = ps1[keep]
+	else:
+		sm = Get_Catalogue(tpf, Catalog = 'skymapper')
+		sm = Skymapper_df(sm)
+		sm = sm[np.isfinite(sm.rmag) & np.isfinite(sm.imag)]# & np.isfinite(result.zmag)& np.isfinite(result.ymag)]
+		sm = PS1_to_TESS_mag(sm)
+		result = sm
 	# Define the columns for Gaia information
 	result['gaiaid'] = 0
 	result['gaiaid'] = result['gaiaid'].astype(int)
