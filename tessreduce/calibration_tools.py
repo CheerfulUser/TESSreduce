@@ -4,7 +4,6 @@ dirname = os.path.dirname(__file__)
 
 import astropy.table as at
 from collections import OrderedDict
-import pysynphot as S
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import interpolate
