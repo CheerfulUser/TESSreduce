@@ -962,7 +962,7 @@ def Remove_stellar_variability(lc,err=None,variable=False,sig = None, sig_up = 3
     
     if variable:
         size = int(lc.shape[1] * 0.04)
-        if size // 2 == 0: size += 1
+        if size % 2 == 0: size += 1
         smooth = savgol_filter(lc[1,:],size,3)
         mask = sig_err(lc[1]-smooth,err,sig=sig)
         #sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,
@@ -1004,7 +1004,7 @@ def Remove_stellar_variability(lc,err=None,variable=False,sig = None, sig_up = 3
 
     # Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
     size = int(lc.shape[1] * 0.005)
-    if size / 2 == int(size/2): 
+    if size % 2 == 0: 
         size += 1
     for i in range(len(break_inds)-1):
         section = lc[:,break_inds[i]:break_inds[i+1]]
