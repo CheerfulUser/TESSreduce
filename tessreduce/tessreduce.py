@@ -1042,7 +1042,7 @@ def Calculate_err(tpf,flux):
 		isolc = isolc[ind]
 		isolated = isolated[ind]
 		if len(isolated) < 10:
-			warning.warn('Only {} sources used for zerpoint calculation. Errors may be larger than reported'.format(len(isolated)))
+			warnings.warn('Only {} sources used for zerpoint calculation. Errors may be larger than reported'.format(len(isolated)))
 		err = np.nanstd(isolc-np.nanmedian(isolc,axis=1)[:,np.newaxis],axis=0)
 		return err
 	else:
@@ -1075,7 +1075,7 @@ def Calibrate_lc(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
 	isolc = isolc[ind]
 	isolated = isolated[ind]
 	if len(isolated) < 10:
-		warning.warn('Only {} sources used for zerpoint calculation. Errors may be larger than reported'.format(len(isolated)))
+		warnings.warn('Only {} sources used for zerpoint calculation. Errors may be larger than reported'.format(len(isolated)))
 	err = np.nanstd(isolc-np.nanmedian(isolc,axis=1)[:,np.newaxis],axis=0)
 	higherr = sigma_clip(err,sigma=2).mask
 
