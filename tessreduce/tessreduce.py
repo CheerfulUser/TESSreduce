@@ -1093,28 +1093,30 @@ def Calibrate_lc(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
 	isolated['tessMeanPSFMag'] = -2.5*np.log10(np.nanmedian(isolc[:,~higherr],axis=1))
 	# need to do a proper accounting of errors.
 	isolated['tessMeanPSFMagErr'] = .1
-	
-	#return(isolated)
-	if diagnostic:
-		extinction, good_sources = Tonry_reduce(isolated,plot=True)
-	else: 
-		extinction, good_sources = Tonry_reduce(isolated,plot=False)
+	try:
+		#return(isolated)
+		if diagnostic:
+			extinction, good_sources = Tonry_reduce(isolated,plot=True)
+		else: 
+			extinction, good_sources = Tonry_reduce(isolated,plot=False)
 
-	model = np.load(package_directory+'calspec_mags.npy',allow_pickle=True).item()
+		model = np.load(package_directory+'calspec_mags.npy',allow_pickle=True).item()
 
-	compare_ref = np.array([['g-r','r-'+ref],['g-r','i-'+ref],['g-r','y-'+ref],['g-r','g-i']])
-	compare_fit = np.array([['g-r','r-'+fit],['g-r',fit+'-y'],['g-r',fit+'-i'],['g-r',fit+'-z']])
+		compare_ref = np.array([['g-r','r-'+ref],['g-r','i-'+ref],['g-r','y-'+ref],['g-r','g-i']])
+		compare_fit = np.array([['g-r','r-'+fit],['g-r',fit+'-y'],['g-r',fit+'-i'],['g-r',fit+'-z']])
 
-	zp_ref, d_ref = Fit_zeropoint(good_sources,model,compare_ref,extinction,ref)
-	zp_fit, d_fit = Fit_zeropoint(good_sources,model,compare_fit,extinction,fit)
+		zp_ref, d_ref = Fit_zeropoint(good_sources,model,compare_ref,extinction,ref)
+		zp_fit, d_fit = Fit_zeropoint(good_sources,model,compare_fit,extinction,fit)
 
-	if diagnostic:
-		c_fit = Make_colours(d_fit,model,compare_fit,Extinction = extinction)
-		zeropointPlotter(zp_fit,zp_ref,c_fit,compare_fit,ID,fit,'figs/'+ID,Close=False)
-		zeropointPlotter(zp_fit,zp_ref,c_fit,compare_fit,ID,fit,'figs/'+ID,Residuals=True,Close=False)
+		if diagnostic:
+			c_fit = Make_colours(d_fit,model,compare_fit,Extinction = extinction)
+			zeropointPlotter(zp_fit,zp_ref,c_fit,compare_fit,ID,fit,'figs/'+ID,Close=False)
+			zeropointPlotter(zp_fit,zp_ref,c_fit,compare_fit,ID,fit,'figs/'+ID,Residuals=True,Close=False)
 
-	zero_point = zp_fit
-	zero_point_err = zp_ref
-	zp = np.array([zero_point, zero_point_err])
+		zero_point = zp_fit
+		zero_point_err = zp_ref
+		zp = np.array([zero_point, zero_point_err])
+	except:
+		zp = np.array([20.44, 0])
 	return zp, err
 
