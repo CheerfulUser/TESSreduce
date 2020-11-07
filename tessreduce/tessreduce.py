@@ -806,7 +806,7 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=True
 	
 	
 
-	zp = 20.44
+	zp = np.array([20.44,0])
 	err = None
 	if calibrate & (tpf.dec >= -30):
 		zp,err = Calibrate_lc(tpf,flux)
