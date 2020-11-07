@@ -241,41 +241,43 @@ def Unified_catalog(tpf,magnitude_limit=18,offset=10):
 	dde = dde - result.DEJ2000.values[np.newaxis,:]
 	# Calculate distance
 	dist = np.sqrt(dde**2 + dra**2)
-	ind = np.argmin(dist,axis=1)
+	
+	if isinstance(dist,np.ndarray):
+		ind = np.argmin(dist,axis=1)
 
-	far = dist <= (1/60**2) * 1 # difference smaller than 1 arcsec
-	# Get index of all valid matches and add the Gaia info
-	indo = np.nansum(far,axis=1) > 0
-	ind = ind[indo]
-	result.gaiaid.iloc[ind] = gaia.Source.values[indo]
-	result.gaiamag.iloc[ind] = gaia.Gmag.values[indo]
-	result.tmag.iloc[ind] = gaia.Gmag.values[indo] - .5
-	# Add Gaia sources without matches to the dataframe
-	keys = list(result.keys())
-	indo = np.where(~indo)[0]
-	for i in indo:
-		df = pd.DataFrame(columns=keys)
-		row = np.zeros(len(keys)) * np.nan
-		df.RAJ2000 = [gaia.RA_ICRS[i]]; df.DEJ2000 = [gaia.DE_ICRS[i]] 
-		df.gaiaid = [gaia.Source[i]]; df.gaiamag = [gaia.Gmag[i]]
-		df.tmag = [gaia.Gmag[i] - 0.5] 
-		result = result.append(df,ignore_index=True)
+		far = dist <= (1/60**2) * 1 # difference smaller than 1 arcsec
+		# Get index of all valid matches and add the Gaia info
+		indo = np.nansum(far,axis=1) > 0
+		ind = ind[indo]
+		result.gaiaid.iloc[ind] = gaia.Source.values[indo]
+		result.gaiamag.iloc[ind] = gaia.Gmag.values[indo]
+		result.tmag.iloc[ind] = gaia.Gmag.values[indo] - .5
+		# Add Gaia sources without matches to the dataframe
+		keys = list(result.keys())
+		indo = np.where(~indo)[0]
+		for i in indo:
+			df = pd.DataFrame(columns=keys)
+			row = np.zeros(len(keys)) * np.nan
+			df.RAJ2000 = [gaia.RA_ICRS[i]]; df.DEJ2000 = [gaia.DE_ICRS[i]] 
+			df.gaiaid = [gaia.Source[i]]; df.gaiamag = [gaia.Gmag[i]]
+			df.tmag = [gaia.Gmag[i] - 0.5] 
+			result = result.append(df,ignore_index=True)
 
-	# Find matches from the distance catalog and add them in
-	s = np.zeros((len(gaiadist),len(result)))
-	s = s + gaiadist.Source.values[:,np.newaxis]
-	s = s - result.gaiaid.values[np.newaxis,:]
-	ind = np.where(s == 0)[1]
+		# Find matches from the distance catalog and add them in
+		s = np.zeros((len(gaiadist),len(result)))
+		s = s + gaiadist.Source.values[:,np.newaxis]
+		s = s - result.gaiaid.values[np.newaxis,:]
+		ind = np.where(s == 0)[1]
 
-	result.gaiadist.iloc[ind] = gaiadist.rest
-	result.gaiadist_u.iloc[ind] = gaiadist.B_rest
-	result.gaiadist_l.iloc[ind] = gaiadist.b_rest
+		result.gaiadist.iloc[ind] = gaiadist.rest
+		result.gaiadist_u.iloc[ind] = gaiadist.B_rest
+		result.gaiadist_l.iloc[ind] = gaiadist.b_rest
 	
 	result = result.iloc[result.tmag.values < magnitude_limit]
-	no_targets_found_message = ValueError('Either no sources were found in the query region '
+	no_targets_found_message = ('Either no sources were found in the query region '
 										  'or Vizier is unavailable')
 	if len(result) == 0:
-		raise no_targets_found_message
+		print(no_targets_found_message)
 
 	radecs = np.vstack([result['RAJ2000'], result['DEJ2000']]).T
 	coords = tpf.wcs.all_world2pix(radecs, 1)

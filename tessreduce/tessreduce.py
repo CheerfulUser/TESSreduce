@@ -815,7 +815,7 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=True
 		print('Target is too far south with Dec = {} for PS1 photometry.'.format(tpf.dec) +
 			' Can not calibrate at this time.')
 
-		err = Calculate_err(tpf,flux)
+		#err = Calculate_err(tpf,flux)
 
 	lc = Make_lc(tpf.astropy_time.mjd,flux,aperture=aper,bin_size=bin_size,
 				zeropoint = zp,scale=scale)#,normalise=False)
@@ -931,7 +931,7 @@ def Multiple_day_breaks(lc):
     breaks = np.append(breaks,len(lc[0]))
     return breaks
 
-def Remove_stellar_variability(lc,err=None,variable=False,sig = None, sig_up = 3, sig_low = 10, tail_length='auto'):
+def Remove_stellar_variability(lc,err=None,Mask=None,variable=False,sig = None, sig_up = 3, sig_low = 10, tail_length='auto'):
     """
     Removes all long term stellar variability, while preserving flares. Input a light curve 
     with shape (2,n) and it should work!
@@ -958,7 +958,7 @@ def Remove_stellar_variability(lc,err=None,variable=False,sig = None, sig_up = 3
     # Make a smoothing value with a significant portion of the total 
     trends = np.zeros(lc.shape[1])
     break_inds = Multiple_day_breaks(lc)
-    
+    #lc[Mask] = np.nan
     
     if variable:
         size = int(lc.shape[1] * 0.04)
