@@ -963,7 +963,12 @@ def Remove_stellar_variability(lc,err=None,variable=False,sig = None, sig_up = 3
     if variable:
         size = int(lc.shape[1] * 0.04)
         if size % 2 == 0: size += 1
-        smooth = savgol_filter(lc[1,:],size,3)
+
+        finite = np.isfinite(lc[1])
+        smooth = savgol_filter(lc[1,finite],size,1)        
+        # interpolate the smoothed data over the missing time values
+        f1 = interp1d(lc[0,finite], smooth, kind='linear',fill_value='extrapolate')
+        smooth = f1(lc[0])
         mask = sig_err(lc[1]-smooth,err,sig=sig)
         #sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,
         #                    sigma_lower=sig_low,masked=True).mask
