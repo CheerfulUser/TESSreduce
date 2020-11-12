@@ -14,6 +14,8 @@ from scipy.ndimage.filters import convolve
 from scipy.ndimage import shift
 from scipy.ndimage import gaussian_filter
 
+from sklearn.cluster import OPTICS, cluster_optics_dbscan
+
 from scipy.signal import savgol_filter
 
 
@@ -831,196 +833,196 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=True
 
 
 def sig_err(data,err=None,sig=3,maxiter=10):
-    if sig is None:
-        sig = 3
-    clipped = data.copy()
-    ind = np.arange(0,len(data))
-    breaker = 0
-    if err is not None:
-        for i in range(maxiter):
-            nonan = np.isfinite(clipped)
-            med = np.average(clipped[nonan],weights=1/err[nonan])
-            #med = np.nanmedian(clipped)
-            std = np.nanstd(clipped)
-            mask = (clipped-1*err > med + 3*std) #| (clipped+1*err < med - 3*std)
-            clipped[mask] = np.nan
-            if ~mask.any():
-                break
+	if sig is None:
+		sig = 3
+	clipped = data.copy()
+	ind = np.arange(0,len(data))
+	breaker = 0
+	if err is not None:
+		for i in range(maxiter):
+			nonan = np.isfinite(clipped)
+			med = np.average(clipped[nonan],weights=1/err[nonan])
+			#med = np.nanmedian(clipped)
+			std = np.nanstd(clipped)
+			mask = (clipped-1*err > med + 3*std) #| (clipped+1*err < med - 3*std)
+			clipped[mask] = np.nan
+			if ~mask.any():
+				break
 
-        mask = np.isnan(clipped)
-    else:
-        mask = sigma_clip(data).mask
-    return mask
+		mask = np.isnan(clipped)
+	else:
+		mask = sigma_clip(data).mask
+	return mask
 
 
 def Identify_masks(Obj):
-    """
-    Uses an iterrative process to find spacially seperated masks in the object mask.
-    """
-    objsub = np.copy(Obj)
-    Objmasks = []
+	"""
+	Uses an iterrative process to find spacially seperated masks in the object mask.
+	"""
+	objsub = np.copy(Obj*1)
+	Objmasks = []
 
-    mask1 = np.zeros((Obj.shape))
-    if np.nansum(objsub) > 0:
-        mask1[np.where(objsub==1)[0]] = 1
-        
-        while np.nansum(objsub) > 0:
-            print(np.nansum(objsub))
-            conv = ((convolve(mask1*1,np.ones(3),mode='constant', cval=0.0)) > 0)*1.0
-            objsub = objsub - mask1
-            objsub[objsub < 0] = 0
+	mask1 = np.zeros((Obj.shape))
+	if np.nansum(objsub) > 0:
+		mask1[np.where(objsub==1)[0][0]] = 1
+		
+		while np.nansum(objsub) > 0:
+			conv = ((convolve(mask1*1,np.ones(3),mode='constant', cval=0.0)) > 0)*1.0
+			objsub = objsub - mask1
+			objsub[objsub < 0] = 0
+			if np.nansum(conv*objsub) > 0:
 
-            if np.nansum(conv*objsub) > 0:
+				mask1 = mask1 + (conv * objsub)
+				mask1 = (mask1 > 0)*1
+			else:
 
-                mask1 = mask1 + (conv * objsub)
-                mask1 = (mask1 > 0)*1
-            else:
-
-                Objmasks.append(mask1)
-                mask1 = np.zeros((Obj.shape))
-                if np.nansum(objsub) > 0:
-                    mask1[np.where(objsub==1)[0]] = 1
-    return Objmasks
+				Objmasks.append(mask1 > 0)
+				mask1 = np.zeros((Obj.shape))
+				if np.nansum(objsub) > 0:
+					mask1[np.where(objsub==1)[0][0]] = 1
+	return np.array(Objmasks)
 
 def auto_tail(lc,mask,err = None):
-    if err is not None:
-        higherr = sigma_clip(err,sigma=2).mask
-    else:
-        higherr = False
-    masks = Identify_masks(mask*1)
-    med = np.nanmedian(lc[1][~mask & ~higherr])
-    std = np.nanstd(lc[1][~mask & ~higherr])
+	if err is not None:
+		higherr = sigma_clip(err,sigma=2).mask
+	else:
+		higherr = False
+	masks = Identify_masks(mask*1)
+	med = np.nanmedian(lc[1][~mask & ~higherr])
+	std = np.nanstd(lc[1][~mask & ~higherr])
 
-    if lc.shape[1] > 4000:
-        tail_length = 100
-        start_length = 10
+	if lc.shape[1] > 4000:
+		tail_length = 100
+		start_length = 10
 
-    else:
-        tail_length = 10
-        start_length = 1
-            
-    for i in range(len(masks)):
-        m = np.argmax(lc[1]*masks[i])
-        sig = (lc[1][m] - med) / std
-        
-        if sig > 20:
-        	sig = 20
-        masks[i][int(m-sig*start_length):int(m+tail_length*sig)] = 1
-        masks[i] = masks[i] > 0
-    summed = np.nansum(masks*1,axis=0)
-    mask = summed > 0 
-    return ~mask
-        
+	else:
+		tail_length = 10
+		start_length = 1
+			
+	for i in range(len(masks)):
+		m = np.argmax(lc[1]*masks[i])
+		sig = (lc[1][m] - med) / std
+		
+		if sig > 20:
+			sig = 20
+		masks[i][int(m-sig*start_length):int(m+tail_length*sig)] = 1
+		masks[i] = masks[i] > 0
+	summed = np.nansum(masks*1,axis=0)
+	mask = summed > 0 
+	return ~mask
+		
 def Multiple_day_breaks(lc):
-    """
-    If the TESS data has a section of data isolated by at least a day either side,
-    it is likely poor data. Such regions are identified and removed.
-    
-    Inputs:
-    -------
-    Flux - 3d array
-    Time - 1d array
-    
-    Output:
-    -------
-    removed_flux - 3d array
-    """
-    ind = np.where(~np.isnan(lc[1]))[0]
-    breaks = np.array([np.where(np.diff(lc[0][ind]) > .5)[0] +1])
-    breaks = np.insert(breaks,0,0)
-    breaks = np.append(breaks,len(lc[0]))
-    return breaks
+	"""
+	If the TESS data has a section of data isolated by at least a day either side,
+	it is likely poor data. Such regions are identified and removed.
+	
+	Inputs:
+	-------
+	Flux - 3d array
+	Time - 1d array
+	
+	Output:
+	-------
+	removed_flux - 3d array
+	"""
+	ind = np.where(~np.isnan(lc[1]))[0]
+	breaks = np.array([np.where(np.diff(lc[0][ind]) > .5)[0] +1])
+	breaks = np.insert(breaks,0,0)
+	breaks = np.append(breaks,len(lc[0]))
+	return breaks
 
-def Remove_stellar_variability(lc,err=None,Mask=None,variable=False,sig = None, sig_up = 3, sig_low = 10, tail_length='auto'):
-    """
-    Removes all long term stellar variability, while preserving flares. Input a light curve 
-    with shape (2,n) and it should work!
+def Remove_stellar_variability(lc,err=None,Mask=None,variable=False,sig = 5, sig_up = 3, sig_low = 10, tail_length='auto'):
+	"""
+	Removes all long term stellar variability, while preserving flares. Input a light curve 
+	with shape (2,n) and it should work!
 
-    Parameters
-    ----------
-    lc : array
-        lightcurve with the shape of (2,n), where the first index is time and the second is 
-        flux.
-    sig_up : float
-        upper sigma clip value 
-    sig_low : float
-        lower sigma clip value
-    tail_length : str OR int
-        option for setting the buffer zone of points after the peak. If it is 'auto' it 
-        will be determined through functions, but if its an int then it will take the given 
-        value as the buffer tail length for fine tuning.
+	Parameters
+	----------
+	lc : array
+		lightcurve with the shape of (2,n), where the first index is time and the second is 
+		flux.
+	sig_up : float
+		upper sigma clip value 
+	sig_low : float
+		lower sigma clip value
+	tail_length : str OR int
+		option for setting the buffer zone of points after the peak. If it is 'auto' it 
+		will be determined through functions, but if its an int then it will take the given 
+		value as the buffer tail length for fine tuning.
 
-    Outputs
-    -------
-    trends : array
-        the stellar trends, subtract this from your input lc
-    """
-    # Make a smoothing value with a significant portion of the total 
-    trends = np.zeros(lc.shape[1])
-    break_inds = Multiple_day_breaks(lc)
-    #lc[Mask] = np.nan
-    
-    if variable:
-        size = int(lc.shape[1] * 0.04)
-        if size % 2 == 0: size += 1
+	Outputs
+	-------
+	trends : array
+		the stellar trends, subtract this from your input lc
+	"""
+	# Make a smoothing value with a significant portion of the total 
+	trends = np.zeros(lc.shape[1])
+	break_inds = Multiple_day_breaks(lc)
+	#lc[Mask] = np.nan
 
-        finite = np.isfinite(lc[1])
-        smooth = savgol_filter(lc[1,finite],size,1)        
-        # interpolate the smoothed data over the missing time values
-        f1 = interp1d(lc[0,finite], smooth, kind='linear',fill_value='extrapolate')
-        smooth = f1(lc[0])
-        mask = sig_err(lc[1]-smooth,err,sig=sig)
-        #sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,
-        #                    sigma_lower=sig_low,masked=True).mask
-    else:
-        mask = sig_err(lc[1],err,sig=sig)
-        
-    ind = np.where(mask)[0]
-    masked = lc.copy()
-    # Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
-    # todo: use findpeaks to get height estimates and change the buffers accordingly
-    if type(tail_length) == str:
-        if tail_length == 'auto':
-            
-            m = auto_tail(lc,mask,err)
-            masked[:,~m] = np.nan
-            
-            
-        else:
-            if lc.shape[1] > 4000:
-                tail_length = 100
-                start_length = 1
-            else:
-                tail_length = 10
-            for i in ind:
-                masked[:,i-5:i+tail_length] = np.nan
-    else:
-        tail_length = int(tail_length)
-        if type(tail_length) != int:
-            raise ValueError("tail_length must be either 'auto' or an integer")
-        for i in ind:
-            masked[:,i-5:i+tail_length] = np.nan
-    
-    
-    ## Hack solution doesnt need to worry about interpolation. Assumes that stellar variability 
-    ## is largely continuous over the missing data regions.
-    #f1 = interp1d(lc[0,finite], lc[1,finite], kind='linear',fill_value='extrapolate')
-    #interp = f1(lc[0,:])
+	if variable:
+		size = int(lc.shape[1] * 0.04)
+		if size % 2 == 0: size += 1
 
-    # Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
-    size = int(lc.shape[1] * 0.005)
-    if size % 2 == 0: 
-        size += 1
-    for i in range(len(break_inds)-1):
-        section = lc[:,break_inds[i]:break_inds[i+1]]
-        finite = np.isfinite(masked[1,break_inds[i]:break_inds[i+1]])
-        smooth = savgol_filter(section[1,finite],size,1)
-        
-        # interpolate the smoothed data over the missing time values
-        f1 = interp1d(section[0,finite], smooth, kind='linear',fill_value='extrapolate')
-        trends[break_inds[i]:break_inds[i+1]] = f1(section[0])
-    # huzzah, we now have a trend that should remove stellar variability, excluding flares.
-    return trends 
+		finite = np.isfinite(lc[1])
+		smooth = savgol_filter(lc[1,finite],size,1)		
+		# interpolate the smoothed data over the missing time values
+		f1 = interp1d(lc[0,finite], smooth, kind='linear',fill_value='extrapolate')
+		smooth = f1(lc[0])
+		try:
+			mask = Cluster_cut(lc-smooth,err=err,sig=sig)
+		except:
+			print('could not cluster')
+			mask = sig_err(lc[1]-smooth,err,sig=sig)
+		#sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,
+		#					sigma_lower=sig_low,masked=True).mask
+	else:
+		try:
+			mask = Cluster_cut(lc,err=err,sig=sig)
+		except:
+			print('could not cluster')
+			mask = sig_err(lc[1],err,sig=sig)
+
+	ind = np.where(mask)[0]
+	masked = lc.copy()
+	# Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
+	# todo: use findpeaks to get height estimates and change the buffers accordingly
+	if type(tail_length) == str:
+		if tail_length == 'auto':
+			masked[:,mask] = np.nan
+	else:
+		tail_length = int(tail_length)
+		if type(tail_length) != int:
+			raise ValueError("tail_length must be either 'auto' or an integer")
+		for i in ind:
+			masked[:,i-5:i+tail_length] = np.nan
+
+
+	## Hack solution doesnt need to worry about interpolation. Assumes that stellar variability 
+	## is largely continuous over the missing data regions.
+	#f1 = interp1d(lc[0,finite], lc[1,finite], kind='linear',fill_value='extrapolate')
+	#interp = f1(lc[0,:])
+
+	# Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
+	size = int(lc.shape[1] * 0.005)
+	if size % 2 == 0: 
+		size += 1
+	for i in range(len(break_inds)-1):
+		section = lc[:,break_inds[i]:break_inds[i+1]]
+		mask_section = masked[:,break_inds[i]:break_inds[i+1]]
+		if np.isnan(mask_section[1,0]):
+			mask_section[1,0] = np.nanmedian(mask_section[1])
+		if np.isnan(mask_section[1,-1]):
+			mask_section[1,-1] = np.nanmedian(mask_section[1])
+		finite = np.isfinite(mask_section[1])
+		smooth = savgol_filter(mask_section[1,finite],size,1)
+
+		# interpolate the smoothed data over the missing time values
+		f1 = interp1d(section[0,finite], smooth, kind='linear',fill_value='extrapolate')
+		trends[break_inds[i]:break_inds[i+1]] = f1(section[0])
+		
+	# huzzah, we now have a trend that should remove stellar variability, excluding flares.
+	return trends 
 
 
 def Calculate_err(tpf,flux):
@@ -1124,4 +1126,52 @@ def Calibrate_lc(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
 	except:
 		zp = np.array([20.44, 0])
 	return zp, err
+
+#### CLUSTERING 
+
+def Cluster_lc(lc):
+	arr = np.array([np.gradient(lc[1]),lc[1]])
+	clust = OPTICS(min_samples=6, xi=.05, min_cluster_size=.05)
+	opt = clust.fit(arr.T)
+	lab = opt.labels_
+	keys = np.unique(opt.labels_)
+	
+	m = np.zeros(len(keys))
+	for i in range(len(keys)):
+		m[i] = np.nanmedian(lc[1,keys[i]==lab])
+	bkg_ind = lab == keys[np.nanargmin(m)]
+	other_ind = ~bkg_ind
+	
+	return bkg_ind, other_ind
+
+def Cluster_cut(lc,err=None,sig=5,smoothing=True):
+	bkg_ind, other_ind = Cluster_lc(lc)
+	leng = 5
+	if smoothing:
+		for i in range(leng-2):
+			kern = np.zeros((leng))
+			kern[[0, -1]] = 1
+			other_ind[convolve(other_ind*1, kern) > 1] = True
+			leng -= 1
+	segments = Identify_masks(other_ind)
+	clipped = lc[1].copy()
+	med = np.nanmedian(clipped[bkg_ind])
+	std = np.nanstd(clipped[bkg_ind])
+	if err is not None:
+		mask = (clipped-1*err > med + sig*std)
+	else:
+		mask = (clipped > med + sig*std)
+	overlap = np.nansum(mask * segments,axis=1) > 0
+	mask = np.nansum(segments[overlap],axis=0)>0 
+	return mask
+
+def Event_isolation(lc,err=None,duration=10,sig=5):
+	mask = Cluster_cut(lc,err=err,sig=sig)
+	outliers = Identify_masks(mask)
+	good = np.nansum(outliers,axis=1) > duration
+	outliers = outliers[good]
+	lcs = outliers * lc[1][np.newaxis,:]
+	lcs[lcs == 0] = np.nan
+	return lcs
+
 
