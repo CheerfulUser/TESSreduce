@@ -416,7 +416,7 @@ def Fit_zeropoint(Data,Model,Compare,Ex,Band):
     res = minimize(SLR_residual_multi,k,args=(data,Model,Compare,Ex,Band))
     return res.x, data
 
-def Isolated_stars(pos,Tmag,flux,Median, Distance = 7, Apperture=3, Mag = 16):
+def Isolated_stars(pos,Tmag,flux,Median, Distance = 7, Aperture=3, Mag = 16):
     """
     Find isolated stars in the scene.
     """
@@ -445,7 +445,7 @@ def Isolated_stars(pos,Tmag,flux,Median, Distance = 7, Apperture=3, Mag = 16):
     if len(iso)> 0:
         clips = []
         time_series = []
-        Distance = Apperture
+        Distance = Aperture
         if (Distance % 2) ==0:
             d = Distance - 1
         else:

@@ -989,7 +989,18 @@ def Remove_stellar_variability(lc,err=None,Mask=None,variable=False,sig = 5, sig
 	# todo: use findpeaks to get height estimates and change the buffers accordingly
 	if type(tail_length) == str:
 		if tail_length == 'auto':
-			masked[:,mask] = np.nan
+			m = auto_tail(lc,mask,err)
+			masked[:,~m] = np.nan
+
+
+		else:
+			if lc.shape[1] > 4000:
+				tail_length = 100
+				start_length = 1
+			else:
+				tail_length = 10
+			for i in ind:
+				masked[:,i-5:i+tail_length] = np.nan
 	else:
 		tail_length = int(tail_length)
 		if type(tail_length) != int:
