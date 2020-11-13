@@ -990,8 +990,8 @@ def Remove_stellar_variability(lc,err=None,Mask=None,variable=False,sig = 5, sig
 	# todo: use findpeaks to get height estimates and change the buffers accordingly
 	if type(tail_length) == str:
 		if tail_length == 'auto':
-			m = auto_tail(lc,mask,err)
-			masked[:,~m] = np.nan
+			#m = auto_tail(lc,mask,err)
+			masked[:,mask] = np.nan
 
 
 		else:
@@ -1021,7 +1021,13 @@ def Remove_stellar_variability(lc,err=None,Mask=None,variable=False,sig = 5, sig
 		size += 1
 	for i in range(len(break_inds)-1):
 		section = lc[:,break_inds[i]:break_inds[i+1]]
+
 		mask_section = masked[:,break_inds[i]:break_inds[i+1]]
+		if np.nansum(mask_section) < 10:
+			mask_section[1,:] = np.nanmedian(masked[1,:])
+			if np.nansum(mask_section) < 10:
+				mask_section[1,:] = np.nanmedian(sectiion)
+		
 		if np.isnan(mask_section[1,0]):
 			mask_section[1,0] = np.nanmedian(mask_section[1])
 		if np.isnan(mask_section[1,-1]):
