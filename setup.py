@@ -28,7 +28,8 @@ REQUIRED = ['lightkurve',
             'scipy!=1.4.0,!=1.4.1,>=0.19.0',
             'astropy',
             'joblib',
-            'multiprocess']
+            'multiprocess',
+            'scikit-learn']
 
 # What packages are optional?
 EXTRAS = {
