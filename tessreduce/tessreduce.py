@@ -702,7 +702,7 @@ def Plotter(t,flux):
 	return
 
 
-def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=True,
+def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=False,
 					scale = 'counts', bin_size = 0, plot = True, all_output = True):
 	"""
 	Reduce the images from the target pixel file and make a light curve with aperture photometry.
@@ -809,7 +809,8 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=True
 	
 
 	zp = np.array([20.44,0])
-	err = np.zeros(len(flux))
+	mask = Source_mask(ref,grid=0)
+	err = np.mean(mask*flux,axis=(1,2))
 	if calibrate & (tpf.dec >= -30):
 		zp,err = Calibrate_lc(tpf,flux)
 
