@@ -1026,7 +1026,7 @@ def Remove_stellar_variability(lc,err=None,Mask=None,variable=False,sig = 5, sig
 		if np.nansum(mask_section) < 10:
 			mask_section[1,:] = np.nanmedian(masked[1,:])
 			if np.nansum(mask_section) < 10:
-				mask_section[1,:] = np.nanmedian(sectiion)
+				mask_section[1,:] = np.nanmedian(section)
 		
 		if np.isnan(mask_section[1,0]):
 			mask_section[1,0] = np.nanmedian(mask_section[1])
