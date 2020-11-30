@@ -932,7 +932,7 @@ def Multiple_day_breaks(lc):
 	breaks = np.append(breaks,len(lc[0]))
 	return breaks
 
-def Remove_stellar_variability(lc,err=None,Mask=None,variable=False,sig = 5, sig_up = 3, sig_low = 10, tail_length='auto'):
+def Remove_stellar_variability(LC,err=None,Mask=None,variable=False,sig = 5, sig_up = 3, sig_low = 10, tail_length='auto'):
 	"""
 	Removes all long term stellar variability, while preserving flares. Input a light curve 
 	with shape (2,n) and it should work!
@@ -957,12 +957,13 @@ def Remove_stellar_variability(lc,err=None,Mask=None,variable=False,sig = 5, sig
 		the stellar trends, subtract this from your input lc
 	"""
 	# Make a smoothing value with a significant portion of the total 
+	lc = LC.copy()
 	trends = np.zeros(lc.shape[1])
 	break_inds = Multiple_day_breaks(lc)
 	#lc[Mask] = np.nan
 
 	if variable:
-		size = int(lc.shape[1] * 0.04)
+		size = int(lc.shape[1] * 0.1)
 		if size % 2 == 0: size += 1
 
 		finite = np.isfinite(lc[1])
@@ -970,11 +971,14 @@ def Remove_stellar_variability(lc,err=None,Mask=None,variable=False,sig = 5, sig
 		# interpolate the smoothed data over the missing time values
 		f1 = interp1d(lc[0,finite], smooth, kind='linear',fill_value='extrapolate')
 		smooth = f1(lc[0])
+		lc2 = lc.copy()
+		lc2[1] = lc2[1] - smooth
 		try:
-			mask = Cluster_cut(lc-smooth,err=err,sig=sig)
+
+			mask = Cluster_cut(lc2,err=err,sig=sig)
 		except:
 			print('could not cluster')
-			mask = sig_err(lc[1]-smooth,err,sig=sig)
+			mask = sig_err(lc2[1],err,sig=sig)
 		#sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,
 		#					sigma_lower=sig_low,masked=True).mask
 	else:
@@ -1149,7 +1153,7 @@ def Calibrate_lc(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
 
 def Cluster_lc(lc):
 	arr = np.array([np.gradient(lc[1]),lc[1]])
-	clust = OPTICS(min_samples=6, xi=.05, min_cluster_size=.05)
+	clust = OPTICS(min_samples=12, xi=.05, min_cluster_size=.05)
 	opt = clust.fit(arr.T)
 	lab = opt.labels_
 	keys = np.unique(opt.labels_)
