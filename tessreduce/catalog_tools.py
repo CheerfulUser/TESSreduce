@@ -89,7 +89,7 @@ def Get_Gaia(tpf, magnitude_limit = 18, Offset = 10):
 	if len(result) == 0:
 		raise no_targets_found_message
 	radecs = np.vstack([result['RA_ICRS'], result['DE_ICRS']]).T
-	coords = tpf.wcs.all_world2pix(radecs, 1) ## TODO, is origin supposed to be zero or one?
+	coords = tpf.wcs.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
 	Gmag = result['Gmag'].values
 	#Jmag = result['Jmag']
 	ind = (((coords[:,0] >= -10) & (coords[:,1] >= -10)) & 
@@ -101,19 +101,28 @@ def Get_Gaia(tpf, magnitude_limit = 18, Offset = 10):
 	return coords, Tmag
 
 
+def mag2flux(mag,zp):
+    f = 10**(2/5*(zp-mag))
+    return f
+
+
 def PS1_to_TESS_mag(PS1):
 	"""
 	https://arxiv.org/pdf/1706.00495.pdf pg.9
 	"""
-	#coeffs = np.array([0.6767,0.9751,0.9773,0.6725])
-	g = PS1.gmag.values
-	r = PS1.rmag.values
-	i = PS1.imag.values
-	#z = PS1.zmag.values
-	#y = PS1.ymag.values
+	zp = 25
 
-	#t = coeffs[0] * r + coeffs[1] * i #+ coeffs[2] * z + coeffs[3] * y
-	t = i - 0.00206*(g - i)**3 - 0.02370*(g - i)**2 + 0.00573*(g - i) - 0.3078
+	coeffs = np.array([0.0922,0.1117,0.4755,0.1401,0.1788,-0.0936])
+	g = mag2flux(PS1.gmag.values,zp)
+	r = mag2flux(PS1.rmag.values,zp)
+	i = mag2flux(PS1.imag.values,zp)
+	z = mag2flux(PS1.zmag.values,zp)
+	y = mag2flux(PS1.ymag.values,zp)
+
+	t = (coeffs[0] * g + coeffs[1] * r + coeffs[2] * i 
+		 + coeffs[3] * z + coeffs[4] * y + coeffs[5]*(g-r))
+	t = -2.5*np.log10(t) + 25
+	
 	PS1['tmag'] = t
 	return PS1
 
@@ -143,7 +152,7 @@ def Get_PS1(tpf, magnitude_limit = 18, Offset = 10):
 	if len(result) == 0:
 		raise no_targets_found_message
 	radecs = np.vstack([result['RAJ2000'], result['DEJ2000']]).T
-	coords = tpf.wcs.all_world2pix(radecs, 1) ## TODO, is origin supposed to be zero or one?
+	coords = tpf.wcs.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
 	Tessmag = result['tmag'].values
 	#Jmag = result['Jmag']
 	ind = (((coords[:,0] >= -10) & (coords[:,1] >= -10)) & 
@@ -251,7 +260,7 @@ def Unified_catalog(tpf,magnitude_limit=18,offset=10):
 		ind = ind[indo]
 		result.gaiaid.iloc[ind] = gaia.Source.values[indo]
 		result.gaiamag.iloc[ind] = gaia.Gmag.values[indo]
-		result.tmag.iloc[ind] = gaia.Gmag.values[indo] - .5
+		#result.tmag.iloc[ind] = gaia.Gmag.values[indo] - .5
 		# Add Gaia sources without matches to the dataframe
 		keys = list(result.keys())
 		indo = np.where(~indo)[0]
@@ -260,7 +269,7 @@ def Unified_catalog(tpf,magnitude_limit=18,offset=10):
 			row = np.zeros(len(keys)) * np.nan
 			df.RAJ2000 = [gaia.RA_ICRS[i]]; df.DEJ2000 = [gaia.DE_ICRS[i]] 
 			df.gaiaid = [gaia.Source[i]]; df.gaiamag = [gaia.Gmag[i]]
-			df.tmag = [gaia.Gmag[i] - 0.5] 
+			#df.tmag = [gaia.Gmag[i] - 0.5] 
 			result = result.append(df,ignore_index=True)
 
 		# Find matches from the distance catalog and add them in
@@ -280,7 +289,7 @@ def Unified_catalog(tpf,magnitude_limit=18,offset=10):
 		print(no_targets_found_message)
 
 	radecs = np.vstack([result['RAJ2000'], result['DEJ2000']]).T
-	coords = tpf.wcs.all_world2pix(radecs, 1)
+	coords = tpf.wcs.all_world2pix(radecs, 0)
 	result['row'] = coords[:,1]
 	result['col'] = coords[:,0]
 	#Jmag = result['Jmag']
