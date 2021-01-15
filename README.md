@@ -5,7 +5,7 @@ detector straps. If "shift" is true, then all images will be shifted to match a 
 
 TESSreduce can be installed through pip:
 
-`pip install +git@github.com:CheerfulUser/TESSreduce.git`
+`pip install git+https://github.com/CheerfulUser/TESSreduce.git`
 
 To run:
 ```
