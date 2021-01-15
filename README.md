@@ -9,12 +9,11 @@ TESSreduce can be installed through pip:
 
 To run:
 ```
-import tpf_reduction
+import tpf_reduction as tr
 tpf = tr.Get_TESS(ra, dec, 50, sector)
 res = tr.Quick_reduce(tpf)
 lc = res[‘lc’]
 ```
-
 
 
 For more information contact me at: rridden @ stsci.edu
