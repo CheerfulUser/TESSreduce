@@ -4,11 +4,16 @@ With these functions you can download an FFI cuout from TESScut and reduce the T
 detector straps. If "shift" is true, then all images will be shifted to match a reference image. 
 
 TESSreduce can be installed through pip:
-pip install +git@github.com:CheerfulUser/TESSreduce.git
+
+`pip install git+https://github.com/CheerfulUser/TESSreduce.git`
 
 To run:
-import tpf_reduction
-download tpf with Get_TESS
-run Quick_reduce
+```
+import tpf_reduction as tr
+tpf = tr.Get_TESS(ra, dec, 50, sector)
+res = tr.Quick_reduce(tpf)
+lc = res[‘lc’]
+```
+
 
 For more information contact me at: rridden @ stsci.edu
