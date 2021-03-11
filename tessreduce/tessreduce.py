@@ -474,8 +474,8 @@ def Centroids_DAO(Flux,Median,TPF=None,parallel = False):
 			delayed(Calculate_shifts)(frame,mx,my,daofind) for frame in f)
 		shifts = np.array(shifts)
 	else:
+		shifts = np.zeros((len(f),2,len(mx))) * np.nan
 		for i in range(len(f)):
-			shifts = np.zeros((len(f),2,len(mx))) * np.nan
 			shifts[i,:,:] = Calculate_shifts(f[i],mx,my,daofind)
 
 
@@ -1246,6 +1246,34 @@ def Calibrate_lc(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
 	except:
 		zp = np.array([20.44, 0])
 	return zp, err
+
+### Serious source mask
+
+def Make_mask(tpf,scale=1,strapsize=3,badpix=None):
+	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
+	wcs = tpf.wcs
+	image = tpf.flux[100]
+	gp,gm = Get_Gaia(tpf,magnitude_limit=16)
+	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
+	pp,pm = Get_PS1(tpf,magnitude_limit=19)
+	ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
+	
+	sat = Big_sat(gaia,image,scale)
+	mg  = gaia_auto_mask(gaia,image,scale)
+	mp  = ps1_auto_mask(ps1,image,scale)
+
+	sat = (np.nansum(sat,axis=0) > 0).astype(int) * 2 # assign 2 bit 
+	mask = ((mg['all']+mp['all']) > 0).astype(int) * 1 # assign 1 bit 
+	strap = Strap_mask(image,tpf.column,strapsize).astype(int) * 4 # assign 4 bit 
+	if badpix is not None:
+		bp = cat_mask.Make_bad_pixel_mask(badpix, file)
+		totalmask = mask | sat | strap | bp
+	else:
+		totalmask = mask | sat | strap
+	
+	return totalmask
+
+
 
 #### CLUSTERING 
 

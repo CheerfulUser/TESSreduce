@@ -273,14 +273,19 @@ def Unified_catalog(tpf,magnitude_limit=18,offset=10):
 			result = result.append(df,ignore_index=True)
 
 		# Find matches from the distance catalog and add them in
-		s = np.zeros((len(gaiadist),len(result)))
-		s = s + gaiadist.Source.values[:,np.newaxis]
-		s = s - result.gaiaid.values[np.newaxis,:]
-		ind = np.where(s == 0)[1]
-
-		result.gaiadist.iloc[ind] = gaiadist.rest
-		result.gaiadist_u.iloc[ind] = gaiadist.B_rest
-		result.gaiadist_l.iloc[ind] = gaiadist.b_rest
+		if False:
+			s = np.zeros((len(gaiadist),len(result)))
+			s = s + gaiadist.Source.values[:,np.newaxis]
+			s = s - result.gaiaid.values[np.newaxis,:]
+			inds = np.where(s == 0)[0]
+			ind = np.zeros(len(result))
+			ind[inds] = 1
+			ind = ind > 0
+			print(max(ind),len(result))
+			print('ind ',ind,type(ind))
+			result.gaiadist.iloc[ind] = gaiadist.rest
+			result.gaiadist_u.iloc[ind] = gaiadist.B_rest
+			result.gaiadist_l.iloc[ind] = gaiadist.b_rest
 	
 	result = result.iloc[result.tmag.values < magnitude_limit]
 	no_targets_found_message = ('Either no sources were found in the query region '
