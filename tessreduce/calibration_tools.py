@@ -422,7 +422,7 @@ def Isolated_stars(pos,Tmag,flux,Median, Distance = 7, Aperture=3, Mag = 16):
     """
     
     #pos, Tmag = sd.Get_PS1(tpf,magnitude_limit=18)
-    pos_shift = pos -.5
+    pos_shift = pos + 0.5
     ind = ((Distance//2< pos_shift[:,0]) & (pos_shift[:,0]< flux.shape[1]-Distance//2) & 
           (Distance//2< pos_shift[:,1]) & (pos_shift[:,1]< flux.shape[1]-Distance//2) &
           (Tmag < Mag))

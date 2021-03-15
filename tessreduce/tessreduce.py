@@ -34,6 +34,7 @@ from joblib import Parallel, delayed
 
 from .catalog_tools import *
 from .calibration_tools import *
+from .rescale_straps import correct_straps
 
 # turn off runtime warnings (lots from logic on nans)
 import warnings
@@ -45,6 +46,11 @@ package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
 from astropy.coordinates import SkyCoord
 from astropy import units as u
+
+def strip_units(data):
+	if type(data) != np.ndarray:
+		data = data.value
+	return data
 
 def Get_TESS(RA,DEC,Size=90,Sector=None):
 	"""
@@ -182,10 +188,36 @@ def Smooth_bkg(data, extrapolate = True):
 	if extrapolate:
 		estimate[np.isnan(estimate)] = nearest[np.isnan(estimate)]
 	
-	estimate = gaussian_filter(estimate,3)
+	estimate = gaussian_filter(estimate,2)
 
 	return estimate, bitmask
+
+
+def New_background(tpf,mask):
+	m = abs((mask & 1)) * 1.
+	bkg_smth = Background(tpf,m,include_straps=False)
+	mm = abs(m -1)*1.
+	mm[mm==0] = np.nan
+	strap = ((mask & 4) > 0) * 1.
+	strap[strap==0] = np.nan
+
+	data = tpf.flux
+	if type(data) != np.ndarray:
+		data = data.value
+	qes = np.zeros_like(bkg_smth) * np.nan
+	for i in range(data.shape[0]):
+		s = (data[i]*strap* mm)/bkg_smth[i]
+		q = np.zeros_like(s) * np.nan
+		for j in range(s.shape[1]):
+			q[:,j] = np.nanmedian(s[:,j])
+		q[np.isnan(q)] =1 
+		qes[i] = q
+	bkg = bkg_smth * qes
+	return bkg
 	
+
+
+
 def Strap_bkg(Data):
 	"""
 	Calculate the additional background signal associated with the vertical detector straps
@@ -336,8 +368,8 @@ def Background(TPF,Mask,parallel=True,include_straps=True):
 		# limit to only straps that are in this fov
 		straps = straps[((straps > 0) & (straps < Mask.shape[1]))]
 		strap_mask[:,straps] = 1
-		big_strap = convolve(strap_mask,np.ones((4,4))) > 0
-		big_mask = convolve((mask==0)*1,np.ones((3,3))) > 0
+		big_strap = convolve(strap_mask,np.ones((3,3))) > 0
+		big_mask = mask#convolve((mask==0)*1,np.ones((3,3))) > 0
 		flux = deepcopy(data)
 		if parallel:
 			num_cores = multiprocessing.cpu_count()
@@ -1249,22 +1281,32 @@ def Calibrate_lc(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
 
 ### Serious source mask
 
-def Make_mask(tpf,scale=1,strapsize=3,badpix=None):
+def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None):
 	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
 	wcs = tpf.wcs
 	image = tpf.flux[100]
-	gp,gm = Get_Gaia(tpf,magnitude_limit=16)
+	image = strip_units(image)
+
+	gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
 	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
-	pp,pm = Get_PS1(tpf,magnitude_limit=19)
-	ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
+	if tpf.dec > -30:
+		pp,pm = Get_PS1(tpf,magnitude_limit=maglim)
+		ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
+		mp  = ps1_auto_mask(ps1,image,scale)
+	else:
+		mp = {}
+		mp['all'] = np.zeros_like(image)
 	
 	sat = Big_sat(gaia,image,scale)
 	mg  = gaia_auto_mask(gaia,image,scale)
-	mp  = ps1_auto_mask(ps1,image,scale)
+	
 
 	sat = (np.nansum(sat,axis=0) > 0).astype(int) * 2 # assign 2 bit 
-	mask = ((mg['all']+mp['all']) > 0).astype(int) * 1 # assign 1 bit 
-	strap = Strap_mask(image,tpf.column,strapsize).astype(int) * 4 # assign 4 bit 
+	mask = ((mg['all']+mp['all']) > 0).astype(int) * 1 # assign 1 bit
+	if strapsize > 0: 
+		strap = Strap_mask(image,tpf.column,strapsize).astype(int) * 4 # assign 4 bit 
+	else:
+		strap = np.zeros_like(image,dtype=int)
 	if badpix is not None:
 		bp = cat_mask.Make_bad_pixel_mask(badpix, file)
 		totalmask = mask | sat | strap | bp
@@ -1273,7 +1315,27 @@ def Make_mask(tpf,scale=1,strapsize=3,badpix=None):
 	
 	return totalmask
 
+def Make_mask(tpf,maglim=19,scale=1,strapsize=3):
+	data = tpf.flux
+	data = strip_units(data)
 
+	mask = Cat_mask(tpf,maglim,scale,strapsize)
+	sources = ((mask & 1)+1 ==1) * 1.
+	sources[sources==0] = np.nan
+	tmp = np.nansum(data*sources,axis=(1,2))
+	tmp[tmp==0] = 1e12 # random big number 
+	ref = data[np.argmin(tmp)] * sources
+	try:
+		qe = correct_straps(ref,mask,parallel=True)
+	except:
+		qe = correct_straps(ref,mask,parallel=False)
+	mm = Source_mask(ref * qe * sources)
+	mm[np.isnan(mm)] = 0
+	mm = mm.astype(int)
+	mm = abs(mm-1)
+
+	fullmask = mask | (mm*1)
+	return fullmask
 
 #### CLUSTERING 
 
@@ -1325,3 +1387,84 @@ def Event_isolation(lc,err=None,duration=10,sig=3):
 	return lcs
 
 
+### Difference imaging
+
+def diff_lc(data,time=None,x=None,y=None,ra=None,dec=None,tpf=None,tar_ap=3,sky_in=5,sky_out=7,plot=False,mask=None):
+	data = strip_units(data)
+	if tar_ap // 2 == tar_ap / 2:
+		print(Warning('tar_ap must be odd, adding 1'))
+		tar_ap += 1
+	if sky_out // 2 == sky_out / 2:
+		print(Warning('sky_out must be odd, adding 1'))
+		sky_out += 1
+	if sky_in // 2 == sky_in / 2:
+		print(Warning('sky_out must be odd, adding 1'))
+		sky_in += 1
+		
+	if (ra is not None) & (dec is not None) & (tpf is not None):
+		x,y = tpf.wcs.all_world2pix(ra,dec,0)
+		x = int(x + 0.5)
+		y = int(y + 0.5)
+	ap_tar = np.zeros_like(data[0])
+	ap_sky = np.zeros_like(data[0])
+	ap_tar[y,x]= 1
+	ap_sky[y,x]= 1
+	ap_tar = convolve(ap_tar,np.ones((tar_ap,tar_ap)))
+	ap_sky = convolve(ap_sky,np.ones((sky_out,sky_out))) - convolve(ap_sky,np.ones((sky_in,sky_in)))
+	ap_sky[ap_sky == 0] = np.nan
+	
+	
+	temp = np.nansum(data*ap_tar,axis=(1,2))
+	ind = temp < np.percentile(temp,40)
+	med = np.nanmedian(data[ind],axis=0)
+	
+	diff = data - med
+	if mask is not None:
+		ap_sky = mask
+		ap_sky[ap_sky==0] = np.nan
+	sky_med = np.nanmedian(ap_sky*diff,axis=(1,2))
+	sky_std = np.nanstd(ap_sky*diff,axis=(1,2))
+	
+	tar = np.nansum(diff*ap_tar,axis=(1,2))
+	tar -= sky_med * tar_ap**2
+	tar_err = sky_std * tar_ap**2
+	tar[tar_err > 100] = np.nan
+	sky_med[tar_err > 100] = np.nan
+	if tpf is not None:
+		time = tpf.astropy_time.mjd
+	lc = np.array([time, tar, tar_err])
+	sky = np.array([time, sky_med, sky_std])
+	
+	if plot:
+		dif_diag_plot(lc,sky,diff,ap_tar,ap_sky)
+	
+	return lc, sky
+	
+def dif_diag_plot(lc,sky,data,ap_tar,ap_sky):
+	plt.figure(figsize=(9,4))
+	plt.subplot(121)
+	plt.fill_between(lc[0],lc[1]-lc[2],lc[1]+lc[2],alpha=.5)
+	plt.plot(lc[0],lc[1],'.',label='Target')
+	plt.fill_between(lc[0],sky[1]-sky[2],sky[1]+sky[2],alpha=.5,color='C1')
+	plt.plot(sky[0],sky[1],'.',label='Sky')
+	plt.xlabel('MJD')
+	plt.ylabel('Counts')
+	plt.legend(loc=4)
+	plt.subplot(122)
+	maxind = np.where((np.nanmax(lc[1]) == lc[1]))[0][0]
+	plt.imshow(data[maxind],origin='lower',
+			   vmin=np.percentile(data[maxind],16),
+			   vmax=np.percentile(data[maxind],99),
+			   aspect='auto')
+	plt.colorbar()
+	ap = ap_tar
+	ap[ap==0] = np.nan
+	#plt.imshow(ap,origin='lower',alpha = 0.2)
+	#plt.imshow(ap_sky,origin='lower',alpha = 0.8,cmap='hot')
+	y,x = np.where(ap_sky > 0)
+	plt.plot(x,y,'r.',alpha = 0.3)
+	
+	y,x = np.where(ap > 0)
+	plt.plot(x,y,'C1.',alpha = 0.3)
+
+	return

@@ -150,7 +150,7 @@ def Big_sat(table,Image,scale=1):
 def Strap_mask(Image,col,size=3):
     strap_mask = np.zeros_like(Image)
     path = '/user/rridden/feet/'
-    straps = pd.read_csv(package_directory + 'tess_straps.csv')['Column'].values - col + 43
+    straps = pd.read_csv(package_directory + 'tess_straps.csv')['Column'].values - col + 44
     strap_in_tpf = straps[((straps > 0) & (straps < Image.shape[1]))]
     strap_mask[:,strap_in_tpf] = 1
     big_strap = fftconvolve(strap_mask,np.ones((size,size)),mode='same') > .5
