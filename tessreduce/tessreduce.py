@@ -193,9 +193,9 @@ def Smooth_bkg(data, extrapolate = True):
 	return estimate, bitmask
 
 
-def New_background(tpf,mask):
+def New_background(tpf,mask,parallel=True):
 	m = abs((mask & 1)) * 1.
-	bkg_smth = Background(tpf,m,include_straps=False)
+	bkg_smth = Background(tpf,m,include_straps=False,parallel=parallel)
 	mm = abs(m -1)*1.
 	mm[mm==0] = np.nan
 	strap = ((mask & 4) > 0) * 1.
@@ -735,7 +735,8 @@ def Plotter(t,flux):
 
 
 def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=False,
-					scale = 'counts', bin_size = 0, plot = True, all_output = True):
+					scale = 'counts', bin_size = 0, plot = True, all_output = True,
+					mask_scale = 1,diff_lc = False):
 	"""
 	Reduce the images from the target pixel file and make a light curve with aperture photometry.
 	This background subtraction method works well on tpfs > 50x50 pixels.
@@ -796,16 +797,16 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=Fals
 	ref = Get_ref(tpf.flux)
 	print('made reference')
 	# make source mask
-	mask = Source_mask(ref,grid=0)
+	mask = Make_mask(tpf,maglim=18,strapsize=3,scale=mask_scale)#Source_mask(ref,grid=0)
 	print('made source mask')
 	# calculate background for each frame
 	print('calculating background')
 	try:
-		bkg = Background(tpf,mask,parallel=parallel)
+		bkg = New_background(tpf,mask,parallel=parallel)
 	except:
 		print('Something went wrong, switching to serial')
 		parallel = False
-		bkg = Background(tpf,mask,parallel=False)
+		bkg = New_background(tpf,mask,parallel=False)
 	bkg = np.array(bkg)
 
 	if np.isnan(bkg).all():
@@ -851,9 +852,11 @@ def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=Fals
 			' Can not calibrate at this time.')
 
 		err = Calculate_err(tpf,flux)
-
-	lc = Make_lc(tpf.astropy_time.mjd,flux,aperture=aper,bin_size=bin_size,
-				zeropoint = zp,scale=scale)#,normalise=False)
+	if diff_lc:
+		lc = Diff_lc(flux,tpf=tpf,ra=tpf.ra,dec=tpf.dec,plot=True,sky_in=5,sky_out=9)
+	else:
+		lc = Make_lc(tpf.astropy_time.mjd,flux,aperture=aper,bin_size=bin_size,
+					zeropoint = zp,scale=scale)#,normalise=False)
 
 	print('made light curve')
 	if all_output:
@@ -1389,7 +1392,7 @@ def Event_isolation(lc,err=None,duration=10,sig=3):
 
 ### Difference imaging
 
-def diff_lc(data,time=None,x=None,y=None,ra=None,dec=None,tpf=None,tar_ap=3,sky_in=5,sky_out=7,plot=False,mask=None):
+def Diff_lc(data,time=None,x=None,y=None,ra=None,dec=None,tpf=None,tar_ap=3,sky_in=5,sky_out=7,plot=False,mask=None):
 	data = strip_units(data)
 	if tar_ap // 2 == tar_ap / 2:
 		print(Warning('tar_ap must be odd, adding 1'))
