@@ -47,42 +47,11 @@ package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 
+
 def strip_units(data):
 	if type(data) != np.ndarray:
 		data = data.value
 	return data
-
-def Get_TESS(RA,DEC,Size=90,Sector=None):
-	"""
-	Use the lightcurve interface with TESScut to get an FFI cutout 
-	of a region around the given coords.
-
-	Parameters
-	----------
-	RA : float 
-		RA of the centre point 
-
-	DEC : float
-		Dec of the centre point
-
-	Size : int
-		size of the cutout
-
-	Sector : int
-		sector to download 
-
-	Returns
-	-------
-	tpf : lightkurve target pixel file
-		tess ffi cutout of the selected region
-	"""
-	c = SkyCoord(ra=float(RA)*u.degree, dec=float(DEC) *
-				 u.degree, frame='icrs')
-	
-	tess = lk.search_tesscut(c,sector=Sector)
-	tpf = tess.download(cutout_size=Size)
-	
-	return tpf
 
 
 def sigma_mask(data,sigma=3):
@@ -104,7 +73,6 @@ def sigma_mask(data,sigma=3):
 	"""
 	clipped = ~sigma_clip(data,sigma=sigma).mask
 	return clipped 
-
 
 def Source_mask(Data, grid=0):
 	"""
@@ -170,257 +138,28 @@ def Smooth_bkg(data, extrapolate = True):
 
 	"""
 	data[data == 0] = np.nan
-	x = np.arange(0, data.shape[1])
-	y = np.arange(0, data.shape[0])
-	arr = np.ma.masked_invalid(data)
-	xx, yy = np.meshgrid(x, y)
-	#get only the valid values
-	x1 = xx[~arr.mask]
-	y1 = yy[~arr.mask]
-	newarr = arr[~arr.mask]
-
-	estimate = griddata((x1, y1), newarr.ravel(),
-							  (xx, yy),method='linear')
-	bitmask = np.zeros_like(data,dtype=int)
-	bitmask[np.isnan(estimate)] = 128 | 4
-	nearest = griddata((x1, y1), newarr.ravel(),
-							  (xx, yy),method='nearest')
-	if extrapolate:
-		estimate[np.isnan(estimate)] = nearest[np.isnan(estimate)]
-	
-	estimate = gaussian_filter(estimate,2)
-
-	return estimate, bitmask
-
-
-def New_background(tpf,mask,parallel=True):
-	m = abs((mask & 1)) * 1.
-	bkg_smth = Background(tpf,m,include_straps=False,parallel=parallel)
-	mm = abs(m -1)*1.
-	mm[mm==0] = np.nan
-	strap = ((mask & 4) > 0) * 1.
-	strap[strap==0] = np.nan
-
-	data = tpf.flux
-	if type(data) != np.ndarray:
-		data = data.value
-	qes = np.zeros_like(bkg_smth) * np.nan
-	for i in range(data.shape[0]):
-		s = (data[i]*strap* mm)/bkg_smth[i]
-		q = np.zeros_like(s) * np.nan
-		for j in range(s.shape[1]):
-			q[:,j] = np.nanmedian(s[:,j])
-		q[np.isnan(q)] =1 
-		qes[i] = q
-	bkg = bkg_smth * qes
-	return bkg
-	
-
-
-
-def Strap_bkg(Data):
-	"""
-	Calculate the additional background signal associated with the vertical detector straps
-
-	Parameters
-	----------
-	Data : array
-		A single masked image with only the strap regions preserved
-
-	Returns:
-	--------
-	strap_bkg : array
-		additional background from the detector straps 
-
-	"""
-
-	data = deepcopy(Data)
-	data[data == 0] = np.nan
-	strap_data = data[np.nansum(abs(data),axis=0)>0]
-	source_mask = (data < np.percentile(strap_data[np.isfinite(strap_data)],70)) * 1.
-	data = data * (source_mask == 1)
-	data[data==0] = np.nan
-	
-	ind = np.where(np.nansum(abs(data),axis=0)>0)[0]
-	strap_bkg = np.zeros_like(Data)
-	for col in ind:
-		x = np.arange(0,data.shape[1])
-		y = data[:,col].copy()
-		finite = np.isfinite(y)
-		if len(y[finite]) > 5:
-			finite = np.isfinite(y)
-			bad = ~sigma_mask(y[finite],sigma=3)
-			finite = np.where(finite)[0]
-			y[finite[bad]] = np.nan
-			finite = np.isfinite(y)
-			
-			if len(y[finite]) > 5:
-				fit = UnivariateSpline(x[finite], y[finite])
-
-				p = fit(x)
-				finite = np.isfinite(p)
-				smooth =savgol_filter(p[finite],13,3)
-				p[finite] = smooth
-
-				thingo = y - p
-				finite = np.isfinite(thingo)
-				bad = ~sigma_mask(thingo[finite],sigma=3)
-				finite = np.where(finite)[0]
-				y[finite[bad]] = np.nan
-				finite = np.isfinite(y)
-				
-				if len(y[finite]) > 5:
-					fit = UnivariateSpline(x[finite], y[finite])
-					p = fit(x)
-					finite = np.isfinite(p)
-					smooth =savgol_filter(p[finite],13,3)
-					p[finite] = smooth
-					strap_bkg[:,col] = p
-
-	return strap_bkg
-
-def Calculate_bkg(data,straps,big_mask,big_strap,include_straps=True):
-	"""
-	Function to calculate the background for a TESS tpf frame.
-
-	Parameters
-	----------
-	data : array
-		A single image 
-
-	straps : array
-		position of straps relative to the image 
-
-	big_mask : array
-		source mask convolved with a 3x3 kernal
-
-	big_strap : array
-		strap mask convolved with a 3x3 kernal
-
-	Returns
-	-------
-	frame_bkg : array
-		background estimate for a frame
-
-	"""
-	
 	if np.nansum(data) > 0:
-		masked = data * ((big_mask==0)*1) * ((big_strap==0)*1)
-		masked[masked == 0] = np.nan
-		bkg_smooth, bitmask = Smooth_bkg(masked, extrapolate = True)
-		round1 = data - bkg_smooth
-		round2 = round1 * (big_strap==1)*1
-		round2[round2 == 0] = np.nan
-		if (np.nansum(straps) > 1) & include_straps:
-			strap_bkg = Strap_bkg(round2)
-		else:
-			strap_bkg = np.zeros_like(data)
-		frame_bkg = strap_bkg + bkg_smooth
-		frame_bkg += np.nanmedian(frame_bkg * big_strap * big_mask)
-	else:
-		frame_bkg = np.zeros_like(data) * np.nan
-	return frame_bkg
+		x = np.arange(0, data.shape[1])
+		y = np.arange(0, data.shape[0])
+		arr = np.ma.masked_invalid(data)
+		xx, yy = np.meshgrid(x, y)
+		#get only the valid values
+		x1 = xx[~arr.mask]
+		y1 = yy[~arr.mask]
+		newarr = arr[~arr.mask]
 
-
-def Small_background(tpf,Mask):
-	bkg = np.zeros_like(tpf.flux)
-	flux = tpf.flux
-	lim = np.percentile(flux,10,axis=(1,2))
-	ind = flux > lim[:,np.newaxis,np.newaxis]
-	flux[ind] = np.nan
-	val = np.nanmedian(flux,axis=(1,2))
-	bkg[:,:,:] = val[:,np.newaxis,np.newaxis]
-	return bkg
-
-def Background(TPF,Mask,parallel=True,include_straps=True):
-	"""
-	Calculate the background for the tpf, accounting for straps.
-
-	Parameters
-	----------
-	TPF : lightkurve target pixel file
-		tpf of interest
-
-	Mask : array
-		source mask
-
-	parallel : bool
-		determine if the background is calculated in parallel
-
-	Returns
-	-------
-	bkg : array
-		background for all frames in the tpf
-
-	"""
-	if (TPF.flux.shape[1] > 30) & (TPF.flux.shape[2] > 30):
-		mask = deepcopy(Mask)
-		# hack solution for new lightkurve
-		if type(TPF.flux) != np.ndarray:
-			data = TPF.flux.value
-		else:
-			data = TPF.flux
-
-		bkg = np.zeros_like(data) * np.nan
+		estimate = griddata((x1, y1), newarr.ravel(),
+								  (xx, yy),method='linear')
+		nearest = griddata((x1, y1), newarr.ravel(),
+								  (xx, yy),method='nearest')
+		if extrapolate:
+			estimate[np.isnan(estimate)] = nearest[np.isnan(estimate)]
 		
-		strap_mask = np.zeros_like(data[0])
-		straps = pd.read_csv(package_directory + 'tess_straps.csv')['Column'].values + 44 - TPF.column
-		# limit to only straps that are in this fov
-		straps = straps[((straps > 0) & (straps < Mask.shape[1]))]
-		strap_mask[:,straps] = 1
-		big_strap = convolve(strap_mask,np.ones((3,3))) > 0
-		big_mask = mask#convolve((mask==0)*1,np.ones((3,3))) > 0
-		flux = deepcopy(data)
-		if parallel:
-			num_cores = multiprocessing.cpu_count()
-			bkg = Parallel(n_jobs=num_cores)(delayed(Calculate_bkg)(frame,straps,big_mask,big_strap,include_straps=include_straps) for frame in flux)
-		else:
-			for i in range(flux.shape[0]):
-				bkg[i] = Calculate_bkg(flux[i],straps,big_mask,big_strap,include_straps=include_straps)
+		estimate = gaussian_filter(estimate,1)
 	else:
-		print('Small tpf, using percentile cut background')
-		bkg = Small_background(TPF,Mask)
+		estimate = np.zeros_like(data) * np.nan
 
-	return bkg
-
-def Get_ref(data,start = None, stop = None):
-	'''
-	Get refernce image to use for subtraction and mask creation.
-	The image is made from all images with low background light.
-
-	Parameters
-	----------
-	data : array
-		3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
-
-	Returns
-	-------
-	reference : array
-		reference array from which the source mask is identified
-	'''
-	# hack solution for new lightkurve
-
-	if type(data) != np.ndarray:
-		data = data.value
-	if (start is None) & (stop is None):
-		d = data[np.nansum(data,axis=(1,2)) > 100]
-		summed = np.nansum(d,axis=(1,2))
-		lim = np.percentile(summed[np.isfinite(summed)],5)
-		ind = np.where((summed < lim))[0]
-		reference = np.nanmedian(d[ind],axis=(0))
-	elif (start is not None) & (stop is None):
-		start = int(start)
-		reference = np.nanmedian(data[start:],axis=(0))
-
-	elif (start is None) & (stop is not None):
-		stop = int(stop)
-		reference = np.nanmedian(data[:stop],axis=(0))
-
-	else:
-		start = int(start)
-		stop = int(stop)
-		reference = np.nanmedian(data[start:stop],axis=(0))
-	return reference
+	return estimate
 
 def Calculate_shifts(data,mx,my,daofind):
 	"""
@@ -463,63 +202,6 @@ def Calculate_shifts(data,mx,my,daofind):
 			shifts[1,indo] = y[ind] - my[indo]
 	return shifts
 
-def Centroids_DAO(Flux,Median,TPF=None,parallel = False):
-	"""
-	Calculate the centroid shifts of time series images.
-	
-	Parameters
-	----------
-	Flux : array 
-		3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
-
-	Median : array
-		median image used for the position reference
-
-	TPF : lightkurve targetpixelfile
-		tpf
-	
-	parallel : bool
-		if True then parallel processing will be used for shift calculations
-
-	Returns
-	-------
-	smooth : array
-		smoothed displacement of the centroids compared to the Median
-	"""
-	# hack solution for new lightkurve
-	if type(Flux) != np.ndarray:
-		Flux = Flux.value
-
-	m = Median.copy()
-	f = deepcopy(Flux)#TPF.flux.copy()
-	mean, med, std = sigma_clipped_stats(m, sigma=3.0)
-	
-	daofind = DAOStarFinder(fwhm=3.0, threshold=5.*std)
-	s = daofind(m - med)
-	mx = s['xcentroid']
-	my = s['ycentroid']
-	
-	if parallel:
-		
-		num_cores = multiprocessing.cpu_count()
-		shifts = Parallel(n_jobs=num_cores)(
-			delayed(Calculate_shifts)(frame,mx,my,daofind) for frame in f)
-		shifts = np.array(shifts)
-	else:
-		shifts = np.zeros((len(f),2,len(mx))) * np.nan
-		for i in range(len(f)):
-			shifts[i,:,:] = Calculate_shifts(f[i],mx,my,daofind)
-
-
-	meds = np.nanmedian(shifts,axis = 2)
-	meds[~np.isfinite(meds)] = 0
-	
-	smooth = Smooth_motion(meds,TPF)
-	nans = np.nansum(f,axis=(1,2)) ==0
-	smooth[nans] = np.nan
-
-	return smooth
-
 def Smooth_motion(Centroids,tpf):
 	"""
 	Calculate the smoothed centroid shift 
@@ -541,7 +223,7 @@ def Smooth_motion(Centroids,tpf):
 	"""
 	smoothed = np.zeros_like(Centroids) * np.nan
 	try:
-		split = np.where(np.diff(tpf.astropy_time.mjd) > 0.5)[0][0] + 1
+		split = np.where(np.diff(tpf.time.mjd) > 0.5)[0][0] + 1
 		# ugly, but who cares
 		ind1 = np.nansum(tpf.flux[:split],axis=(1,2))
 		ind1 = np.where(ind1 != 0)[0]
@@ -556,41 +238,6 @@ def Smooth_motion(Centroids,tpf):
 		smoothed[:,0] = savgol_filter(Centroids[:,0],51,3)		
 		smoothed[:,1] = savgol_filter(Centroids[:,1],51,3)
 	return smoothed
-
-
-def Shift_images(Offset,Data,median=False):
-	"""
-	Shifts data by the values given in offset. Breaks horribly if data is all 0.
-
-	Parameters
-	----------
-	Offset : array 
-		centroid offsets relative to a reference image
-
-	Data : array
-		3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
-
-	median : bool
-		if true then the shift direction will be reveresed to shift the reference
-
-	Returns
-	-------
-	shifted : array
-		array shifted to match the offsets given
-
-	"""
-	# hack solution for new lightkurve
-	if type(Data) != np.ndarray:
-		Data = Data.value
-
-	shifted = Data.copy()
-	data = Data.copy()
-	data[data<0] = 0
-	for i in range(len(data)):
-		if np.nansum(data[i]) > 0:
-			shifted[i] = shift(data[i],[-Offset[i,1],-Offset[i,0]],mode='nearest',order=3)
-	return shifted
-
 
 def Lightcurve(flux, aper,zeropoint=20.44, normalise = False):
 	"""
@@ -635,237 +282,845 @@ def Lightcurve(flux, aper,zeropoint=20.44, normalise = False):
 
 	return LC
 
-def bin_data(flux,t,bin_size):
-	"""
-	Bin a light curve to the desired duration specified by bin_size
 
-	Parameters
-	----------
-	flux : array
-		light curve in counts 
+class tessreduce():
 
-	t : array
-		time array
+	def __init__(self,ra=None,dec=None,tpf=None,size=90,sector=None,reduce=False,verbose=1):
+		self.ra   = ra
+		self.dec   = dec 
+		self.size   = size
+		self.align   = True
+		self.sector   = sector
+		self.verbose   = verbose
+		self.parallel   = True
+		self.calibrate   = False
 
-	bin_size : int
-		number of bins to average over
 
-	Returns
-	-------
-	lc : array
-		time averaged light curve
-	t[x] : array
-		time averaged time 
-	"""
-	bin_size = int(bin_size)
-	lc = []
-	x = []
-	for i in range(int(len(flux)/bin_size)):
-		if np.isnan(flux[i*bin_size:(i*bin_size)+bin_size]).all():
-			lc.append(np.nan)
-			x.append(int(i*bin_size+(bin_size/2)))
+		# calculated 
+		self.mask   = None
+		self.shift  = None
+		self.bkg    = None
+		self.flux   = None
+		self.ref    = None
+		self.wcs    = None
+		self.qe     = None
+		self.lc     = None
+		self.sky    = None
+		self.events = None
+		self.zp     = 20.44 # default value 
+
+		if tpf is not None:
+			self.flux = strip_units(tpf.flux)
+			self.wcs  = tpf.wcs
+			self.ra   = tpf.ra
+			self.dec  = tpf.dec
+
+		elif self.check_coord():
+			self.Get_TESS()
+
+		if reduce:
+			self.reduce()
+
+
+	def check_coord(self):
+		if (self.ra is None) | (self.dec is None):
+			return False
 		else:
-			lc.append(np.nanmedian(flux[i*bin_size:(i*bin_size)+bin_size]))
-			x.append(int(i*bin_size+(bin_size/2)))
-	lc = np.array(lc)
-	x = np.array(x)
-	return lc, t[x]
+			return True
 
+	def Get_TESS(self,ra=None,dec=None,Size=None,Sector=None):
+		"""
+		Use the lightcurve interface with TESScut to get an FFI cutout 
+		of a region around the given coords.
 
-def Make_lc(t,flux,aperture = None,bin_size=0,zeropoint=None,scale='counts',clip = False):
-	"""
-	Perform aperature photometry on a time series of images
+		Parameters
+		----------
+		RA : float 
+			RA of the centre point 
 
-	Parameters
-	----------
-	flux : array
+		DEC : float
+			Dec of the centre point
 
-	t : array
-		time 
+		Size : int
+			size of the cutout
 
-	aper : None, list, array
-		aperature to do aperature photometry on.
+		Sector : int
+			sector to download 
 
-
-	bin_size : int
-		number of points to average
-
-	normalise : bool
-		if true the light curve is normalised to the median
-
-	Returns
-	-------
-	lc : array 
-		light curve for the pixels defined by the aperture
-	"""
-	# hack solution for new lightkurve
-	if type(flux) != np.ndarray:
-		flux = flux.value
-
-	if type(aperture) == type(None):
-		aper = np.zeros_like(flux[0])
-		aper[int(aper.shape[0]/2),int(aper.shape[1]/2)] = 1
-		aper = convolve(aper,np.ones((3,3)))
-		temp = np.zeros_like(flux[0])
-	elif type(aperture) == list:
-		temp = np.zeros_like(flux[0])
-		temp[aperture[0],aperture[1]] = 1 
-		aper = temp
-	elif type(aperture) == np.ndarray:
-		aper = aperture * 1.
-		 
-	lc = Lightcurve(flux,aper)   #,scale = scale)
-	if clip:
-		mask = ~sigma_mask(lc)
-		lc[mask] = np.nan
-	if bin_size > 1:
-		lc, t = bin_data(lc,t,bin_size)
-	lc = np.array([t,lc])
-	if (zeropoint is not None) & (scale=='mag'):
-		lc[1,:] = -2.5*np.log10(lc[1,:]) + zeropoint
-	return lc
-
-def Plotter(t,flux):
-	plt.figure()
-	plt.plot(t,flux)
-	plt.ylabel('Counts')
-	plt.xlabel('Time MJD')
-	plt.show()
-	return
-
-
-def Quick_reduce(tpf, aper = None, shift = True, parallel = True, calibrate=False,
-					scale = 'counts', bin_size = 0, plot = True, all_output = True,
-					mask_scale = 1,diff_lc = False):
-	"""
-	Reduce the images from the target pixel file and make a light curve with aperture photometry.
-	This background subtraction method works well on tpfs > 50x50 pixels.
-
-	Parameters 
-	----------
-	tpf : lightkurve target pixel file
-		tpf to act on 
-
-	aper : None, list, array
-		aperature to do photometry on
-
-	shift : bool
-		if True the flux array will be shifted to match the position of a reference
-
-	parallel : bool
-		if True parallel processing will be used for background estimation and centroid shifts 
-
-	scale : str
-		options = [counts, magnitude, flux, normalise]
-		if True the light curve will be normalised to the median
-
-	bin_size : int
-		if > 1 then the lightcurve will be binned by that amount
-
-	all_output : bool
-		if True then the lc, flux, reference and background will be returned.
-
-	Returns
-	-------
-	if all_output = True
-		lc : array 
-			light curve
-
-		flux : array
-			shifted images to match the reference
-
-		ref : array
-			reference array used in image matching
-		
-		bkg : array
-			array of background flux avlues for each image
+		Returns
+		-------
+		tpf : lightkurve target pixel file
+			tess ffi cutout of the selected region
+		"""
+		if (ra is not None) & (dec is not None):
+			c = SkyCoord(ra=float(ra)*u.degree, dec=float(dec) *
+						 u.degree, frame='icrs')
+		else:
+			c = SkyCoord(ra=float(self.ra)*u.degree, dec=float(self.dec) *
+						 u.degree, frame='icrs')
+		if Sector is None:
+			Sector = self.sector
+		tess = lk.search_tesscut(c,sector=Sector)
+		if Size is None:
+			Size = self.size
+		tpf = tess.download(cutout_size=Size)
 	
-	else
-		lc : array 
-			light curve
-	"""
-	# make reference
-	if (tpf.flux.shape[1] < 30) & (tpf.flux.shape[2] < 30):
-		small = True	
-	else:
-		small = False
+		self.tpf  = tpf
+		self.flux = strip_units(tpf.flux)
+		self.wcs  = tpf.wcs
 
-	if small & shift:
-		print('Unlikely to get good shifts from a small tpf, so shift has been set to False')
-		shift = False
+	def Make_mask(self,maglim=19,scale=1,strapsize=4):
+		data = strip_units(self.flux)
 
-	ref = Get_ref(tpf.flux)
-	print('made reference')
-	# make source mask
-	mask = Make_mask(tpf,maglim=18,strapsize=3,scale=mask_scale)#Source_mask(ref,grid=0)
-	print('made source mask')
-	# calculate background for each frame
-	print('calculating background')
-	try:
-		bkg = New_background(tpf,mask,parallel=parallel)
-	except:
-		print('Something went wrong, switching to serial')
-		parallel = False
-		bkg = New_background(tpf,mask,parallel=False)
-	bkg = np.array(bkg)
-
-	if np.isnan(bkg).all():
-		# check to see if the background worked
-		raise ValueError('bkg all nans')
-	
-	if type(tpf.flux) != np.ndarray:
-		flux = tpf.flux.value
-	else:
-		flux = tpf.flux
-
-	flux = flux - bkg
-	print('background subtracted')
-	ref = Get_ref(flux)
-	#return flux, bkg
-	if np.isnan(flux).all():
-		raise ValueError('flux all nans')
-
-	if shift:
-		print('calculating centroids')
+		mask = Cat_mask(self.tpf,maglim,scale,strapsize)
+		sources = ((mask & 1)+1 ==1) * 1.
+		sources[sources==0] = np.nan
+		tmp = np.nansum(data*sources,axis=(1,2))
+		tmp[tmp==0] = 1e12 # random big number 
+		ref = data[np.argmin(tmp)] * sources
 		try:
-			offset = Centroids_DAO(flux,ref,TPF=tpf,parallel=parallel)
+			qe = correct_straps(ref,mask,parallel=True)
 		except:
-			print('Something went wrong, switching to serial')
-			parallel = False
-			offset = Centroids_DAO(flux,ref,TPF=tpf,parallel=parallel)
+			qe = correct_straps(ref,mask,parallel=False)
+		mm = Source_mask(ref * qe * sources)
+		mm[np.isnan(mm)] = 0
+		mm = mm.astype(int)
+		mm = abs(mm-1)
 
-		flux = Shift_images(offset,flux)
+		fullmask = mask | (mm*1)
+		self.mask = fullmask
 
-		print('images shifted')
-	
-	
-	
+	def background(self):
 
-	zp = np.array([20.44,0])
-	mask = Source_mask(ref,grid=0)
-	err = np.mean(mask*flux,axis=(1,2))
-	if calibrate & (tpf.dec >= -30):
-		zp,err = Calibrate_lc(tpf,flux)
+		m = (self.mask == 0) * 1.
+		m[m==0] = np.nan
 
-	elif calibrate & (tpf.dec < -30):
-		print('Target is too far south with Dec = {} for PS1 photometry.'.format(tpf.dec) +
-			' Can not calibrate at this time.')
+		if (self.flux.shape[1] > 30) & (self.flux.shape[2] > 30):
+			flux = strip_units(self.flux)
 
-		err = Calculate_err(tpf,flux)
-	if diff_lc:
-		lc = Diff_lc(flux,tpf=tpf,ra=tpf.ra,dec=tpf.dec,plot=True,sky_in=5,sky_out=9)
-	else:
-		lc = Make_lc(tpf.astropy_time.mjd,flux,aperture=aper,bin_size=bin_size,
-					zeropoint = zp,scale=scale)#,normalise=False)
+			bkg_smth = np.zeros_like(flux) * np.nan
+			if self.parallel:
+				num_cores = multiprocessing.cpu_count()
+				bkg_smth = Parallel(n_jobs=num_cores)(delayed(Smooth_bkg)(frame) for frame in flux*m)
+			else:
+				for i in range(flux.shape[0]):
+					bkg_smth[i] = Smooth_bkg(flux[i]*m)
+		else:
+			print('Small tpf, using percentile cut background')
+			bkg_smth = self.Small_background()
 
-	print('made light curve')
-	if all_output:
-		out = {'lc': lc,'err':err, 'flux':flux,'ref':ref,'bkg':bkg,'zp':zp}
+		mm = (self.mask & ~4) == 0 
+		mm[mm==0] = np.nan
+		strap = ((self.mask & 4) > 0) * 1.
+		strap[strap==0] = np.nan
 
-		return out
-	else:
-		return lc
+		data = strip_units(self.flux)
+		if type(data) != np.ndarray:
+			data = data.value
+		qes = np.zeros_like(bkg_smth) * np.nan
+		for i in range(data.shape[0]):
+			s = (data[i]*strap* mm)/bkg_smth[i]
+			q = np.zeros_like(s) * np.nan
+			for j in range(s.shape[1]):
+				q[:,j] = np.nanmedian(s[:,j])
+			q[np.isnan(q)] =1 
+			qes[i] = q
+		bkg = bkg_smth * qes
+		
+		self.qe = qes 
+		self.bkg = bkg 
 
+
+	def Small_background(self):
+		bkg = np.zeros_like(self.flux)
+		flux = strip_units(self.flux)
+		lim = np.percentile(flux,10,axis=(1,2))
+		ind = flux > lim[:,np.newaxis,np.newaxis]
+		flux[ind] = np.nan
+		val = np.nanmedian(flux,axis=(1,2))
+		bkg[:,:,:] = val[:,np.newaxis,np.newaxis]
+		self.bkg = bkg
+
+	def get_ref(self,start = None, stop = None):
+		'''
+		Get refernce image to use for subtraction and mask creation.
+		The image is made from all images with low background light.
+
+		Parameters
+		----------
+		data : array
+			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
+
+		Returns
+		-------
+		reference : array
+			reference array from which the source mask is identified
+		'''
+		# hack solution for new lightkurve
+		data = strip_units(self.flux)
+		if type(data) != np.ndarray:
+			data = data.value
+		if (start is None) & (stop is None):
+			d = data[np.nansum(data,axis=(1,2)) > 100]
+			summed = np.nansum(d,axis=(1,2))
+			lim = np.percentile(summed[np.isfinite(summed)],5)
+			ind = np.where((summed < lim))[0]
+			reference = np.nanmedian(d[ind],axis=(0))
+		elif (start is not None) & (stop is None):
+			start = int(start)
+			reference = np.nanmedian(data[start:],axis=(0))
+
+		elif (start is None) & (stop is not None):
+			stop = int(stop)
+			reference = np.nanmedian(data[:stop],axis=(0))
+
+		else:
+			start = int(start)
+			stop = int(stop)
+			reference = np.nanmedian(data[start:stop],axis=(0))
+		self.ref = reference
+
+
+	def Centroids_DAO(self):
+		"""
+		Calculate the centroid shifts of time series images.
+		
+		Parameters
+		----------
+		Flux : array 
+			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
+
+		Median : array
+			median image used for the position reference
+
+		TPF : lightkurve targetpixelfile
+			tpf
+		
+		parallel : bool
+			if True then parallel processing will be used for shift calculations
+
+		Returns
+		-------
+		smooth : array
+			smoothed displacement of the centroids compared to the Median
+		"""
+		# hack solution for new lightkurve
+		f = strip_units(self.flux)
+		m = self.ref.copy()
+
+		mean, med, std = sigma_clipped_stats(m, sigma=3.0)
+		
+		daofind = DAOStarFinder(fwhm=3.0, threshold=5.*std)
+		s = daofind(m - med)
+		mx = s['xcentroid']
+		my = s['ycentroid']
+		
+		if self.parallel:
+			
+			num_cores = multiprocessing.cpu_count()
+			shifts = Parallel(n_jobs=num_cores)(
+				delayed(Calculate_shifts)(frame,mx,my,daofind) for frame in f)
+			shifts = np.array(shifts)
+		else:
+			shifts = np.zeros((len(f),2,len(mx))) * np.nan
+			for i in range(len(f)):
+				shifts[i,:,:] = Calculate_shifts(f[i],mx,my,daofind)
+
+
+		meds = np.nanmedian(shifts,axis = 2)
+		meds[~np.isfinite(meds)] = 0
+		
+		smooth = Smooth_motion(meds,self.tpf)
+		nans = np.nansum(f,axis=(1,2)) ==0
+		smooth[nans] = np.nan
+		self.shift = smooth
+
+
+
+
+
+	def Shift_images(self,median=False):
+		"""
+		Shifts data by the values given in offset. Breaks horribly if data is all 0.
+
+		Parameters
+		----------
+		Offset : array 
+			centroid offsets relative to a reference image
+
+		Data : array
+			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
+
+		median : bool
+			if true then the shift direction will be reveresed to shift the reference
+
+		Returns
+		-------
+		shifted : array
+			array shifted to match the offsets given
+
+		"""
+		# hack solution for new lightkurve
+
+		Data = self.flux
+		Offset = self.shift
+
+		shifted = Data.copy()
+		data = Data.copy()
+		data[data<0] = 0
+		for i in range(len(data)):
+			if np.nansum(data[i]) > 0:
+				shifted[i] = shift(data[i],[-Offset[i,1],-Offset[i,0]],mode='nearest',order=3)
+		self.flux = shifted
+
+
+
+
+	def bin_data(self,bin_size = 12):
+		"""
+		Bin a light curve to the desired duration specified by bin_size
+
+		Parameters
+		----------
+		flux : array
+			light curve in counts 
+
+		t : array
+			time array
+
+		bin_size : int
+			number of bins to average over
+
+		Returns
+		-------
+		lc : array
+			time averaged light curve
+		t[x] : array
+			time averaged time 
+		"""
+		flux = self.lc[1]
+		t    = self.lc[0]
+		bin_size = int(bin_size)
+		lc = []
+		x = []
+		for i in range(int(len(flux)/bin_size)):
+			if np.isnan(flux[i*bin_size:(i*bin_size)+bin_size]).all():
+				lc.append(np.nan)
+				x.append(int(i*bin_size+(bin_size/2)))
+			else:
+				lc.append(np.nanmedian(flux[i*bin_size:(i*bin_size)+bin_size]))
+				x.append(int(i*bin_size+(bin_size/2)))
+		binlc = np.array([t[x],lc])
+		return binlc
+
+
+	def Diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,sky_in=5,sky_out=7,plot=False,mask=None):
+		data = strip_units(self.flux)
+		if ((ra is None) | (dec is None)) & ((x is None) | (y is None)):
+			ra = self.ra 
+			dec = self.dec
+
+		if tar_ap // 2 == tar_ap / 2:
+			print(Warning('tar_ap must be odd, adding 1'))
+			tar_ap += 1
+		if sky_out // 2 == sky_out / 2:
+			print(Warning('sky_out must be odd, adding 1'))
+			sky_out += 1
+		if sky_in // 2 == sky_in / 2:
+			print(Warning('sky_out must be odd, adding 1'))
+			sky_in += 1
+			
+		if (ra is not None) & (dec is not None) & (self.tpf is not None):
+			x,y = self.wcs.all_world2pix(ra,dec,0)
+			x = int(x + 0.5)
+			y = int(y + 0.5)
+		elif (x is None) & (y is None):
+			x,y = self.wcs.all_world2pix(self.ra,self.dec,0)
+			x = int(x + 0.5)
+			y = int(y + 0.5)
+		ap_tar = np.zeros_like(data[0])
+		ap_sky = np.zeros_like(data[0])
+		ap_tar[y,x]= 1
+		ap_sky[y,x]= 1
+		ap_tar = convolve(ap_tar,np.ones((tar_ap,tar_ap)))
+		ap_sky = convolve(ap_sky,np.ones((sky_out,sky_out))) - convolve(ap_sky,np.ones((sky_in,sky_in)))
+		ap_sky[ap_sky == 0] = np.nan
+		
+		
+		temp = np.nansum(data*ap_tar,axis=(1,2))
+		ind = temp < np.percentile(temp,40)
+		med = np.nanmedian(data[ind],axis=0)
+		
+		diff = data - med
+		if mask is not None:
+			ap_sky = mask
+			ap_sky[ap_sky==0] = np.nan
+		sky_med = np.nanmedian(ap_sky*diff,axis=(1,2))
+		sky_std = np.nanstd(ap_sky*diff,axis=(1,2))
+		
+		tar = np.nansum(diff*ap_tar,axis=(1,2))
+		tar -= sky_med * tar_ap**2
+		tar_err = sky_std * tar_ap**2
+		tar[tar_err > 100] = np.nan
+		sky_med[tar_err > 100] = np.nan
+		if self.tpf is not None:
+			time = self.tpf.time.mjd
+		lc = np.array([time, tar, tar_err])
+		sky = np.array([time, sky_med, sky_std])
+		
+		if plot:
+			dif_diag_plot(lc,sky,diff,ap_tar,ap_sky)
+		
+		return lc, sky
+
+	def plotter(self,lc=None):
+		if lc is None:
+			lc = self.lc
+		plt.figure()
+		if lc.shape[0] > lc.shape[1]:
+			plt.plot(lc[:,0],lc[:,1])
+		else:
+			plt.plot(lc[0],lc[1])
+		plt.ylabel('Counts')
+		plt.xlabel('Time MJD')
+		plt.show()
+		return
+
+	def reduce(self, aper = None, shift = True, parallel = True, calibrate=False,
+						scale = 'counts', bin_size = 0, plot = True, all_output = True,
+						mask_scale = 1,diff_lc = True):
+		"""
+		Reduce the images from the target pixel file and make a light curve with aperture photometry.
+		This background subtraction method works well on tpfs > 50x50 pixels.
+
+		Parameters 
+		----------
+		tpf : lightkurve target pixel file
+			tpf to act on 
+
+		aper : None, list, array
+			aperature to do photometry on
+
+		shift : bool
+			if True the flux array will be shifted to match the position of a reference
+
+		parallel : bool
+			if True parallel processing will be used for background estimation and centroid shifts 
+
+		scale : str
+			options = [counts, magnitude, flux, normalise]
+			if True the light curve will be normalised to the median
+
+		bin_size : int
+			if > 1 then the lightcurve will be binned by that amount
+
+		all_output : bool
+			if True then the lc, flux, reference and background will be returned.
+
+		Returns
+		-------
+		if all_output = True
+			lc : array 
+				light curve
+
+			flux : array
+				shifted images to match the reference
+
+			ref : array
+				reference array used in image matching
+			
+			bkg : array
+				array of background flux avlues for each image
+		
+		else
+			lc : array 
+				light curve
+		"""
+		# make reference
+		if (self.flux.shape[1] < 30) & (self.flux.shape[2] < 30):
+			small = True	
+		else:
+			small = False
+
+		if small & shift:
+			print('Unlikely to get good shifts from a small tpf, so shift has been set to False')
+			shift = False
+
+		self.get_ref()
+		if self.verbose > 0:
+			print('made reference')
+		# make source mask
+		self.Make_mask(maglim=18,strapsize=4,scale=mask_scale)#Source_mask(ref,grid=0)
+		if np.nansum(self.mask) < self.mask.shape[0] * self.mask.shape[1] * .1:
+			print('mask is too dense, lowering mask_scale to 0.5')
+			self.Make_mask(maglim=18,strapsize=4,scale=0.5)
+		if self.verbose > 0:
+			print('made source mask')
+		# calculate background for each frame
+		if self.verbose > 0:
+			print('calculating background')
+		
+		self.background()
+
+		if np.isnan(self.bkg).all():
+			# check to see if the background worked
+			raise ValueError('bkg all nans')
+		
+		flux = strip_units(self.flux)
+
+		self.flux = self.flux - self.bkg
+		if self.verbose > 0:
+			print('background subtracted')
+		self.get_ref()
+		#return flux, bkg
+		if np.isnan(self.flux).all():
+			raise ValueError('flux all nans')
+
+		if self.align:
+			if self.verbose > 0:
+				print('calculating centroids')
+			try:
+				offset = self.Centroids_DAO()
+			except:
+				print('Something went wrong, switching to serial')
+				self.parallel = False
+				self.shift = Centroids_DAO()
+
+			self.Shift_images()
+			if self.verbose > 0:
+				print('images shifted')
+		
+		
+		
+
+		zp = np.array([20.44,0])
+		mask = (self.mask ==0) * 1.
+		mask[mask ==0] = np.nan
+		err = np.nanmean(mask*self.flux,axis=(1,2))
+		if calibrate & (self.dec >= -30):
+			zp,err = Calibrate_lc(self.tpf,self.flux)
+
+		elif calibrate & (self.dec < -30):
+			print('Target is too far south with Dec = {} for PS1 photometry.'.format(tpf.dec) +
+				' Can not calibrate at this time.')
+
+			err = Calculate_err(self.tpf,self.flux)
+
+		if diff_lc:
+			self.lc, self.sky = self.Diff_lc(plot=True,sky_in=5,sky_out=9)
+		else:
+			self.Make_lc(aperture=aper,bin_size=bin_size,
+				    			zeropoint = self.zp,scale=scale)#,normalise=False)
+		
+
+	def Make_lc(self,aperture = None,bin_size=0,zeropoint=None,scale='counts',clip = False):
+		"""
+		Perform aperature photometry on a time series of images
+
+		Parameters
+		----------
+		flux : array
+
+		t : array
+			time 
+
+		aper : None, list, array
+			aperature to do aperature photometry on.
+
+
+		bin_size : int
+			number of points to average
+
+		normalise : bool
+			if true the light curve is normalised to the median
+
+		Returns
+		-------
+		lc : array 
+			light curve for the pixels defined by the aperture
+		"""
+		# hack solution for new lightkurve
+		flux = strip_units(self.flux)
+		t = self.tpf.time.mjd
+
+		if type(aperture) == type(None):
+			aper = np.zeros_like(flux[0])
+			aper[int(aper.shape[0]/2),int(aper.shape[1]/2)] = 1
+			aper = convolve(aper,np.ones((3,3)))
+			temp = np.zeros_like(flux[0])
+		elif type(aperture) == list:
+			temp = np.zeros_like(flux[0])
+			temp[aperture[0],aperture[1]] = 1 
+			aper = temp
+		elif type(aperture) == np.ndarray:
+			aper = aperture * 1.
+			 
+		lc = Lightcurve(flux,aper)   #,scale = scale)
+		if clip:
+			mask = ~sigma_mask(lc)
+			lc[mask] = np.nan
+		if bin_size > 1:
+			lc, t = bin_data(t,lc,bin_size)
+		lc = np.array([t,lc])
+		if (zeropoint is not None) & (scale=='mag'):
+			lc[1,:] = -2.5*np.log10(lc[1,:]) + zeropoint
+		self.lc = lc
+
+	def lc_events(self,err=None,duration=10,sig=5):
+		lc = self.lc
+		ind = np.isfinite(lc[1])
+		lc = lc[:,ind]
+		mask = Cluster_cut(lc,err=err,sig=sig)
+		outliers = Identify_masks(mask)
+		good = np.nansum(outliers,axis=1) > duration
+		outliers = outliers[good]
+		print('Found {} events longer than {} frames at {} sigma'.format(outliers.shape[0],duration,sig))
+		temp = outliers * lc[1][np.newaxis,:]
+		lcs = []
+		for event in temp:
+			l = (self.lc[:2]).copy()
+			l[1,:] = np.nan
+			l[1,ind] = event
+			lcs += [l]
+		lcs = np.array(lcs)
+		lcs[lcs == 0] = np.nan
+		self.events = lcs
+
+	def event_plotter(self):
+		if self.events is None:
+			self.lc_events()
+		plt.figure()
+		plt.plot(self.lc[0],self.lc[1],'k.')
+		for i in range(len(self.events)):
+			plt.plot(self.events[i,0],self.events[i,1],'*',label='Event {}'.format(i))
+		plt.xlabel('MJD')
+		plt.ylabel('Counts')
+
+
+	def detrend_transient(self,lc=None,err=None,Mask=None,variable=False,sig = 5, sig_up = 3, sig_low = 10, tail_length='auto'):
+		"""
+		Removes all long term stellar variability, while preserving flares. Input a light curve 
+		with shape (2,n) and it should work!
+
+		Parameters
+		----------
+		lc : array
+			lightcurve with the shape of (2,n), where the first index is time and the second is 
+			flux.
+		sig_up : float
+			upper sigma clip value 
+		sig_low : float
+			lower sigma clip value
+		tail_length : str OR int
+			option for setting the buffer zone of points after the peak. If it is 'auto' it 
+			will be determined through functions, but if its an int then it will take the given 
+			value as the buffer tail length for fine tuning.
+
+		Outputs
+		-------
+		trends : array
+			the stellar trends, subtract this from your input lc
+		"""
+		# Make a smoothing value with a significant portion of the total 
+		
+		if lc is None:
+			lc = self.lc[:2]
+		nonan = np.isfinite(lc[1])
+		lc = lc[:,nonan]
+
+		if (err is None) & (self.lc.shape[0] > 2):
+			err = self.lc[2]
+			err = err[nonan]
+
+		trends = np.zeros(lc.shape[1])
+		break_inds = Multiple_day_breaks(lc)
+		#lc[Mask] = np.nan
+
+		if variable:
+			size = int(lc.shape[1] * 0.1)
+			if size % 2 == 0: size += 1
+
+			finite = np.isfinite(lc[1])
+			smooth = savgol_filter(lc[1,finite],size,1)		
+			# interpolate the smoothed data over the missing time values
+			f1 = interp1d(lc[0,finite], smooth, kind='linear',fill_value='extrapolate')
+			smooth = f1(lc[0])
+			lc2 = lc.copy()
+			lc2[1] = lc2[1] - smooth
+			try:
+
+				mask = Cluster_cut(lc2,err=err,sig=sig)
+			except:
+				print('could not cluster')
+				mask = sig_err(lc2[1],err,sig=sig)
+			#sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,
+			#					sigma_lower=sig_low,masked=True).mask
+		else:
+			try:
+				mask = Cluster_cut(lc,err=err,sig=sig)
+			except:
+				print('could not cluster')
+				mask = sig_err(lc[1],err,sig=sig)
+
+		ind = np.where(mask)[0]
+		masked = lc.copy()
+		# Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
+		# todo: use findpeaks to get height estimates and change the buffers accordingly
+		if type(tail_length) == str:
+			if tail_length == 'auto':
+				#m = auto_tail(lc,mask,err)
+				masked[:,mask] = np.nan
+
+
+			else:
+				if lc.shape[1] > 4000:
+					tail_length = 100
+					start_length = 1
+				else:
+					tail_length = 10
+				for i in ind:
+					masked[:,i-5:i+tail_length] = np.nan
+		else:
+			tail_length = int(tail_length)
+			if type(tail_length) != int:
+				raise ValueError("tail_length must be either 'auto' or an integer")
+			for i in ind:
+				masked[:,i-5:i+tail_length] = np.nan
+
+
+		## Hack solution doesnt need to worry about interpolation. Assumes that stellar variability 
+		## is largely continuous over the missing data regions.
+		#f1 = interp1d(lc[0,finite], lc[1,finite], kind='linear',fill_value='extrapolate')
+		#interp = f1(lc[0,:])
+
+		# Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
+		size = int(lc.shape[1] * 0.005)
+		if size % 2 == 0: 
+			size += 1
+		for i in range(len(break_inds)-1):
+			section = lc[:,break_inds[i]:break_inds[i+1]]
+
+			mask_section = masked[:,break_inds[i]:break_inds[i+1]]
+			if np.nansum(mask_section) < 10:
+				mask_section[1,:] = np.nanmedian(masked[1,:])
+				if np.nansum(mask_section) < 10:
+					mask_section[1,:] = np.nanmedian(section)
+			
+			if np.isnan(mask_section[1,0]):
+				mask_section[1,0] = np.nanmedian(mask_section[1])
+			if np.isnan(mask_section[1,-1]):
+				mask_section[1,-1] = np.nanmedian(mask_section[1])
+			finite = np.isfinite(mask_section[1])
+			smooth = savgol_filter(mask_section[1,finite],size,1)
+
+			# interpolate the smoothed data over the missing time values
+			f1 = interp1d(section[0,finite], smooth, kind='linear',fill_value='extrapolate')
+			trends[break_inds[i]:break_inds[i+1]] = f1(section[0])
+			
+		# huzzah, we now have a trend that should remove stellar variability, excluding flares.
+		detrend = deepcopy(self.lc)
+		detrend[1,nonan] -= trends
+		return detrend
+
+	def detrend_stellar_var(self,lc=None,err=None,Mask=None,variable=False,sig = None, sig_up = 5, sig_low = 10, tail_length=''):
+		"""
+		Removes all long term stellar variability, while preserving flares. Input a light curve 
+		with shape (2,n) and it should work!
+		Parameters
+		----------
+		lc : array
+			lightcurve with the shape of (2,n), where the first index is time and the second is 
+			flux.
+		sig_up : float
+			upper sigma clip value 
+		sig_low : float
+			lower sigma clip value
+		tail_length : str OR int
+			option for setting the buffer zone of points after the peak. If it is 'auto' it 
+			will be determined through functions, but if its an int then it will take the given 
+			value as the buffer tail length for fine tuning.
+		Outputs
+		-------
+		trends : array
+			the stellar trends, subtract this from your input lc
+		"""
+		# Make a smoothing value with a significant portion of the total 
+		if lc is None:
+			lc = self.lc[:2]
+		nonan = np.isfinite(lc[1])
+		lc = lc[:,nonan]
+
+		if (err is None) & (self.lc.shape[0] > 2):
+			err = self.lc[2]
+			err = err[nonan]
+
+		trends = np.zeros(lc.shape[1])
+		break_inds = Multiple_day_breaks(lc)
+		#lc[Mask] = np.nan
+		
+		if variable:
+			size = int(lc.shape[1] * 0.04)
+			if size % 2 == 0: size += 1
+
+			finite = np.isfinite(lc[1])
+			smooth = savgol_filter(lc[1,finite],size,1)		
+			# interpolate the smoothed data over the missing time values
+			f1 = interp1d(lc[0,finite], smooth, kind='linear',fill_value='extrapolate')
+			smooth = f1(lc[0])
+			mask = sig_err(lc[1]-smooth,err,sig=sig)
+			#sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,
+			#					sigma_lower=sig_low,masked=True).mask
+		else:
+			mask = sig_err(lc[1],err,sig=sig)
+			
+		ind = np.where(mask)[0]
+		masked = lc.copy()
+		# Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
+		# todo: use findpeaks to get height estimates and change the buffers accordingly
+		if type(tail_length) == str:
+			if tail_length == 'auto':
+				
+				m = auto_tail(lc,mask,err)
+				masked[:,~m] = np.nan
+				
+				
+			else:
+				if lc.shape[1] > 4000:
+					tail_length = 100
+					start_length = 1
+				else:
+					tail_length = 10
+				for i in ind:
+					masked[:,i-5:i+tail_length] = np.nan
+		else:
+			tail_length = int(tail_length)
+			if type(tail_length) != int:
+				raise ValueError("tail_length must be either 'auto' or an integer")
+			for i in ind:
+				masked[:,i-5:i+tail_length] = np.nan
+		
+		
+		## Hack solution doesnt need to worry about interpolation. Assumes that stellar variability 
+		## is largely continuous over the missing data regions.
+		#f1 = interp1d(lc[0,finite], lc[1,finite], kind='linear',fill_value='extrapolate')
+		#interp = f1(lc[0,:])
+
+		# Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
+		size = int(lc.shape[1] * 0.005)
+		if size % 2 == 0: 
+			size += 1
+		for i in range(len(break_inds)-1):
+			section = lc[:,break_inds[i]:break_inds[i+1]]
+			finite = np.isfinite(masked[1,break_inds[i]:break_inds[i+1]])
+			smooth = savgol_filter(section[1,finite],size,1)
+			
+			# interpolate the smoothed data over the missing time values
+			f1 = interp1d(section[0,finite], smooth, kind='linear',fill_value='extrapolate')
+			trends[break_inds[i]:break_inds[i+1]] = f1(section[0])
+		# huzzah, we now have a trend that should remove stellar variability, excluding flares.
+		detrend = deepcopy(lc)
+		detrend[1,:] = lc[1,:] - trends
+		return detrend
 
 
 def sig_err(data,err=None,sig=5,maxiter=10):
@@ -972,212 +1227,9 @@ def Multiple_day_breaks(lc):
 	breaks = np.append(breaks,len(lc[0]))
 	return breaks
 
-def Remove_background_var(LC,err=None,Mask=None,variable=False,sig = 5, sig_up = 3, sig_low = 10, tail_length='auto'):
-	"""
-	Removes all long term stellar variability, while preserving flares. Input a light curve 
-	with shape (2,n) and it should work!
-
-	Parameters
-	----------
-	lc : array
-		lightcurve with the shape of (2,n), where the first index is time and the second is 
-		flux.
-	sig_up : float
-		upper sigma clip value 
-	sig_low : float
-		lower sigma clip value
-	tail_length : str OR int
-		option for setting the buffer zone of points after the peak. If it is 'auto' it 
-		will be determined through functions, but if its an int then it will take the given 
-		value as the buffer tail length for fine tuning.
-
-	Outputs
-	-------
-	trends : array
-		the stellar trends, subtract this from your input lc
-	"""
-	# Make a smoothing value with a significant portion of the total 
-	lc = LC.copy()
-	trends = np.zeros(lc.shape[1])
-	break_inds = Multiple_day_breaks(lc)
-	#lc[Mask] = np.nan
-
-	if variable:
-		size = int(lc.shape[1] * 0.1)
-		if size % 2 == 0: size += 1
-
-		finite = np.isfinite(lc[1])
-		smooth = savgol_filter(lc[1,finite],size,1)		
-		# interpolate the smoothed data over the missing time values
-		f1 = interp1d(lc[0,finite], smooth, kind='linear',fill_value='extrapolate')
-		smooth = f1(lc[0])
-		lc2 = lc.copy()
-		lc2[1] = lc2[1] - smooth
-		try:
-
-			mask = Cluster_cut(lc2,err=err,sig=sig)
-		except:
-			print('could not cluster')
-			mask = sig_err(lc2[1],err,sig=sig)
-		#sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,
-		#					sigma_lower=sig_low,masked=True).mask
-	else:
-		try:
-			mask = Cluster_cut(lc,err=err,sig=sig)
-		except:
-			print('could not cluster')
-			mask = sig_err(lc[1],err,sig=sig)
-
-	ind = np.where(mask)[0]
-	masked = lc.copy()
-	# Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
-	# todo: use findpeaks to get height estimates and change the buffers accordingly
-	if type(tail_length) == str:
-		if tail_length == 'auto':
-			#m = auto_tail(lc,mask,err)
-			masked[:,mask] = np.nan
 
 
-		else:
-			if lc.shape[1] > 4000:
-				tail_length = 100
-				start_length = 1
-			else:
-				tail_length = 10
-			for i in ind:
-				masked[:,i-5:i+tail_length] = np.nan
-	else:
-		tail_length = int(tail_length)
-		if type(tail_length) != int:
-			raise ValueError("tail_length must be either 'auto' or an integer")
-		for i in ind:
-			masked[:,i-5:i+tail_length] = np.nan
 
-
-	## Hack solution doesnt need to worry about interpolation. Assumes that stellar variability 
-	## is largely continuous over the missing data regions.
-	#f1 = interp1d(lc[0,finite], lc[1,finite], kind='linear',fill_value='extrapolate')
-	#interp = f1(lc[0,:])
-
-	# Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
-	size = int(lc.shape[1] * 0.005)
-	if size % 2 == 0: 
-		size += 1
-	for i in range(len(break_inds)-1):
-		section = lc[:,break_inds[i]:break_inds[i+1]]
-
-		mask_section = masked[:,break_inds[i]:break_inds[i+1]]
-		if np.nansum(mask_section) < 10:
-			mask_section[1,:] = np.nanmedian(masked[1,:])
-			if np.nansum(mask_section) < 10:
-				mask_section[1,:] = np.nanmedian(section)
-		
-		if np.isnan(mask_section[1,0]):
-			mask_section[1,0] = np.nanmedian(mask_section[1])
-		if np.isnan(mask_section[1,-1]):
-			mask_section[1,-1] = np.nanmedian(mask_section[1])
-		finite = np.isfinite(mask_section[1])
-		smooth = savgol_filter(mask_section[1,finite],size,1)
-
-		# interpolate the smoothed data over the missing time values
-		f1 = interp1d(section[0,finite], smooth, kind='linear',fill_value='extrapolate')
-		trends[break_inds[i]:break_inds[i+1]] = f1(section[0])
-		
-	# huzzah, we now have a trend that should remove stellar variability, excluding flares.
-	detrend = deepcopy(lc)
-	detrend[1,:] = lc[1,:] - trends
-	return detrend
-
-def Remove_stellar_var(lc,err=None,Mask=None,variable=False,sig = None, sig_up = 5, sig_low = 10, tail_length=''):
-	"""
-	Removes all long term stellar variability, while preserving flares. Input a light curve 
-	with shape (2,n) and it should work!
-	Parameters
-	----------
-	lc : array
-		lightcurve with the shape of (2,n), where the first index is time and the second is 
-		flux.
-	sig_up : float
-		upper sigma clip value 
-	sig_low : float
-		lower sigma clip value
-	tail_length : str OR int
-		option for setting the buffer zone of points after the peak. If it is 'auto' it 
-		will be determined through functions, but if its an int then it will take the given 
-		value as the buffer tail length for fine tuning.
-	Outputs
-	-------
-	trends : array
-		the stellar trends, subtract this from your input lc
-	"""
-	# Make a smoothing value with a significant portion of the total 
-	trends = np.zeros(lc.shape[1])
-	break_inds = Multiple_day_breaks(lc)
-	#lc[Mask] = np.nan
-	
-	if variable:
-		size = int(lc.shape[1] * 0.04)
-		if size % 2 == 0: size += 1
-
-		finite = np.isfinite(lc[1])
-		smooth = savgol_filter(lc[1,finite],size,1)		
-		# interpolate the smoothed data over the missing time values
-		f1 = interp1d(lc[0,finite], smooth, kind='linear',fill_value='extrapolate')
-		smooth = f1(lc[0])
-		mask = sig_err(lc[1]-smooth,err,sig=sig)
-		#sigma_clip(lc[1]-smooth,sigma=sig,sigma_upper=sig_up,
-		#					sigma_lower=sig_low,masked=True).mask
-	else:
-		mask = sig_err(lc[1],err,sig=sig)
-		
-	ind = np.where(mask)[0]
-	masked = lc.copy()
-	# Mask out all peaks, with a lead in of 5 frames and tail of 100 to account for decay
-	# todo: use findpeaks to get height estimates and change the buffers accordingly
-	if type(tail_length) == str:
-		if tail_length == 'auto':
-			
-			m = auto_tail(lc,mask,err)
-			masked[:,~m] = np.nan
-			
-			
-		else:
-			if lc.shape[1] > 4000:
-				tail_length = 100
-				start_length = 1
-			else:
-				tail_length = 10
-			for i in ind:
-				masked[:,i-5:i+tail_length] = np.nan
-	else:
-		tail_length = int(tail_length)
-		if type(tail_length) != int:
-			raise ValueError("tail_length must be either 'auto' or an integer")
-		for i in ind:
-			masked[:,i-5:i+tail_length] = np.nan
-	
-	
-	## Hack solution doesnt need to worry about interpolation. Assumes that stellar variability 
-	## is largely continuous over the missing data regions.
-	#f1 = interp1d(lc[0,finite], lc[1,finite], kind='linear',fill_value='extrapolate')
-	#interp = f1(lc[0,:])
-
-	# Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
-	size = int(lc.shape[1] * 0.005)
-	if size % 2 == 0: 
-		size += 1
-	for i in range(len(break_inds)-1):
-		section = lc[:,break_inds[i]:break_inds[i+1]]
-		finite = np.isfinite(masked[1,break_inds[i]:break_inds[i+1]])
-		smooth = savgol_filter(section[1,finite],size,1)
-		
-		# interpolate the smoothed data over the missing time values
-		f1 = interp1d(section[0,finite], smooth, kind='linear',fill_value='extrapolate')
-		trends[break_inds[i]:break_inds[i+1]] = f1(section[0])
-	# huzzah, we now have a trend that should remove stellar variability, excluding flares.
-	detrend = deepcopy(lc)
-	detrend[1,:] = lc[1,:] - trends
-	return detrend
 
 
 def Calculate_err(tpf,flux):
@@ -1318,27 +1370,8 @@ def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None):
 	
 	return totalmask
 
-def Make_mask(tpf,maglim=19,scale=1,strapsize=3):
-	data = tpf.flux
-	data = strip_units(data)
+	
 
-	mask = Cat_mask(tpf,maglim,scale,strapsize)
-	sources = ((mask & 1)+1 ==1) * 1.
-	sources[sources==0] = np.nan
-	tmp = np.nansum(data*sources,axis=(1,2))
-	tmp[tmp==0] = 1e12 # random big number 
-	ref = data[np.argmin(tmp)] * sources
-	try:
-		qe = correct_straps(ref,mask,parallel=True)
-	except:
-		qe = correct_straps(ref,mask,parallel=False)
-	mm = Source_mask(ref * qe * sources)
-	mm[np.isnan(mm)] = 0
-	mm = mm.astype(int)
-	mm = abs(mm-1)
-
-	fullmask = mask | (mm*1)
-	return fullmask
 
 #### CLUSTERING 
 
@@ -1357,7 +1390,7 @@ def Cluster_lc(lc):
 	
 	return bkg_ind, other_ind
 
-def Cluster_cut(lc,err=None,sig=3,smoothing=True):
+def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=24):
 	bkg_ind, other_ind = Cluster_lc(lc)
 	leng = 5
 	if smoothing:
@@ -1376,72 +1409,15 @@ def Cluster_cut(lc,err=None,sig=3,smoothing=True):
 		mask = (clipped > med + sig*std)
 	overlap = np.nansum(mask * segments,axis=1) > 0
 	mask = np.nansum(segments[overlap],axis=0)>0 
+	mask = convolve(mask,np.ones(buffer)) > 0
 	return mask
 
-def Event_isolation(lc,err=None,duration=10,sig=3):
-	ind = np.isfinite(lc[1])
-	lc = lc[:,ind]
-	mask = Cluster_cut(lc,err=err,sig=sig)
-	outliers = Identify_masks(mask)
-	good = np.nansum(outliers,axis=1) > duration
-	outliers = outliers[good]
-	lcs = outliers * lc[1][np.newaxis,:]
-	lcs[lcs == 0] = np.nan
-	return lcs
+
 
 
 ### Difference imaging
 
-def Diff_lc(data,time=None,x=None,y=None,ra=None,dec=None,tpf=None,tar_ap=3,sky_in=5,sky_out=7,plot=False,mask=None):
-	data = strip_units(data)
-	if tar_ap // 2 == tar_ap / 2:
-		print(Warning('tar_ap must be odd, adding 1'))
-		tar_ap += 1
-	if sky_out // 2 == sky_out / 2:
-		print(Warning('sky_out must be odd, adding 1'))
-		sky_out += 1
-	if sky_in // 2 == sky_in / 2:
-		print(Warning('sky_out must be odd, adding 1'))
-		sky_in += 1
-		
-	if (ra is not None) & (dec is not None) & (tpf is not None):
-		x,y = tpf.wcs.all_world2pix(ra,dec,0)
-		x = int(x + 0.5)
-		y = int(y + 0.5)
-	ap_tar = np.zeros_like(data[0])
-	ap_sky = np.zeros_like(data[0])
-	ap_tar[y,x]= 1
-	ap_sky[y,x]= 1
-	ap_tar = convolve(ap_tar,np.ones((tar_ap,tar_ap)))
-	ap_sky = convolve(ap_sky,np.ones((sky_out,sky_out))) - convolve(ap_sky,np.ones((sky_in,sky_in)))
-	ap_sky[ap_sky == 0] = np.nan
 	
-	
-	temp = np.nansum(data*ap_tar,axis=(1,2))
-	ind = temp < np.percentile(temp,40)
-	med = np.nanmedian(data[ind],axis=0)
-	
-	diff = data - med
-	if mask is not None:
-		ap_sky = mask
-		ap_sky[ap_sky==0] = np.nan
-	sky_med = np.nanmedian(ap_sky*diff,axis=(1,2))
-	sky_std = np.nanstd(ap_sky*diff,axis=(1,2))
-	
-	tar = np.nansum(diff*ap_tar,axis=(1,2))
-	tar -= sky_med * tar_ap**2
-	tar_err = sky_std * tar_ap**2
-	tar[tar_err > 100] = np.nan
-	sky_med[tar_err > 100] = np.nan
-	if tpf is not None:
-		time = tpf.astropy_time.mjd
-	lc = np.array([time, tar, tar_err])
-	sky = np.array([time, sky_med, sky_std])
-	
-	if plot:
-		dif_diag_plot(lc,sky,diff,ap_tar,ap_sky)
-	
-	return lc, sky
 	
 def dif_diag_plot(lc,sky,data,ap_tar,ap_sky):
 	plt.figure(figsize=(9,4))
