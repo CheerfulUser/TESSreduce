@@ -18,7 +18,7 @@ URL = 'https://github.com/CheerfulUser/TESSreduce'
 EMAIL = 'rridden@stsci.edu'
 AUTHOR ='Ryan Ridden-Harper'
 REQUIRES_PYTHON = '>=3.6.0'
-VERSION = False#'0.1.0'
+VERSION = '1.0.0'
 
 # What packages are required for this module to be executed?
 REQUIRED = ['lightkurve',
