@@ -7,13 +7,16 @@ TESSreduce can be installed through pip:
 
 `pip install git+https://github.com/CheerfulUser/TESSreduce.git`
 
-To run:
+Example reduction for SN 2020fqv:
 ```
 import tpf_reduction as tr
-tpf = tr.Get_TESS(ra, dec, 50, sector)
-res = tr.Quick_reduce(tpf)
-lc = res[‘lc’]
+ra = 189.1385817
+dec = 11.2316535
+tess = tr.tessreduce(ra=ra,dec=dec)
+tess.reduce()
+# If you want to remove residual background trends as best as possible
+detrend = tess.detrend_transient()
 ```
-
+![plot](./figs/detrend_comparison.png)
 
 For more information contact me at: rridden @ stsci.edu
