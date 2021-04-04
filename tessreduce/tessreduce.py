@@ -285,29 +285,35 @@ def Lightcurve(flux, aper,zeropoint=20.44, normalise = False):
 
 class tessreduce():
 
-	def __init__(self,ra=None,dec=None,tpf=None,size=90,sector=None,reduce=False,verbose=1):
+	def __init__(self,ra=None,dec=None,name=None,tpf=None,size=90,sector=None,reduce=False,
+				 align=True,parallel=True,verbose=1):
+		"""
+		Class to reduce tess data.
+		"""
 		self.ra   = ra
 		self.dec   = dec 
+		self.name   = name
 		self.size   = size
-		self.align   = True
+		self.align   = align
 		self.sector   = sector
 		self.verbose   = verbose
-		self.parallel   = True
+		self.parallel   = parallel
 		self.calibrate   = False
+
 
 
 		# calculated 
 		self.mask   = None
 		self.shift  = None
-		self.bkg    = None
+		self.bkg	= None
 		self.flux   = None
-		self.ref    = None
-		self.wcs    = None
-		self.qe     = None
-		self.lc     = None
-		self.sky    = None
+		self.ref	= None
+		self.wcs	= None
+		self.qe	 = None
+		self.lc	 = None
+		self.sky	= None
 		self.events = None
-		self.zp     = 20.44 # default value 
+		self.zp	 = 20.44 # default value 
 
 		if tpf is not None:
 			self.flux = strip_units(tpf.flux)
@@ -323,12 +329,12 @@ class tessreduce():
 
 
 	def check_coord(self):
-		if (self.ra is None) | (self.dec is None):
+		if ((self.ra is None) | (self.dec is None)) & (self.name is None):
 			return False
 		else:
 			return True
 
-	def Get_TESS(self,ra=None,dec=None,Size=None,Sector=None):
+	def Get_TESS(self,ra=None,dec=None,name=None,Size=None,Sector=None):
 		"""
 		Use the lightcurve interface with TESScut to get an FFI cutout 
 		of a region around the given coords.
@@ -358,9 +364,13 @@ class tessreduce():
 		else:
 			c = SkyCoord(ra=float(self.ra)*u.degree, dec=float(self.dec) *
 						 u.degree, frame='icrs')
+
 		if Sector is None:
 			Sector = self.sector
-		tess = lk.search_tesscut(c,sector=Sector)
+		if self.name is None:
+			tess = lk.search_tesscut(c,sector=Sector)
+		else:
+			tess = lk.search_tesscut(name,sector=Sector)
 		if Size is None:
 			Size = self.size
 		tpf = tess.download(cutout_size=Size)
@@ -576,7 +586,7 @@ class tessreduce():
 
 
 
-	def bin_data(self,bin_size = 12):
+	def bin_data(self,lc=None,time_bin=6/24,frames = None):
 		"""
 		Bin a light curve to the desired duration specified by bin_size
 
@@ -598,19 +608,33 @@ class tessreduce():
 		t[x] : array
 			time averaged time 
 		"""
-		flux = self.lc[1]
-		t    = self.lc[0]
-		bin_size = int(bin_size)
-		lc = []
-		x = []
-		for i in range(int(len(flux)/bin_size)):
-			if np.isnan(flux[i*bin_size:(i*bin_size)+bin_size]).all():
-				lc.append(np.nan)
-				x.append(int(i*bin_size+(bin_size/2)))
-			else:
-				lc.append(np.nanmedian(flux[i*bin_size:(i*bin_size)+bin_size]))
-				x.append(int(i*bin_size+(bin_size/2)))
-		binlc = np.array([t[x],lc])
+		if lc is None:
+			lc = self.lc
+		else:
+			if lc.shape[0] > lc.shape[1]:
+				lc = lc.T
+		flux = lc[1]
+		t    = lc[0]
+		if time_bin is None:
+			bin_size = int(bin_size)
+			lc = []
+			x = []
+			for i in range(int(len(flux)/bin_size)):
+				if np.isnan(flux[i*bin_size:(i*bin_size)+bin_size]).all():
+					lc.append(np.nan)
+					x.append(int(i*bin_size+(bin_size/2)))
+				else:
+					lc.append(np.nanmedian(flux[i*bin_size:(i*bin_size)+bin_size]))
+					x.append(int(i*bin_size+(bin_size/2)))
+			binlc = np.array([t[x],lc])
+		else:
+			lc = []
+			points = np.arange(t[0]+time_bin*.5,t[-1],time_bin)
+			time_inds = abs(points[:,np.newaxis] - t[np.newaxis,:]) <= time_bin/2
+			for i in range(len(points)):
+				lc += [np.nanmedian(flux[time_inds[i]])]
+			lc = np.array(lc)
+			binlc = np.array([points,lc])
 		return binlc
 
 
@@ -669,9 +693,46 @@ class tessreduce():
 		sky = np.array([time, sky_med, sky_std])
 		
 		if plot:
-			dif_diag_plot(lc,sky,diff,ap_tar,ap_sky)
+			self.dif_diag_plot(ap_tar,ap_sky,lc = lc,sky=sky,data=diff)
 		
 		return lc, sky
+
+	def dif_diag_plot(self,ap_tar,ap_sky,lc=None,sky=None,data=None):
+		if lc is None:
+			lc = self.lc
+		if sky is None:
+			sky = self.sky
+		if data is None:
+			data = self.flux
+		plt.figure(figsize=(9,4))
+		plt.subplot(121)
+		plt.fill_between(lc[0],sky[1]-sky[2],sky[1]+sky[2],alpha=.5,color='C1')
+		plt.plot(sky[0],sky[1],'C1.',label='Sky')
+		plt.fill_between(lc[0],lc[1]-lc[2],lc[1]+lc[2],alpha=.5,color='C0')
+		plt.plot(lc[0],lc[1],'C0.',label='Target')
+		binned = self.bin_data(lc=lc)
+		plt.plot(binned[0],binned[1],'C2.',label='6hr bin')
+		plt.xlabel('MJD')
+		plt.ylabel('Counts')
+		plt.legend(loc=4)
+		plt.subplot(122)
+		maxind = np.where((np.nanmax(lc[1]) == lc[1]))[0][0]
+		plt.imshow(data[maxind],origin='lower',
+				   vmin=np.percentile(data[maxind],16),
+				   vmax=np.percentile(data[maxind],99),
+				   aspect='auto')
+		plt.colorbar()
+		ap = ap_tar
+		ap[ap==0] = np.nan
+		#plt.imshow(ap,origin='lower',alpha = 0.2)
+		#plt.imshow(ap_sky,origin='lower',alpha = 0.8,cmap='hot')
+		y,x = np.where(ap_sky > 0)
+		plt.plot(x,y,'r.',alpha = 0.3)
+		
+		y,x = np.where(ap > 0)
+		plt.plot(x,y,'C1.',alpha = 0.3)
+
+		return
 
 	def plotter(self,lc=None):
 		if lc is None:
@@ -810,7 +871,7 @@ class tessreduce():
 			self.lc, self.sky = self.Diff_lc(plot=True,sky_in=5,sky_out=9)
 		else:
 			self.Make_lc(aperture=aper,bin_size=bin_size,
-				    			zeropoint = self.zp,scale=scale)#,normalise=False)
+								zeropoint = self.zp,scale=scale)#,normalise=False)
 		
 
 	def Make_lc(self,aperture = None,bin_size=0,zeropoint=None,scale='counts',clip = False):
@@ -1419,31 +1480,3 @@ def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=24):
 
 	
 	
-def dif_diag_plot(lc,sky,data,ap_tar,ap_sky):
-	plt.figure(figsize=(9,4))
-	plt.subplot(121)
-	plt.fill_between(lc[0],lc[1]-lc[2],lc[1]+lc[2],alpha=.5)
-	plt.plot(lc[0],lc[1],'.',label='Target')
-	plt.fill_between(lc[0],sky[1]-sky[2],sky[1]+sky[2],alpha=.5,color='C1')
-	plt.plot(sky[0],sky[1],'.',label='Sky')
-	plt.xlabel('MJD')
-	plt.ylabel('Counts')
-	plt.legend(loc=4)
-	plt.subplot(122)
-	maxind = np.where((np.nanmax(lc[1]) == lc[1]))[0][0]
-	plt.imshow(data[maxind],origin='lower',
-			   vmin=np.percentile(data[maxind],16),
-			   vmax=np.percentile(data[maxind],99),
-			   aspect='auto')
-	plt.colorbar()
-	ap = ap_tar
-	ap[ap==0] = np.nan
-	#plt.imshow(ap,origin='lower',alpha = 0.2)
-	#plt.imshow(ap_sky,origin='lower',alpha = 0.8,cmap='hot')
-	y,x = np.where(ap_sky > 0)
-	plt.plot(x,y,'r.',alpha = 0.3)
-	
-	y,x = np.where(ap > 0)
-	plt.plot(x,y,'C1.',alpha = 0.3)
-
-	return
