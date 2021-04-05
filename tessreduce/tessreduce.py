@@ -286,7 +286,7 @@ def Lightcurve(flux, aper,zeropoint=20.44, normalise = False):
 class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,tpf=None,size=90,sector=None,reduce=False,
-				 align=True,parallel=True,verbose=1):
+				 align=True,parallel=True,diff=True,verbose=1):
 		"""
 		Class to reduce tess data.
 		"""
@@ -299,6 +299,7 @@ class tessreduce():
 		self.verbose   = verbose
 		self.parallel   = parallel
 		self.calibrate   = False
+		self.diff = diff
 
 
 
@@ -669,21 +670,21 @@ class tessreduce():
 		ap_tar = convolve(ap_tar,np.ones((tar_ap,tar_ap)))
 		ap_sky = convolve(ap_sky,np.ones((sky_out,sky_out))) - convolve(ap_sky,np.ones((sky_in,sky_in)))
 		ap_sky[ap_sky == 0] = np.nan
-		m = sigma_clip((self.ref)*ap_sky).mask
+		m = sigma_clip((self.ref)*ap_sky,sigma=2).mask
 		ap_sky[m] = np.nan
 		
 		temp = np.nansum(data*ap_tar,axis=(1,2))
 		ind = temp < np.percentile(temp,40)
 		med = np.nanmedian(data[ind],axis=0)
-		
-		diff = data - self.ref#med
+		if not self.diff:
+			data = data - self.ref#med
 		if mask is not None:
 			ap_sky = mask
 			ap_sky[ap_sky==0] = np.nan
-		sky_med = np.nanmedian(ap_sky*diff,axis=(1,2))
-		sky_std = np.nanstd(ap_sky*diff,axis=(1,2))
-		
-		tar = np.nansum(diff*ap_tar,axis=(1,2))
+		sky_med = np.nanmedian(ap_sky*data,axis=(1,2))
+		sky_std = np.nanstd(ap_sky*data,axis=(1,2))
+
+		tar = np.nansum(data*ap_tar,axis=(1,2))
 		tar -= sky_med * tar_ap**2
 		tar_err = sky_std * tar_ap**2
 		tar[tar_err > 100] = np.nan
@@ -694,7 +695,7 @@ class tessreduce():
 		sky = np.array([time, sky_med, sky_std])
 		
 		if plot:
-			self.dif_diag_plot(ap_tar,ap_sky,lc = lc,sky=sky,data=diff)
+			self.dif_diag_plot(ap_tar,ap_sky,lc = lc,sky=sky,data=data)
 		
 		return lc, sky
 
@@ -716,6 +717,7 @@ class tessreduce():
 		plt.xlabel('MJD')
 		plt.ylabel('Counts')
 		plt.legend(loc=4)
+		
 		plt.subplot(122)
 		maxind = np.where((np.nanmax(lc[1]) == lc[1]))[0][0]
 		plt.imshow(data[maxind],origin='lower',
@@ -742,7 +744,7 @@ class tessreduce():
 		if lc.shape[0] > lc.shape[1]:
 			plt.plot(lc[:,0],lc[:,1])
 		else:
-			plt.plot(lc[0],lc[1])
+			plt.plot(lc[0],lc[1],'.')
 		plt.ylabel('Counts')
 		plt.xlabel('Time MJD')
 		plt.show()
@@ -750,7 +752,7 @@ class tessreduce():
 
 	def reduce(self, aper = None, shift = True, parallel = True, calibrate=False,
 						scale = 'counts', bin_size = 0, plot = True, all_output = True,
-						mask_scale = 1,diff_lc = True):
+						mask_scale = 1,diff_lc = True,diff=None):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
@@ -851,9 +853,24 @@ class tessreduce():
 			self.Shift_images()
 			if self.verbose > 0:
 				print('images shifted')
-		
-		
-		
+		if diff is not None:
+			self.diff = diff
+		if self.diff:
+			print('rerunning for difference image')
+			# reseting to do diffim 
+			self.Make_mask(maglim=18,strapsize=4,scale=mask_scale*.5)#Source_mask(ref,grid=0)
+			# assuming that the target is in the centre, so masking it out 
+			m_tar = np.zeros_like(self.mask,dtype=int)
+			m_tar[self.size//2,self.size//2]= 1
+			m_tar = convolve(m_tar,np.ones((5,5)))
+			self.mask = self.mask | m_tar
+
+			self.flux = strip_units(self.tpf.flux)
+			self.Shift_images()
+			self.flux =  self.flux - self.ref
+			self.background()
+			self.flux = self.flux - self.bkg
+
 
 		zp = np.array([20.44,0])
 		mask = (self.mask ==0) * 1.
