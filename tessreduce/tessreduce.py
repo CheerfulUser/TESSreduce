@@ -638,7 +638,7 @@ class tessreduce():
 		return binlc
 
 
-	def Diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,sky_in=5,sky_out=7,plot=False,mask=None):
+	def Diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,sky_in=5,sky_out=9,plot=False,mask=None):
 		data = strip_units(self.flux)
 		if ((ra is None) | (dec is None)) & ((x is None) | (y is None)):
 			ra = self.ra 
@@ -669,13 +669,14 @@ class tessreduce():
 		ap_tar = convolve(ap_tar,np.ones((tar_ap,tar_ap)))
 		ap_sky = convolve(ap_sky,np.ones((sky_out,sky_out))) - convolve(ap_sky,np.ones((sky_in,sky_in)))
 		ap_sky[ap_sky == 0] = np.nan
-		
+		m = sigma_clip((self.ref)*ap_sky).mask
+		ap_sky[m] = np.nan
 		
 		temp = np.nansum(data*ap_tar,axis=(1,2))
 		ind = temp < np.percentile(temp,40)
 		med = np.nanmedian(data[ind],axis=0)
 		
-		diff = data - med
+		diff = data - self.ref#med
 		if mask is not None:
 			ap_sky = mask
 			ap_sky[ap_sky==0] = np.nan
