@@ -540,7 +540,7 @@ class tessreduce():
 
 		meds = np.nanmedian(shifts,axis = 2)
 		meds[~np.isfinite(meds)] = 0
-		
+
 		smooth = Smooth_motion(meds,self.tpf)
 		nans = np.nansum(f,axis=(1,2)) ==0
 		smooth[nans] = np.nan
@@ -580,7 +580,7 @@ class tessreduce():
 		data = Data.copy()
 		data[data<0] = 0
 		for i in range(len(data)):
-			if np.nansum(data[i]) > 0:
+			if np.nansum(abs(data[i])) > 0:
 				shifted[i] = shift(data[i],[-Offset[i,1],-Offset[i,0]],mode='nearest',order=3)
 		self.flux = shifted
 
@@ -717,7 +717,7 @@ class tessreduce():
 		plt.xlabel('MJD')
 		plt.ylabel('Counts')
 		plt.legend(loc=4)
-		
+
 		plt.subplot(122)
 		maxind = np.where((np.nanmax(lc[1]) == lc[1]))[0][0]
 		plt.imshow(data[maxind],origin='lower',
@@ -801,6 +801,9 @@ class tessreduce():
 				light curve
 		"""
 		# make reference
+		if parallel is not None:
+			self.parallel = parallel
+
 		if (self.flux.shape[1] < 30) & (self.flux.shape[2] < 30):
 			small = True	
 		else:
@@ -844,11 +847,11 @@ class tessreduce():
 			if self.verbose > 0:
 				print('calculating centroids')
 			try:
-				offset = self.Centroids_DAO()
+				self.Centroids_DAO()
 			except:
 				print('Something went wrong, switching to serial')
 				self.parallel = False
-				self.shift = Centroids_DAO()
+				self.Centroids_DAO()
 
 			self.Shift_images()
 			if self.verbose > 0:
@@ -864,12 +867,16 @@ class tessreduce():
 			m_tar[self.size//2,self.size//2]= 1
 			m_tar = convolve(m_tar,np.ones((5,5)))
 			self.mask = self.mask | m_tar
+			print('remade mask')
 
 			self.flux = strip_units(self.tpf.flux)
+			print('stripped')
 			self.Shift_images()
-			self.flux =  self.flux - self.ref
+			print('reshiftd images')
+			self.flux -= self.ref
+			print('doing background')
 			self.background()
-			self.flux = self.flux - self.bkg
+			self.flux -= self.bkg
 
 
 		zp = np.array([20.44,0])
