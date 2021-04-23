@@ -16,10 +16,25 @@ ra = 189.1385817
 dec = 11.2316535
 tess = tr.tessreduce(ra=ra,dec=dec)
 tess.reduce()
-# If you want to remove residual background trends as best as possible
+# If you want to remove residual background trends from a bright as best as possible
 detrend = tess.detrend_transient()
 ```
 ![plot](./figs/detrend_comparison.png)
 
+# Flux calibration
 
-There are a lot of other functions burried in there which currently aren't well documented, so for more information contact me at: rridden@stsci.edu
+TESSreduce can calibrate TESS counts to physical flux, or AB magnitudes, by using PS1 data. If your field is dec > -30 and you want a flux calibrated light curve then just do:
+```
+tess.to_flux()
+```
+## OR
+```
+tess.to_mag()
+```
+Several options are available for flux and are interchangeable, however, mag is currently not reversible. To easily plot the resulting light curve just do:
+```
+tess.plotter()
+```
+
+
+There are a lot of other functions burried in TESSreduce which currently aren't well documented, so for more information contact me at: rridden@stsci.edu
