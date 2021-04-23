@@ -48,8 +48,6 @@ package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 
-import psutil
-
 def strip_units(data):
 	if type(data) != np.ndarray:
 		data = data.value
