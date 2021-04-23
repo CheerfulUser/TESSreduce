@@ -27,7 +27,7 @@ TESSreduce can calibrate TESS counts to physical flux, or AB magnitudes, by usin
 ```
 tess.to_flux()
 ```
-## OR
+**OR**
 ```
 tess.to_mag()
 ```
