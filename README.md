@@ -23,7 +23,7 @@ detrend = tess.detrend_transient()
 
 # Flux calibration
 
-TESSreduce can calibrate TESS counts to physical flux, or AB magnitudes, by using PS1 data. If your field is dec > -30 and you want a flux calibrated light curve then just do:
+TESSreduce can calibrate TESS counts to physical flux, or AB magnitudes, by using PS1 data. If your field is dec > -30 and you want a flux calibrated light curve then use:
 ```
 tess.to_flux()
 ```
@@ -31,7 +31,7 @@ tess.to_flux()
 ```
 tess.to_mag()
 ```
-Several options are available for flux and are interchangeable, however, mag is currently not reversible. To easily plot the resulting light curve just do:
+Several options are available for flux and are interchangeable, however, mag is currently not reversible. To easily plot the resulting light curve:
 ```
 tess.plotter()
 ```
