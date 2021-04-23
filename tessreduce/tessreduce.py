@@ -40,6 +40,7 @@ from .rescale_straps import correct_straps
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning) 
 warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
+pd.options.mode.chained_assignment = None
 # set the package directory so we can load in a file later
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
@@ -47,6 +48,7 @@ package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 
+import psutil
 
 def strip_units(data):
 	if type(data) != np.ndarray:
@@ -286,7 +288,7 @@ def Lightcurve(flux, aper,zeropoint=20.44, normalise = False):
 class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,tpf=None,size=90,sector=None,reduce=False,
-				 align=True,parallel=True,diff=True,verbose=1):
+				 align=True,parallel=True,diff=True,quality_bitmask='default',verbose=1):
 		"""
 		Class to reduce tess data.
 		"""
@@ -300,7 +302,7 @@ class tessreduce():
 		self.parallel   = parallel
 		self.calibrate   = False
 		self.diff = diff
-
+		self.tpf = tpf
 
 
 		# calculated 
@@ -314,16 +316,25 @@ class tessreduce():
 		self.lc	 = None
 		self.sky	= None
 		self.events = None
-		self.zp	 = 20.44 # default value 
+		self.zp	 = None
+		self.zp_e = None
+		# repeat for backup
+		self.tzp	 = None
+		self.tzp_e = None
+		self.ebv = 0
+		# light curve units 
+		self.lc_units = 'Counts'
 
 		if tpf is not None:
-			self.flux = strip_units(tpf.flux)
-			self.wcs  = tpf.wcs
-			self.ra   = tpf.ra
-			self.dec  = tpf.dec
+			if type(tpf) == str:
+				self.tpf = lk.TessTargetPixelFile(tpf)
+			self.flux = strip_units(self.tpf.flux)
+			self.wcs  = self.tpf.wcs
+			self.ra   = self.tpf.ra
+			self.dec  = self.tpf.dec
 
 		elif self.check_coord():
-			self.Get_TESS()
+			self.Get_TESS(quality_bitmask=quality_bitmask)
 
 		if reduce:
 			self.reduce()
@@ -335,7 +346,7 @@ class tessreduce():
 		else:
 			return True
 
-	def Get_TESS(self,ra=None,dec=None,name=None,Size=None,Sector=None):
+	def Get_TESS(self,ra=None,dec=None,name=None,Size=None,Sector=None,quality_bitmask='default'):
 		"""
 		Use the lightcurve interface with TESScut to get an FFI cutout 
 		of a region around the given coords.
@@ -359,22 +370,23 @@ class tessreduce():
 		tpf : lightkurve target pixel file
 			tess ffi cutout of the selected region
 		"""
-		if (ra is not None) & (dec is not None):
-			c = SkyCoord(ra=float(ra)*u.degree, dec=float(dec) *
-						 u.degree, frame='icrs')
-		else:
-			c = SkyCoord(ra=float(self.ra)*u.degree, dec=float(self.dec) *
-						 u.degree, frame='icrs')
-
 		if Sector is None:
 			Sector = self.sector
-		if self.name is None:
+
+		if (name is None) & (self.name is None):
+			if (ra is not None) & (dec is not None):
+				c = SkyCoord(ra=float(ra)*u.degree, dec=float(dec) *
+							 u.degree, frame='icrs')
+			else:
+				c = SkyCoord(ra=float(self.ra)*u.degree, dec=float(self.dec) *
+							 u.degree, frame='icrs')
 			tess = lk.search_tesscut(c,sector=Sector)
 		else:
 			tess = lk.search_tesscut(name,sector=Sector)
 		if Size is None:
 			Size = self.size
-		tpf = tess.download(cutout_size=Size)
+		
+		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=Size)
 	
 		self.tpf  = tpf
 		self.flux = strip_units(tpf.flux)
@@ -571,18 +583,24 @@ class tessreduce():
 			array shifted to match the offsets given
 
 		"""
-		# hack solution for new lightkurve
+		shifted = self.flux.copy()
+		#shifted[shifted<0] = np.nan
+		nans = ~np.isfinite(shifted)
+		shifted[nans] = 0.
+		if ~median:
+			for i in range(len(shifted)):
+				if np.nansum(abs(shifted[i])) > 0:
+					shifted[i] = shift(shifted[i],[-self.shift[i,1],-self.shift[i,0]],mode='nearest',order=3)
+			self.flux = shifted
+		else:
+			for i in range(len(shifted)):
+				if np.nansum(abs(shifted[i])) > 0:
+					shifted[i] = shift(self.ref,[self.shift[i,1],self.shift[i,0]],mode='nearest',order=3)
+			self.flux -= shifted
 
-		Data = self.flux
-		Offset = self.shift
-
-		shifted = Data.copy()
-		data = Data.copy()
-		data[data<0] = 0
-		for i in range(len(data)):
-			if np.nansum(abs(data[i])) > 0:
-				shifted[i] = shift(data[i],[-Offset[i,1],-Offset[i,0]],mode='nearest',order=3)
-		self.flux = shifted
+				#print(psutil.virtual_memory().available * 100 / psutil.virtual_memory().total)
+		#shifted[nans] = np.nan
+		
 
 
 
@@ -615,7 +633,11 @@ class tessreduce():
 			if lc.shape[0] > lc.shape[1]:
 				lc = lc.T
 		flux = lc[1]
-		t    = lc[0]
+		try:
+			err = lc[2]
+		except:
+			err = deepcopy(lc[1]) * np.nan
+		t	= lc[0]
 		if time_bin is None:
 			bin_size = int(bin_size)
 			lc = []
@@ -629,17 +651,64 @@ class tessreduce():
 					x.append(int(i*bin_size+(bin_size/2)))
 			binlc = np.array([t[x],lc])
 		else:
-			lc = []
+			
 			points = np.arange(t[0]+time_bin*.5,t[-1],time_bin)
 			time_inds = abs(points[:,np.newaxis] - t[np.newaxis,:]) <= time_bin/2
+			l = []
+			e = []
 			for i in range(len(points)):
-				lc += [np.nanmedian(flux[time_inds[i]])]
-			lc = np.array(lc)
-			binlc = np.array([points,lc])
+				l += [np.nanmedian(flux[time_inds[i]])]
+				e += [np.nanmedian(err[time_inds[i]])]
+			l = np.array(l)
+			e = np.array(e)
+			binlc = np.array([points,l,e])
 		return binlc
 
 
-	def Diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,sky_in=5,sky_out=9,plot=False,mask=None):
+	def Diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
+				sky_in=5,sky_out=9,plot=False,mask=None):
+		"""
+		Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
+		then it degaults to the centre. Sky flux is calculated with an annulus aperture surrounding 
+		the target aperture and subtracted from the source. The sky aperture undergoes sigma clipping
+		to remove pixels that are poorly subtracted and contain other sources.
+
+		------
+		Inputs
+		------
+			time : array
+				1d array of times 
+			x : int 
+				centre of target aperture in x dim 
+			y : int 
+				centre of target aperture in y dim
+			ra : float
+				centre of target aperture in ra
+			dec : float
+				centre of target aperture in dec
+			tar_ap : int (odd)
+				width of the aperture
+			sky_in : int (odd)
+				inner edge of the sky aperture 
+			sky_out : int (odd, larger than sky_in)
+				outter edge of the sky aperture 
+			plot : bool
+				option for plotting diagnostic plot
+			mask : array
+				optional sky mask 
+
+		------
+		Output
+		------
+			lc : array (3xn)
+				difference imaged light curve of target. 
+				lc[0] = time, lc[1] = flux, lc[2] = flux error
+
+			sky : array (3xn)
+				difference imaged light curve of sky. 
+				sky[0] = time, sky[1] = flux, sky[2] = flux error
+				
+		"""
 		data = strip_units(self.flux)
 		if ((ra is None) | (dec is None)) & ((x is None) | (y is None)):
 			ra = self.ra 
@@ -677,14 +746,16 @@ class tessreduce():
 		ind = temp < np.percentile(temp,40)
 		med = np.nanmedian(data[ind],axis=0)
 		if not self.diff:
-			data = data - self.ref#med
+			data = data - self.ref
 		if mask is not None:
 			ap_sky = mask
 			ap_sky[ap_sky==0] = np.nan
 		sky_med = np.nanmedian(ap_sky*data,axis=(1,2))
 		sky_std = np.nanstd(ap_sky*data,axis=(1,2))
-
-		tar = np.nansum(data*ap_tar,axis=(1,2))
+		if self.diff:
+			tar = np.nansum(data*ap_tar,axis=(1,2))
+		else:
+			tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
 		tar -= sky_med * tar_ap**2
 		tar_err = sky_std * tar_ap**2
 		tar[tar_err > 100] = np.nan
@@ -700,6 +771,25 @@ class tessreduce():
 		return lc, sky
 
 	def dif_diag_plot(self,ap_tar,ap_sky,lc=None,sky=None,data=None):
+		"""
+		Makes a plot showing the target light curve, sky, and difference image at the brightest point
+		in the target lc.
+
+		------
+		Inputs
+		------
+			ap_tar : array
+				aperture mask
+			ap_sky : array
+				sky mask
+			data : array (shape = 3)
+				sequence of images
+
+		------
+		Output
+		------
+			Figure
+		"""
 		if lc is None:
 			lc = self.lc
 		if sky is None:
@@ -737,26 +827,42 @@ class tessreduce():
 
 		return
 
-	def plotter(self,lc=None):
+	def plotter(self,lc=None,ax = None):
+		"""
+		Simple plotter for light curves. 
+
+		------
+		Inputs (Optional)
+		------
+			lc : np.array
+				light curve with dimensions of at least [2,n]
+			ax : matplotlib axes
+				existing figure axes to add data to 
+		"""
 		if lc is None:
 			lc = self.lc
-		plt.figure()
+		if ax is None:
+			plt.figure()
+			ax = plt.gca()
 		if lc.shape[0] > lc.shape[1]:
-			plt.plot(lc[:,0],lc[:,1])
+			ax.plot(lc[:,0],lc[:,1])
 		else:
-			plt.plot(lc[0],lc[1],'.')
-		plt.ylabel('Counts')
-		plt.xlabel('Time MJD')
-		plt.show()
+			ax.plot(lc[0],lc[1],'.')
+		ax.set_ylabel(self.lc_units)
+		if self.lc_units == 'AB mag':
+			ax.invert_yaxis()
+		ax.set_xlabel('Time MJD')
 		return
 
 	def reduce(self, aper = None, shift = True, parallel = True, calibrate=False,
-						scale = 'counts', bin_size = 0, plot = True, all_output = True,
-						mask_scale = 1,diff_lc = True,diff=None):
+				scale = 'counts', bin_size = 0, plot = True, all_output = True,
+				mask_scale = 1,diff_lc = True,diff=None,verbose=None,
+				tar_ap=7,sky_in=9,sky_out=11):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
-
+		
+		----------
 		Parameters 
 		----------
 		tpf : lightkurve target pixel file
@@ -780,7 +886,8 @@ class tessreduce():
 
 		all_output : bool
 			if True then the lc, flux, reference and background will be returned.
-
+		
+		-------
 		Returns
 		-------
 		if all_output = True
@@ -803,6 +910,8 @@ class tessreduce():
 		# make reference
 		if parallel is not None:
 			self.parallel = parallel
+		if verbose is not None:
+			self.verbose = verbose
 
 		if (self.flux.shape[1] < 30) & (self.flux.shape[2] < 30):
 			small = True	
@@ -859,7 +968,8 @@ class tessreduce():
 		if diff is not None:
 			self.diff = diff
 		if self.diff:
-			print('rerunning for difference image')
+			if self.verbose > 0:
+				print('rerunning for difference image')
 			# reseting to do diffim 
 			self.Make_mask(maglim=18,strapsize=4,scale=mask_scale*.5)#Source_mask(ref,grid=0)
 			# assuming that the target is in the centre, so masking it out 
@@ -867,14 +977,17 @@ class tessreduce():
 			m_tar[self.size//2,self.size//2]= 1
 			m_tar = convolve(m_tar,np.ones((5,5)))
 			self.mask = self.mask | m_tar
-			print('remade mask')
+			if self.verbose > 0:
+				print('remade mask')
 
 			self.flux = strip_units(self.tpf.flux)
-			print('stripped')
+			
 			self.Shift_images()
-			print('reshiftd images')
+			if self.verbose > 0:
+				print('shifting images')
 			self.flux -= self.ref
-			print('doing background')
+			if self.verbose > 0:
+				print('background')
 			self.background()
 			self.flux -= self.bkg
 
@@ -883,17 +996,11 @@ class tessreduce():
 		mask = (self.mask ==0) * 1.
 		mask[mask ==0] = np.nan
 		err = np.nanmean(mask*self.flux,axis=(1,2))
-		if calibrate & (self.dec >= -30):
-			zp,err = Calibrate_lc(self.tpf,self.flux)
-
-		elif calibrate & (self.dec < -30):
-			print('Target is too far south with Dec = {} for PS1 photometry.'.format(tpf.dec) +
-				' Can not calibrate at this time.')
-
-			err = Calculate_err(self.tpf,self.flux)
+		if calibrate:
+			self.field_calibrate()
 
 		if diff_lc:
-			self.lc, self.sky = self.Diff_lc(plot=True,sky_in=5,sky_out=9)
+			self.lc, self.sky = self.Diff_lc(plot=True,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
 		else:
 			self.Make_lc(aperture=aper,bin_size=bin_size,
 								zeropoint = self.zp,scale=scale)#,normalise=False)
@@ -972,9 +1079,9 @@ class tessreduce():
 		lcs[lcs == 0] = np.nan
 		self.events = lcs
 
-	def event_plotter(self):
+	def event_plotter(self,**kwargs):
 		if self.events is None:
-			self.lc_events()
+			self.lc_events(**kwargs)
 		plt.figure()
 		plt.plot(self.lc[0],self.lc[1],'k.')
 		for i in range(len(self.events)):
@@ -983,7 +1090,8 @@ class tessreduce():
 		plt.ylabel('Counts')
 
 
-	def detrend_transient(self,lc=None,err=None,Mask=None,variable=False,sig = 5, sig_up = 3, sig_low = 10, tail_length='auto'):
+	def detrend_transient(self,lc=None,err=None,Mask=None,variable=False,sig = 5, 
+						  sig_up = 3, sig_low = 10, tail_length='auto',plot=False):
 		"""
 		Removes all long term stellar variability, while preserving flares. Input a light curve 
 		with shape (2,n) and it should work!
@@ -1034,7 +1142,6 @@ class tessreduce():
 			lc2 = lc.copy()
 			lc2[1] = lc2[1] - smooth
 			try:
-
 				mask = Cluster_cut(lc2,err=err,sig=sig)
 			except:
 				print('could not cluster')
@@ -1080,7 +1187,7 @@ class tessreduce():
 		#interp = f1(lc[0,:])
 
 		# Smooth the remaining data, assuming its effectively a continuous data set (no gaps)
-		size = int(lc.shape[1] * 0.005)
+		size = int(lc.shape[1] * 0.01)
 		if size % 2 == 0: 
 			size += 1
 		for i in range(len(break_inds)-1):
@@ -1089,7 +1196,7 @@ class tessreduce():
 			mask_section = masked[:,break_inds[i]:break_inds[i+1]]
 			if np.nansum(mask_section) < 10:
 				mask_section[1,:] = np.nanmedian(masked[1,:])
-				if np.nansum(mask_section) < 10:
+				if np.nansum(abs(mask_section)) < 10:
 					mask_section[1,:] = np.nanmedian(section)
 			
 			if np.isnan(mask_section[1,0]):
@@ -1103,7 +1210,10 @@ class tessreduce():
 			f1 = interp1d(section[0,finite], smooth, kind='linear',fill_value='extrapolate')
 			trends[break_inds[i]:break_inds[i+1]] = f1(section[0])
 			
-		# huzzah, we now have a trend that should remove stellar variability, excluding flares.
+		if plot:
+			plt.figure()
+			plt.plot(self.lc[0],self.lc[1])
+			plt.plot(self.lc[0,nonan],trends,'.')
 		detrend = deepcopy(self.lc)
 		detrend[1,nonan] -= trends
 		return detrend
@@ -1207,6 +1317,211 @@ class tessreduce():
 		detrend = deepcopy(lc)
 		detrend[1,:] = lc[1,:] - trends
 		return detrend
+
+
+	### serious calibration 
+	def field_calibrate(self,zp_single=True,plot=False):
+		if self.dec < -30:
+			print('Target is too far south with Dec = {} for PS1 photometry.'.format(self.dec) +
+				  " Can't calibrate at this time, so using zp = 20.44.")
+			self.zp = 20.44
+			self.zp_e = 0
+			return 
+		if self.diff:
+			tflux = self.flux + self.ref
+		else:
+			tflux = self.flux
+
+		table = Get_Catalogue(self.tpf,Catalog='ps1')
+
+		ind = (table.imag.values < 19) & (table.imag.values > 14)
+		tab = table.iloc[ind]
+		x,y = self.wcs.all_world2pix(tab.RAJ2000.values,tab.DEJ2000.values,0)
+		tab['col'] = x
+		tab['row'] = y
+		e, dat = Tonry_reduce(tab,plot=False)
+		self.ebv = e[0]
+
+		gr = (dat.gmag - dat.rmag).values
+		ind = (gr < 1) & (dat.imag.values < 17)
+		d = dat.iloc[ind]
+		x,y = self.wcs.all_world2pix(d.RAJ2000.values,d.DEJ2000.values,0)
+		d['col'] = x
+		d['row'] = y
+		pos_ind = (1 < x) & (x < self.ref.shape[0]-2) & (1 < y) & (y < self.ref.shape[0]-2)
+		d = d.iloc[pos_ind]
+
+			# account for crowding 
+		for i in range(len(d)):
+			x = d.col.values[i]
+			y = d.row.values[i]
+			
+			dist = np.sqrt((tab.col.values-x)**2 + (tab.row.values-y)**2)
+			
+			ind = dist < 1.5
+			close = tab.iloc[ind]
+			
+			d['gmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.gmag.values))) + 25
+			d['rmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.rmag.values))) + 25
+			d['imag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.imag.values))) + 25
+			d['zmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.zmag.values))) + 25
+			d['ymag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.ymag.values))) + 25
+		# convert to tess mags
+		d = PS1_to_TESS_mag(d,ebv=self.ebv)
+
+
+		flux = []
+		eflux = []
+		eind = np.zeros(len(d))
+		for i in range(len(d)):
+			mask = np.zeros_like(self.ref)
+			mask[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
+			mask = convolve(mask,np.ones((3,3)))
+			flux += [np.nansum(tflux*mask,axis=(1,2))]
+			m2 = np.zeros_like(self.ref)
+			m2[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
+			m2 = convolve(m2,np.ones((5,5))) - mask
+			eflux += [np.nansum(tflux*m2,axis=(1,2))]
+			if np.nansum(self.ref*m2) > 100:
+				eind[i] = 1
+		eind = eind == 0
+		flux = np.array(flux)
+		eflux = np.array(eflux)
+		#eind = abs(eflux) > 20
+		flux[~eind] = np.nan
+			
+
+		#calculate the zeropoint
+		zp = d.tmag.values[:,np.newaxis] + 2.5*np.log10(flux) 
+		mzp = np.zeros_like(zp[0]) * np.nan
+		stdzp = np.zeros_like(zp[0]) * np.nan
+		for i in range(zp.shape[1]):
+			averager = calcaverageclass()
+			averager.calcaverage_sigmacutloop(zp[eind,i])
+			mzp[i] = averager.mean
+			stdzp[i] = averager.stdev
+
+		averager = calcaverageclass()
+		averager.calcaverage_sigmacutloop(mzp[np.isfinite(mzp)],noise=stdzp[np.isfinite(mzp)])
+
+		if plot:
+			plt.figure()
+			nonan = np.isfinite(self.ref)
+			plt.imshow(self.ref,origin='lower',vmax = np.percentile(self.ref[nonan],80),vmin=0)
+			plt.scatter(d.col.iloc[eind],d.row.iloc[eind],color='r')
+			plt.title('Calibration sources')
+			plt.ylabel('Row')
+			plt.xlabel('Column')
+
+
+			mask = sigma_mask(mzp,3)
+			plt.figure(figsize=(8,4))
+			plt.subplot(121)
+			plt.hist(mzp[mask],alpha=0.5)
+			plt.axvline(averager.mean,color='C1')
+			plt.axvspan(averager.mean-averager.stdev,averager.mean+averager.stdev,alpha=0.3,color='C1')
+			plt.xlabel('Zeropoint')
+			plt.ylabel('Occurrence')
+
+			plt.subplot(122)
+			plt.plot(self.tpf.time.mjd[mask],mzp[mask],'.')
+			plt.axhspan(averager.mean-averager.stdev,averager.mean+averager.stdev,alpha=0.3,color='C1')
+			plt.axhline(averager.mean,color='C1')
+			plt.ylabel('Zeropoint')
+			plt.xlabel('MJD')
+			plt.tight_layout()
+
+		if zp_single:
+			mzp = averager.mean
+			stdzp = averager.stdev
+
+		if abs(mzp-20.44) > 2:
+			print('WARNING! field calibration is unreliable, using the default zp = 20.44')
+			self.zp = 20.44
+			self.zp_e = 0
+			# backup for when messing around with flux later
+			self.tzp = 20.44
+			self.tzp_e = 0
+		else:
+			self.zp = mzp
+			self.zp_e = stdzp
+			# backup for when messing around with flux later
+			self.tzp = mzp
+			self.tzp_e = stdzp
+
+		return
+
+	def to_mag(self,zp=None,zp_e=0):
+		if (zp is None) & (self.zp is not None):
+			zp = self.zp
+			zp_e = self.zp_e
+		elif (zp is None) & (self.zp is None):
+			self.field_calibrate()
+			zp = self.zp
+			zp_e = self.zp_e
+
+		mag = -2.5*np.log10(self.lc[1]) + zp
+		mag_e = ((2.5/np.log(10) * self.lc[2]/self.lc[1])**2 + zp_e**2)
+
+		self.lc[1] = mag
+		self.lc[2] = mag_e
+		self.lc_units = 'AB mag'
+		return
+
+	def to_flux(self,zp=None,zp_e=0,flux_type='mjy'):
+		if (zp is None) & (self.zp is not None):
+			zp = self.zp
+			zp_e = self.zp_e
+		elif (zp is None) & (self.zp is None):
+			print('Calculating field star zeropoint')
+			self.field_calibrate()
+			zp = self.zp
+			zp_e = self.zp_e
+
+		if flux_type.lower() == 'mjy':
+			flux_zp = 16.4
+		elif flux_type.lower() == 'jy':
+			flux_zp = 8.9
+		elif (flux_type.lower() == 'erg') | (flux_type.lower() == 'cgs'):
+			flux_zp = -48.6
+		elif (flux_type.lower() == 'tess') | (flux_type.lower() == 'counts'):
+			if self.tzp is None:
+				print('Calculating field star zeropoint')
+				self.field_calibrate()
+			flux_zp = self.tzp
+
+		else:
+			m = '"'+flux_type + '" is not a valid option, please choose from:\njy\nmjy\ncgs/erg\ntess/counts'
+			raise ValueError(m)
+
+		flux = self.lc[1] * 10**((zp - flux_zp)/-2.5)
+		flux_e2 = (10**((zp-flux_zp)/-2.5))**2 * self.lc[2]**2 + (self.lc[1]/-2.5 * 10**((zp-flux_zp)/-2.5))**2 * zp_e**2
+		flux_e = np.sqrt(flux_e2)
+		self.lc[1] = flux
+		self.lc[2] = flux_e
+
+
+		if flux_type.lower() == 'mjy':
+			self.zp = 16.4
+			self.zp_e = 0
+			self.lc_units = 'mJy'
+		if flux_type.lower() == 'jy':
+			self.zp = 8.9
+			self.zp_e = 0
+			self.lc_units = 'Jy'
+		elif (flux_type.lower() == 'erg') | (flux_type.lower() == 'cgs'):
+			self.zp = -48.6
+			self.zp_e = 0
+			self.lc_units = 'cgs'
+		elif (flux_type.lower() == 'tess') | (flux_type.lower() == 'counts'):
+			self.zp = self.tzp
+			self.zp_e = 0
+			self.lc_units = 'Counts'
+		return 
+		
+		
+
+
 
 
 def sig_err(data,err=None,sig=5,maxiter=10):
@@ -1476,7 +1791,7 @@ def Cluster_lc(lc):
 	
 	return bkg_ind, other_ind
 
-def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=24):
+def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=48*2):
 	bkg_ind, other_ind = Cluster_lc(lc)
 	leng = 5
 	if smoothing:
@@ -1501,7 +1816,3 @@ def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=24):
 
 
 
-### Difference imaging
-
-	
-	

@@ -9,6 +9,7 @@ from astropy import units as u
 from astropy.coordinates import SkyCoord, Angle
 from copy import deepcopy
 import pandas as pd
+from .R_load import R_val
 
 def Get_Catalogue(tpf, Catalog = 'gaia'):
 	"""
@@ -106,25 +107,30 @@ def mag2flux(mag,zp):
     return f
 
 
-def PS1_to_TESS_mag(PS1):
-	"""
-	https://arxiv.org/pdf/1706.00495.pdf pg.9
-	"""
-	zp = 25
 
-	coeffs = np.array([0.0922,0.1117,0.4755,0.1401,0.1788,-0.0936])
-	g = mag2flux(PS1.gmag.values,zp)
-	r = mag2flux(PS1.rmag.values,zp)
-	i = mag2flux(PS1.imag.values,zp)
-	z = mag2flux(PS1.zmag.values,zp)
-	y = mag2flux(PS1.ymag.values,zp)
+def PS1_to_TESS_mag(PS1,ebv = 0):
+    zp = 25
+    gr = (PS1.gmag - PS1.rmag).values
+    eg, e = R_val('g',gr=gr,ext=ebv); er, e = R_val('r',gr=gr,ext=ebv)
+    ei, e = R_val('i',gr=gr,ext=ebv); ez, e = R_val('z',gr=gr,ext=ebv)
+    ey, e = R_val('y',gr=gr,ext=ebv); et, e = R_val('tess',gr=gr,ext=ebv)
 
-	t = (coeffs[0] * g + coeffs[1] * r + coeffs[2] * i 
-		 + coeffs[3] * z + coeffs[4] * y + coeffs[5]*(g-r))
-	t = -2.5*np.log10(t) + 25
-	
-	PS1['tmag'] = t
-	return PS1
+
+    g = mag2flux(PS1.gmag.values - eg,zp)
+    r = mag2flux(PS1.rmag.values - er,zp)
+    i = mag2flux(PS1.imag.values - ei,zp)
+    z = mag2flux(PS1.zmag.values - ez,zp)
+    y = mag2flux(PS1.ymag.values - ey,zp)
+    
+    cr = 0.25582823; ci = 0.27609407; cz = 0.35809516
+    cy = 0.11244277; cp = 0.00049096
+
+    t = (cr*r + ci*i + cz*z + cy*y)*(g/i)**cp
+
+    t = -2.5*np.log10(t) + zp + et
+    PS1['tmag'] = t
+    return PS1
+
 
 def Get_PS1(tpf, magnitude_limit = 18, Offset = 10):
 	"""

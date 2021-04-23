@@ -351,13 +351,15 @@ def Cut_data(K,Data,Model,Compare,Extinction,Band = '',Plot=False):
 
 
 def Make_colours(Data, Model, Compare, Extinction = 0, Redden = False,Tonry=False):
-    R = {'g': 3.518, 'r':2.617, 'i':1.971, 'z':1.549, 'y': 1.286, 'k':2.431,'tess':1.809}#'z':1.549} # value from bayestar
+    #R = {'g': 3.518, 'r':2.617, 'i':1.971, 'z':1.549, 'y': 1.286, 'k':2.431,'tess':1.809}#'z':1.549} # value from bayestar
+    R = {'g': 3.61562687, 'r':2.58602003, 'i':1.90959054, 'z':1.50168735, 
+         'y': 1.25340149, 'kep':2.68629375,'tess':1.809}
     colours = {}
     for x,y in Compare:
-        colours['obs ' + x] = np.array([Data[x.split('-')[0]+'MeanPSFMag'].values - Data[x.split('-')[1]+'MeanPSFMag'].values,
-                                        Data[x.split('-')[0]+'MeanPSFMagErr'].values - Data[x.split('-')[1]+'MeanPSFMagErr'].values])
-        colours['obs ' + y] = np.array([Data[y.split('-')[0]+'MeanPSFMag'].values - Data[y.split('-')[1]+'MeanPSFMag'].values,
-                                        Data[y.split('-')[0]+'MeanPSFMagErr'].values - Data[y.split('-')[1]+'MeanPSFMagErr'].values])
+        colours['obs ' + x] = np.array([Data[x.split('-')[0]+'mag'].values - Data[x.split('-')[1]+'mag'].values,
+                                        Data['e_'+x.split('-')[0]+'mag'].values - Data['e_'+x.split('-')[1]+'mag'].values])
+        colours['obs ' + y] = np.array([Data[y.split('-')[0]+'mag'].values - Data[y.split('-')[1]+'mag'].values,
+                                        Data['e_'+y.split('-')[0]+'mag'].values - Data['e_'+y.split('-')[1]+'mag'].values])
         if Tonry:
             colours['mod ' + x] = Model[:,0]
             colours['mod ' + y] = Model[:,1]
@@ -416,6 +418,7 @@ def Fit_zeropoint(Data,Model,Compare,Ex,Band):
     res = minimize(SLR_residual_multi,k,args=(data,Model,Compare,Ex,Band))
     return res.x, data
 
+
 def Isolated_stars(pos,Tmag,flux,Median, Distance = 7, Aperture=3, Mag = 16):
     """
     Find isolated stars in the scene.
@@ -462,3 +465,31 @@ def Isolated_stars(pos,Tmag,flux,Median, Distance = 7, Aperture=3, Mag = 16):
     else:
         raise ValueError('No stars brighter than {} Tmag and isolated by {} pix. Concider lowering brightness.'.format(Mag,Distance))
     return ind, clips, time_series
+
+
+def mag2flux(mag,zp=25):
+    flux = 10**(-1/2.5*(mag-zp))
+    return flux
+
+
+def ps1_to_tess(g,r,i,z,y):
+    zp = 25
+    g = mag2flux(g,zp)
+    r = mag2flux(r,zp)
+    i = mag2flux(i,zp)
+    z = mag2flux(z,zp)
+    y = mag2flux(y,zp)
+    
+    cr = 0.25582823; ci = 0.27609407; cz = 0.35809516
+    cy = 0.11244277; cp = 0.00049096
+
+    t = (cr*r + ci*i + cz*z + cy*y)*(g/i)**cp
+
+    t = -2.5*np.log10(t) + zp
+
+    return t 
+
+
+
+
+
