@@ -750,10 +750,10 @@ class tessreduce():
 			ap_sky[ap_sky==0] = np.nan
 		sky_med = np.nanmedian(ap_sky*data,axis=(1,2))
 		sky_std = np.nanstd(ap_sky*data,axis=(1,2))
-		if self.diff:
-			tar = np.nansum(data*ap_tar,axis=(1,2))
-		else:
-			tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
+		#if self.diff:
+		tar = np.nansum(data*ap_tar,axis=(1,2))
+		#else:
+		#	tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
 		tar -= sky_med * tar_ap**2
 		tar_err = sky_std * tar_ap**2
 		tar[tar_err > 100] = np.nan
@@ -959,12 +959,13 @@ class tessreduce():
 				print('Something went wrong, switching to serial')
 				self.parallel = False
 				self.Centroids_DAO()
-
+		if diff is not None:
+			self.diff = diff
+		if ~self.diff:
 			self.Shift_images()
 			if self.verbose > 0:
 				print('images shifted')
-		if diff is not None:
-			self.diff = diff
+
 		if self.diff:
 			if self.verbose > 0:
 				print('rerunning for difference image')
