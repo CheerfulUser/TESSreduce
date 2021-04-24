@@ -286,7 +286,7 @@ def Lightcurve(flux, aper,zeropoint=20.44, normalise = False):
 class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,tpf=None,size=90,sector=None,reduce=False,
-				 align=True,parallel=True,diff=True,quality_bitmask='default',verbose=1):
+				 align=True,parallel=True,diff=False,quality_bitmask='default',verbose=1):
 		"""
 		Class to reduce tess data.
 		"""
