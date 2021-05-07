@@ -467,9 +467,9 @@ def Isolated_stars(pos,Tmag,flux,Median, Distance = 7, Aperture=3, Mag = 16):
     return ind, clips, time_series
 
 
-def mag2flux(mag,zp=25):
-    flux = 10**(-1/2.5*(mag-zp))
-    return flux
+#def mag2flux(mag,zp=25):
+#    flux = 10**(-1/2.5*(mag-zp))
+#    return flux
 
 
 def ps1_to_tess(g,r,i,z,y):

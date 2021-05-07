@@ -111,10 +111,12 @@ def mag2flux(mag,zp):
 def PS1_to_TESS_mag(PS1,ebv = 0):
     zp = 25
     gr = (PS1.gmag - PS1.rmag).values
+    
     eg, e = R_val('g',gr=gr,ext=ebv); er, e = R_val('r',gr=gr,ext=ebv)
     ei, e = R_val('i',gr=gr,ext=ebv); ez, e = R_val('z',gr=gr,ext=ebv)
     ey, e = R_val('y',gr=gr,ext=ebv); et, e = R_val('tess',gr=gr,ext=ebv)
-
+    eg = eg  * ebv; er = er  * ebv; ei = ei  * ebv; ez = ez  * ebv
+    ey = ey  * ebv; et = et  * ebv
 
     g = mag2flux(PS1.gmag.values - eg,zp)
     r = mag2flux(PS1.rmag.values - er,zp)
@@ -126,7 +128,6 @@ def PS1_to_TESS_mag(PS1,ebv = 0):
     cy = 0.11244277; cp = 0.00049096
 
     t = (cr*r + ci*i + cz*z + cy*y)*(g/i)**cp
-
     t = -2.5*np.log10(t) + zp + et
     PS1['tmag'] = t
     return PS1

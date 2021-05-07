@@ -34,6 +34,7 @@ from joblib import Parallel, delayed
 
 from .catalog_tools import *
 from .calibration_tools import *
+from .ground_tools import ground
 from .rescale_straps import correct_straps
 
 # turn off runtime warnings (lots from logic on nans)
@@ -41,6 +42,11 @@ import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning) 
 warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
 pd.options.mode.chained_assignment = None
+with warnings.catch_warnings():
+	warnings.simplefilter("ignore")
+	sigma_clip
+	sigma_clipped_stats
+
 # set the package directory so we can load in a file later
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
@@ -115,6 +121,35 @@ def Source_mask(Data, grid=0):
 		   (thing <= np.percentile(thing[ind],10))) * 1.
 
 	return mask
+
+def unknown_mask(image):
+	mask = np.zeros_like(image)
+	for i in range(image.shape[1]):
+		d = image.copy()
+		m = np.array([])
+		masked = image.copy()
+		x = np.arange(image.shape[0])
+		y = d * 1.
+
+		y[y==0] = np.nan
+		g = np.gradient(y)
+
+		m = np.append(m,sigma_clip(g,sigma=3).mask)
+
+		masked[m>0] = np.nan
+		for k in range(5):
+			nonan = np.isfinite(masked)
+			filled = interp1d(x[nonan],masked[nonan],bounds_error=False,fill_value='extrapolate',kind='linear')
+			filled = filled(x)
+			
+			sav = savgol_filter(filled,image.shape[1]//2+1,2)
+			dif = masked-sav
+			m2 = sigma_clip(dif,sigma=3).mask
+			mm = np.zeros(len(masked))
+			mm[nonan] = 1
+			mask[:,i][m2] = 1
+	return mask
+
 
 def Smooth_bkg(data, extrapolate = True):
 	"""
@@ -302,6 +337,7 @@ class tessreduce():
 		self.diff = diff
 		self.tpf = tpf
 
+		
 
 		# calculated 
 		self.mask   = None
@@ -316,6 +352,8 @@ class tessreduce():
 		self.events = None
 		self.zp	 = None
 		self.zp_e = None
+		self.sn_name = None
+		
 		# repeat for backup
 		self.tzp	 = None
 		self.tzp_e = None
@@ -330,9 +368,10 @@ class tessreduce():
 			self.wcs  = self.tpf.wcs
 			self.ra   = self.tpf.ra
 			self.dec  = self.tpf.dec
-
 		elif self.check_coord():
 			self.Get_TESS(quality_bitmask=quality_bitmask)
+
+		self.ground = ground(ra = self.ra, dec = self.dec)
 
 		if reduce:
 			self.reduce()
@@ -738,22 +777,23 @@ class tessreduce():
 		ap_sky = convolve(ap_sky,np.ones((sky_out,sky_out))) - convolve(ap_sky,np.ones((sky_in,sky_in)))
 		ap_sky[ap_sky == 0] = np.nan
 		m = sigma_clip((self.ref)*ap_sky,sigma=2).mask
-		ap_sky[m] = np.nan
+		#ap_sky[m] = np.nan
 		
 		temp = np.nansum(data*ap_tar,axis=(1,2))
 		ind = temp < np.percentile(temp,40)
 		med = np.nanmedian(data[ind],axis=0)
+		med = np.nanmedian(data,axis=0)
 		if not self.diff:
-			data = data - self.ref
+			data = data - med#self.ref
 		if mask is not None:
 			ap_sky = mask
 			ap_sky[ap_sky==0] = np.nan
 		sky_med = np.nanmedian(ap_sky*data,axis=(1,2))
 		sky_std = np.nanstd(ap_sky*data,axis=(1,2))
-		#if self.diff:
-		tar = np.nansum(data*ap_tar,axis=(1,2))
-		#else:
-		#	tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
+		if self.diff:
+			tar = np.nansum(data*ap_tar,axis=(1,2))
+		else:
+			tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
 		tar -= sky_med * tar_ap**2
 		tar_err = sky_std * tar_ap**2
 		tar[tar_err > 100] = np.nan
@@ -825,7 +865,7 @@ class tessreduce():
 
 		return
 
-	def plotter(self,lc=None,ax = None):
+	def plotter(self,lc=None,ax = None,ground=False):
 		"""
 		Simple plotter for light curves. 
 
@@ -837,25 +877,61 @@ class tessreduce():
 			ax : matplotlib axes
 				existing figure axes to add data to 
 		"""
+		if ground:
+			if self.ground.ztf is None:
+				self.ground.get_ztf()
+
 		if lc is None:
 			lc = self.lc
+		av = self.bin_data(lc=lc)
+
 		if ax is None:
 			plt.figure()
 			ax = plt.gca()
 		if lc.shape[0] > lc.shape[1]:
-			ax.plot(lc[:,0],lc[:,1])
+			ax.plot(lc[:,0],lc[:,1],'k.',alpha = 0.2,ms=1,label='$TESS$')
+			
+			ax.plot(av[:,0],av[:,1],'k.',label='$TESS$ 6hr')
 		else:
-			ax.plot(lc[0],lc[1],'.')
-		ax.set_ylabel(self.lc_units)
+			ax.plot(lc[0],lc[1],'.k',alpha = 0.2,ms=1,label='$TESS$')
+			ax.plot(av[0],av[1],'.k',label='$TESS$ 6hr')
+		
 		if self.lc_units == 'AB mag':
 			ax.invert_yaxis()
-		ax.set_xlabel('Time MJD')
+			if ground:
+				gind = self.ground.ztf.fid.values == 'g'
+				rind = self.ground.ztf.fid.values == 'r'
+				ztfg = self.ground.ztf.iloc[gind]
+				ztfr = self.ground.ztf.iloc[rind]
+				ax.scatter(ztfg.mjd,ztfg.maglim,c='C2',alpha = 0.6,marker='v',label='ZTF g non-detec')
+				ax.scatter(ztfr.mjd,ztfr.maglim,c='r',alpha = 0.6,marker='v',label='ZTF r non-detec')
+
+				ax.errorbar(ztfg.mjd, ztfg.mag,yerr = ztfg.mag_e, c='C2', fmt='o', label='ZTF g')
+				ax.errorbar(ztfr.mjd, ztfr.mag,yerr = ztfr.mag_e, c='r', fmt='o', label='ZTF r')
+				ax.set_ylabel('Apparent magnitude')
+		else:
+			ax.set_ylabel('Flux (' + self.lc_units + ')')
+			if ground:
+				self.ground.to_flux(flux_type=self.lc_units)
+				gind = self.ground.ztf.fid.values == 'g'
+				rind = self.ground.ztf.fid.values == 'r'
+				ztfg = self.ground.ztf.iloc[gind]
+				ztfr = self.ground.ztf.iloc[rind]
+				ax.scatter(ztfg.mjd,ztfg.fluxlim,c='C2',alpha = 0.6,marker='v',label='ZTF g non-detec')
+				ax.scatter(ztfr.mjd,ztfr.fluxlim,c='r',alpha = 0.6,marker='v',label='ZTF r non-detec')
+
+				ax.errorbar(ztfg.mjd, ztfg.flux,yerr = ztfg.flux_e, c='C2', fmt='o', label='ZTF g')
+				ax.errorbar(ztfr.mjd, ztfr.flux,yerr = ztfr.flux_e, c='r', fmt='o', label='ZTF r')
+
+
+		ax.set_xlabel('Time (MJD)')
+		ax.legend()
 		return
 
-	def reduce(self, aper = None, shift = True, parallel = True, calibrate=False,
+	def reduce(self, aper = None, shift = True, parallel = True, calibrate=True,
 				scale = 'counts', bin_size = 0, plot = True, all_output = True,
 				mask_scale = 1,diff_lc = True,diff=None,verbose=None,
-				tar_ap=7,sky_in=9,sky_out=11):
+				tar_ap=5,sky_in=7,sky_out=11):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
@@ -1357,14 +1433,14 @@ class tessreduce():
 			
 			dist = np.sqrt((tab.col.values-x)**2 + (tab.row.values-y)**2)
 			
-			ind = dist < 1.5
+			ind = dist < 2.5
 			close = tab.iloc[ind]
 			
-			d['gmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.gmag.values))) + 25
-			d['rmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.rmag.values))) + 25
-			d['imag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.imag.values))) + 25
-			d['zmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.zmag.values))) + 25
-			d['ymag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.ymag.values))) + 25
+			d['gmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.gmag.values,25))) + 25
+			d['rmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.rmag.values,25))) + 25
+			d['imag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.imag.values,25))) + 25
+			d['zmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.zmag.values,25))) + 25
+			d['ymag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.ymag.values,25))) + 25
 		# convert to tess mags
 		d = PS1_to_TESS_mag(d,ebv=self.ebv)
 
@@ -1375,11 +1451,11 @@ class tessreduce():
 		for i in range(len(d)):
 			mask = np.zeros_like(self.ref)
 			mask[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
-			mask = convolve(mask,np.ones((3,3)))
+			mask = convolve(mask,np.ones((5,5)))
 			flux += [np.nansum(tflux*mask,axis=(1,2))]
 			m2 = np.zeros_like(self.ref)
 			m2[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
-			m2 = convolve(m2,np.ones((5,5))) - mask
+			m2 = convolve(m2,np.ones((7,7))) - mask
 			eflux += [np.nansum(tflux*m2,axis=(1,2))]
 			if np.nansum(self.ref*m2) > 100:
 				eind[i] = 1
@@ -1395,13 +1471,15 @@ class tessreduce():
 		mzp = np.zeros_like(zp[0]) * np.nan
 		stdzp = np.zeros_like(zp[0]) * np.nan
 		for i in range(zp.shape[1]):
-			averager = calcaverageclass()
-			averager.calcaverage_sigmacutloop(zp[eind,i])
-			mzp[i] = averager.mean
-			stdzp[i] = averager.stdev
+			#averager = calcaverageclass()
+			mean, med, std = sigma_clipped_stats(zp[eind,i], sigma=3.0)
+			#averager.calcaverage_sigmacutloop(zp[eind,i])
+			mzp[i] = med#averager.mean
+			stdzp[i] = std#averager.stdev
 
-		averager = calcaverageclass()
-		averager.calcaverage_sigmacutloop(mzp[np.isfinite(mzp)],noise=stdzp[np.isfinite(mzp)])
+		#averager = calcaverageclass()
+		mean, med, std = sigma_clipped_stats(mzp[np.isfinite(mzp)], sigma=3.0)
+		#averager.calcaverage_sigmacutloop(mzp[np.isfinite(mzp)],noise=stdzp[np.isfinite(mzp)])
 
 		if plot:
 			plt.figure()
@@ -1417,22 +1495,26 @@ class tessreduce():
 			plt.figure(figsize=(8,4))
 			plt.subplot(121)
 			plt.hist(mzp[mask],alpha=0.5)
-			plt.axvline(averager.mean,color='C1')
-			plt.axvspan(averager.mean-averager.stdev,averager.mean+averager.stdev,alpha=0.3,color='C1')
+			#plt.axvline(averager.mean,color='C1')
+			#plt.axvspan(averager.mean-averager.stdev,averager.mean+averager.stdev,alpha=0.3,color='C1')
+			plt.axvspan(med-std,med+std,alpha=0.3,color='C1')
+			plt.axvline(med,color='C1')
 			plt.xlabel('Zeropoint')
 			plt.ylabel('Occurrence')
 
 			plt.subplot(122)
 			plt.plot(self.tpf.time.mjd[mask],mzp[mask],'.')
-			plt.axhspan(averager.mean-averager.stdev,averager.mean+averager.stdev,alpha=0.3,color='C1')
-			plt.axhline(averager.mean,color='C1')
+			#plt.axhspan(averager.mean-averager.stdev,averager.mean+averager.stdev,alpha=0.3,color='C1')
+			#plt.axhline(averager.mean,color='C1')
+			plt.axhspan(med-std,med+std,alpha=0.3,color='C1')
+			plt.axhline(med,color='C1')
 			plt.ylabel('Zeropoint')
 			plt.xlabel('MJD')
 			plt.tight_layout()
 
 		if zp_single:
-			mzp = averager.mean
-			stdzp = averager.stdev
+			mzp = med#averager.mean
+			stdzp = std#averager.stdev
 
 		if abs(mzp-20.44) > 2:
 			print('WARNING! field calibration is unreliable, using the default zp = 20.44')
@@ -1467,7 +1549,7 @@ class tessreduce():
 		self.lc_units = 'AB mag'
 		return
 
-	def to_flux(self,zp=None,zp_e=0,flux_type='mjy'):
+	def to_flux(self,zp=None,zp_e=0,flux_type='mjy',plot=False):
 		if (zp is None) & (self.zp is not None):
 			zp = self.zp
 			zp_e = self.zp_e
@@ -1486,7 +1568,7 @@ class tessreduce():
 		elif (flux_type.lower() == 'tess') | (flux_type.lower() == 'counts'):
 			if self.tzp is None:
 				print('Calculating field star zeropoint')
-				self.field_calibrate()
+				self.field_calibrate(plot=plot)
 			flux_zp = self.tzp
 
 		else:
@@ -1811,6 +1893,42 @@ def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=48*2):
 	mask = np.nansum(segments[overlap],axis=0)>0 
 	mask = convolve(mask,np.ones(buffer)) > 0
 	return mask
+
+# ground based stuff
+
+import requests
+import json
+
+def get_sn_name(self):
+	url = 'https://api.astrocats.space/catalog?ra={ra}&dec={dec}&closest'.format(self.ra,self.dec)
+	response = requests.get(url)
+	json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
+	d = json.loads(json_acceptable_string)
+	try:
+		print(d['message'])
+		self.sn_name = None
+		return 
+	except:
+		self.sn_name = list(d.keys())[0]
+		return
+
+def alias(name,catalog='ztf'):
+	url = 'https://api.astrocats.space/{}/alias'.format(name)
+	response = requests.get(url)
+	json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
+	d = json.loads(json_acceptable_string)
+	try:
+		print(d['message'])
+		return 'none'
+	except:
+		pass
+	alias = d[name]['alias']
+	names = [x['value'] for x in alias]
+	names = np.array(names)
+	ind = [x.lower().startswith(catalog) for x in names]
+	return names[ind][0]
+
+
 
 
 
