@@ -1,7 +1,13 @@
 import pandas as pd
 import numpy as np
 import requests
-from alerce.core import Alerce
+try:
+    from alerce.core import Alerce
+    client = Alerce()
+except:
+    from alerce.api import AlerceAPI  # old API
+    client = AlerceAPI()
+    print('WARNING: using old Alerce API')
 import json
 client = Alerce()
 
