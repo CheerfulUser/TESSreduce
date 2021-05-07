@@ -39,6 +39,8 @@ from .rescale_straps import correct_straps
 
 # turn off runtime warnings (lots from logic on nans)
 import warnings
+# nuke warnings because sigma clip is extremely annoying 
+warnings.filterwarnings("ignore")
 warnings.filterwarnings("ignore", category=RuntimeWarning) 
 warnings.filterwarnings("ignore", category=np.VisibleDeprecationWarning)
 pd.options.mode.chained_assignment = None
