@@ -524,10 +524,14 @@ class tessreduce():
 			data = data.value
 		if (start is None) & (stop is None):
 			d = data[np.nansum(data,axis=(1,2)) > 100]
-			summed = np.nansum(d,axis=(1,2))
+			summed = np.nansum(data,axis=(1,2))
+			summed[summed < 1e5] = np.nan # magic number alert
 			lim = np.percentile(summed[np.isfinite(summed)],5)
 			ind = np.where((summed < lim))[0]
 			reference = np.nanmedian(d[ind],axis=(0))
+			#reference = data[np.nanmin(summed) == summed]
+			if len(reference.shape) > 2:
+				reference = reference[0]
 		elif (start is not None) & (stop is None):
 			start = int(start)
 			reference = np.nanmedian(data[start:],axis=(0))
@@ -623,6 +627,8 @@ class tessreduce():
 
 		"""
 		shifted = self.flux.copy()
+		scale = np.nanmedian(shifted)
+		shifted = shifted / scale
 		#shifted[shifted<0] = np.nan
 		nans = ~np.isfinite(shifted)
 		shifted[nans] = 0.
@@ -630,12 +636,12 @@ class tessreduce():
 			for i in range(len(shifted)):
 				if np.nansum(abs(shifted[i])) > 0:
 					shifted[i] = shift(shifted[i],[-self.shift[i,1],-self.shift[i,0]],mode='nearest',order=3)
-			self.flux = shifted
+			self.flux = shifted*scale
 		else:
 			for i in range(len(shifted)):
 				if np.nansum(abs(shifted[i])) > 0:
 					shifted[i] = shift(self.ref,[self.shift[i,1],self.shift[i,0]],mode='nearest',order=3)
-			self.flux -= shifted
+			self.flux -= shifted * scale
 
 				#print(psutil.virtual_memory().available * 100 / psutil.virtual_memory().total)
 		#shifted[nans] = np.nan
@@ -867,7 +873,7 @@ class tessreduce():
 
 		return
 
-	def plotter(self,lc=None,ax = None,ground=False):
+	def plotter(self,lc=None,ax = None,ground=False,time_bin=6/24):
 		"""
 		Simple plotter for light curves. 
 
@@ -885,7 +891,7 @@ class tessreduce():
 
 		if lc is None:
 			lc = self.lc
-		av = self.bin_data(lc=lc)
+		av = self.bin_data(lc=lc,time_bin=time_bin)
 
 		if ax is None:
 			plt.figure()
@@ -893,14 +899,14 @@ class tessreduce():
 		if lc.shape[0] > lc.shape[1]:
 			ax.plot(lc[:,0],lc[:,1],'k.',alpha = 0.2,ms=1,label='$TESS$')
 			
-			ax.plot(av[:,0],av[:,1],'k.',label='$TESS$ 6hr')
+			ax.plot(av[:,0],av[:,1],'k.',label='$TESS$ {}hr'.format(time_bin*24))
 		else:
 			ax.plot(lc[0],lc[1],'.k',alpha = 0.2,ms=1,label='$TESS$')
-			ax.plot(av[0],av[1],'.k',label='$TESS$ 6hr')
+			ax.plot(av[0],av[1],'.k',label='$TESS$ {}hr'.format(time_bin*24))
 		
 		if self.lc_units == 'AB mag':
 			ax.invert_yaxis()
-			if ground:
+			if ground & (self.ground.ztf is not None):
 				gind = self.ground.ztf.fid.values == 'g'
 				rind = self.ground.ztf.fid.values == 'r'
 				ztfg = self.ground.ztf.iloc[gind]
@@ -913,7 +919,7 @@ class tessreduce():
 				ax.set_ylabel('Apparent magnitude')
 		else:
 			ax.set_ylabel('Flux (' + self.lc_units + ')')
-			if ground:
+			if ground & (self.ground.ztf is not None):
 				self.ground.to_flux(flux_type=self.lc_units)
 				gind = self.ground.ztf.fid.values == 'g'
 				rind = self.ground.ztf.fid.values == 'r'
@@ -1466,7 +1472,7 @@ class tessreduce():
 		eflux = np.array(eflux)
 		#eind = abs(eflux) > 20
 		flux[~eind] = np.nan
-			
+		print(d)
 
 		#calculate the zeropoint
 		zp = d.tmag.values[:,np.newaxis] + 2.5*np.log10(flux) 

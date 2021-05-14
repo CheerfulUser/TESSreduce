@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import requests
+a_current = True
 try:
     from alerce.core import Alerce
     client = Alerce()
@@ -8,16 +9,23 @@ except:
     from alerce.api import AlerceAPI  # old API
     client = AlerceAPI()
     print('WARNING: using old Alerce API')
+    a_current = False
 import json
 client = Alerce()
 
 
 def get_ztf(oid):
     # query detections
-    try:
-        sd = client.query_detections(oid, format='pandas')
-    except:  # old Alerce API
-        sd = client.get_detections(oid, format='pandas')
+    if a_current:
+        try:
+            sd = client.query_detections(oid, format='pandas')
+        except:
+            sd = client.query_detections(oid, format='pandas')
+    else:  # old Alerce API
+        try:
+            sd = client.get_detections(oid, format='pandas')
+        except:
+            sd = client.query_detections(oid, format='pandas')
     sd = sd.sort_values("mjd")
         
     # query non detections
@@ -94,7 +102,11 @@ class ground():
         names = [x['value'] for x in alias]
         names = np.array(names)
         ind = [x.lower().startswith(catalog) for x in names]
-        return names[ind][0]
+        print(names[ind])
+        try:
+            return names[ind][0]
+        except:
+            return None
 
 
     def get_ztf(self):
