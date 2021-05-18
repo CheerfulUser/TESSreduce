@@ -524,7 +524,7 @@ class tessreduce():
 			data = data.value
 		if (start is None) & (stop is None):
 			d = data[np.nansum(data,axis=(1,2)) > 100]
-			summed = np.nansum(data,axis=(1,2))
+			summed = np.nansum(d,axis=(1,2))
 			summed[summed < 1e5] = np.nan # magic number alert
 			lim = np.percentile(summed[np.isfinite(summed)],5)
 			ind = np.where((summed < lim))[0]
@@ -635,12 +635,12 @@ class tessreduce():
 		if ~median:
 			for i in range(len(shifted)):
 				if np.nansum(abs(shifted[i])) > 0:
-					shifted[i] = shift(shifted[i],[-self.shift[i,1],-self.shift[i,0]],mode='nearest',order=3)
+					shifted[i] = shift(shifted[i],[-self.shift[i,1],-self.shift[i,0]],mode='nearest',order=3, prefilter=False)
 			self.flux = shifted*scale
 		else:
 			for i in range(len(shifted)):
 				if np.nansum(abs(shifted[i])) > 0:
-					shifted[i] = shift(self.ref,[self.shift[i,1],self.shift[i,0]],mode='nearest',order=3)
+					shifted[i] = shift(self.ref,[self.shift[i,1],self.shift[i,0]],mode='nearest',order=3, prefilter=False)
 			self.flux -= shifted * scale
 
 				#print(psutil.virtual_memory().available * 100 / psutil.virtual_memory().total)
@@ -792,7 +792,7 @@ class tessreduce():
 		med = np.nanmedian(data[ind],axis=0)
 		med = np.nanmedian(data,axis=0)
 		if not self.diff:
-			data = data - med#self.ref
+			data = data - self.ref
 		if mask is not None:
 			ap_sky = mask
 			ap_sky[ap_sky==0] = np.nan
@@ -804,8 +804,8 @@ class tessreduce():
 			tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
 		tar -= sky_med * tar_ap**2
 		tar_err = sky_std * tar_ap**2
-		tar[tar_err > 100] = np.nan
-		sky_med[tar_err > 100] = np.nan
+		#tar[tar_err > 100] = np.nan
+		#sky_med[tar_err > 100] = np.nan
 		if self.tpf is not None:
 			time = self.tpf.time.mjd
 		lc = np.array([time, tar, tar_err])
@@ -855,7 +855,11 @@ class tessreduce():
 		plt.legend(loc=4)
 
 		plt.subplot(122)
-		maxind = np.where((np.nanmax(lc[1]) == lc[1]))[0][0]
+		maxind = np.where((np.nanmax(lc[1]) == lc[1]))[0]
+		try:
+			maxind = maxind[0]
+		except:
+			pass
 		plt.imshow(data[maxind],origin='lower',
 				   vmin=np.percentile(data[maxind],16),
 				   vmax=np.percentile(data[maxind],99),
@@ -892,17 +896,22 @@ class tessreduce():
 		if lc is None:
 			lc = self.lc
 		av = self.bin_data(lc=lc,time_bin=time_bin)
+		if time_bin * 24 == int(time_bin * 24):
+			lab = int(time_bin * 24) 
+			
+		else:
+			lab = time_bin *24
 
 		if ax is None:
 			plt.figure()
 			ax = plt.gca()
 		if lc.shape[0] > lc.shape[1]:
-			ax.plot(lc[:,0],lc[:,1],'k.',alpha = 0.2,ms=1,label='$TESS$')
+			ax.plot(lc[:,0],lc[:,1],'k.',alpha = 0.4,ms=1,label='$TESS$')
 			
-			ax.plot(av[:,0],av[:,1],'k.',label='$TESS$ {}hr'.format(time_bin*24))
+			ax.plot(av[:,0],av[:,1],'k.',label='$TESS$ {}hr'.format(lab))
 		else:
-			ax.plot(lc[0],lc[1],'.k',alpha = 0.2,ms=1,label='$TESS$')
-			ax.plot(av[0],av[1],'.k',label='$TESS$ {}hr'.format(time_bin*24))
+			ax.plot(lc[0],lc[1],'.k',alpha = 0.4,ms=1,label='$TESS$')
+			ax.plot(av[0],av[1],'.k',label='$TESS$ {}hr'.format(lab))
 		
 		if self.lc_units == 'AB mag':
 			ax.invert_yaxis()
@@ -938,7 +947,7 @@ class tessreduce():
 
 	def reduce(self, aper = None, shift = True, parallel = True, calibrate=True,
 				scale = 'counts', bin_size = 0, plot = True, all_output = True,
-				mask_scale = 1,diff_lc = True,diff=None,verbose=None,
+				mask_scale = 1,diff_lc = True,diff=True,verbose=None,
 				tar_ap=5,sky_in=7,sky_out=11):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
@@ -1472,7 +1481,7 @@ class tessreduce():
 		eflux = np.array(eflux)
 		#eind = abs(eflux) > 20
 		flux[~eind] = np.nan
-		print(d)
+		
 
 		#calculate the zeropoint
 		zp = d.tmag.values[:,np.newaxis] + 2.5*np.log10(flux) 
