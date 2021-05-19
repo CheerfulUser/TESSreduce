@@ -55,6 +55,7 @@ package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
 from astropy.coordinates import SkyCoord
 from astropy import units as u
+from astropy.time import Time
 
 def strip_units(data):
 	if type(data) != np.ndarray:
@@ -950,13 +951,25 @@ class tessreduce():
 		ax.legend()
 		return
 
-	def to_lightkurve(self,lc=None):
+	def to_lightkurve(self,lc=None,flux_unit=None):
 		if lc is None:
 			lc = self.lc
-		if lc.shape[0] == 3:
-			light = lk.LightCurve(time=lc[0],flux=lc[1],flux_err=lc[2])
+		if flux_unit is None:
+			flux_unit = self.lc_units
+		if flux_unit.lower() == 'counts':
+			unit = u.electron/ u.s
+		elif flux_unit.lower() == 'mjy':
+			unit = 1e-3 * u.Jy
+		elif flux_unit.lower() == 'jy':
+			unit = u.Jy
+		elif flux_unit.lower() == 'cgs':
+			unit = u.erg/u.s/u.cm**2/u.Hz
 		else:
-			light = lk.LightCurve(time=lc[0],flux=lc[1])
+			unit = 1
+		if lc.shape[0] == 3:
+			light = lk.LightCurve(time=Time(lc[0], format='mjd'),flux=lc[1] * unit,flux_err=lc[2] * unit)
+		else:
+			light = lk.LightCurve(time=Time(lc[0], format='mjd'),flux=lc[1] * unit)
 		return light
 
 	def reduce(self, aper = None, shift = True, parallel = True, calibrate=True,
