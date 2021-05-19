@@ -104,23 +104,27 @@ def Source_mask(Data, grid=0):
 		Boolean mask array for the sources in the image
 	"""
 	data = deepcopy(Data)
-	if grid > 0:
-		data[data<0] = np.nan
-		data[data >= np.percentile(data,95)] =np.nan
-		grid = np.zeros_like(data)
-		size = grid
-		for i in range(grid.shape[0]//size):
-			for j in range(grid.shape[1]//size):
-				section = data[i*size:(i+1)*size,j*size:(j+1)*size]
-				section = section[np.isfinite(section)]
-				lim = np.percentile(section,1)
-				grid[i*size:(i+1)*size,j*size:(j+1)*size] = lim
-		thing = data - grid
+	# catch for if there are no pixels that escape the mask
+	if np.nansum(np.isfinite(data)) > 10:
+		if grid > 0:
+			data[data<0] = np.nan
+			data[data >= np.percentile(data,95)] =np.nan
+			grid = np.zeros_like(data)
+			size = grid
+			for i in range(grid.shape[0]//size):
+				for j in range(grid.shape[1]//size):
+					section = data[i*size:(i+1)*size,j*size:(j+1)*size]
+					section = section[np.isfinite(section)]
+					lim = np.percentile(section,1)
+					grid[i*size:(i+1)*size,j*size:(j+1)*size] = lim
+			thing = data - grid
+		else:
+			thing = data
+		ind = np.isfinite(thing)
+		mask = ((thing <= np.percentile(thing[ind],95,axis=0)) |
+			   (thing <= np.percentile(thing[ind],10))) * 1.
 	else:
-		thing = data
-	ind = np.isfinite(thing)
-	mask = ((thing <= np.percentile(thing[ind],80,axis=0)) |
-		   (thing <= np.percentile(thing[ind],10))) * 1.
+		mask = np.zeros_like(data)
 
 	return mask
 
@@ -184,15 +188,18 @@ def Smooth_bkg(data, extrapolate = True):
 		x1 = xx[~arr.mask]
 		y1 = yy[~arr.mask]
 		newarr = arr[~arr.mask]
-
-		estimate = griddata((x1, y1), newarr.ravel(),
-								  (xx, yy),method='linear')
-		nearest = griddata((x1, y1), newarr.ravel(),
-								  (xx, yy),method='nearest')
-		if extrapolate:
-			estimate[np.isnan(estimate)] = nearest[np.isnan(estimate)]
-		
-		estimate = gaussian_filter(estimate,1)
+		#print(x1,y1)
+		if (len(x1) > 10) & (len(y1) > 10):
+			estimate = griddata((x1, y1), newarr.ravel(),
+									  (xx, yy),method='linear')
+			nearest = griddata((x1, y1), newarr.ravel(),
+									  (xx, yy),method='nearest')
+			if extrapolate:
+				estimate[np.isnan(estimate)] = nearest[np.isnan(estimate)]
+			
+			estimate = gaussian_filter(estimate,1)
+		else:
+			estimate = np.zeros_like(data) * np.nan	
 	else:
 		estimate = np.zeros_like(data) * np.nan
 
@@ -471,20 +478,16 @@ class tessreduce():
 			print('Small tpf, using percentile cut background')
 			bkg_smth = self.Small_background()
 
-		mm = (self.mask & ~4) == 0 
-		mm[mm==0] = np.nan
-		strap = ((self.mask & 4) > 0) * 1.
+		strap = ((((self.mask & 4) * ((self.mask | 4) == 4))) > 0) * 1.0
 		strap[strap==0] = np.nan
 
 		data = strip_units(self.flux)
-		if type(data) != np.ndarray:
-			data = data.value
 		qes = np.zeros_like(bkg_smth) * np.nan
 		for i in range(data.shape[0]):
-			s = (data[i]*strap* mm)/bkg_smth[i]
+			s = (data[i]*strap)/bkg_smth[i]
 			q = np.zeros_like(s) * np.nan
 			for j in range(s.shape[1]):
-				q[:,j] = np.nanmedian(s[:,j])
+				q[:,j] = np.nanmedian(abs(s[:,j]))
 			q[np.isnan(q)] =1 
 			qes[i] = q
 		bkg = bkg_smth * qes
@@ -523,9 +526,9 @@ class tessreduce():
 		if type(data) != np.ndarray:
 			data = data.value
 		if (start is None) & (stop is None):
-			d = data[np.nansum(data,axis=(1,2)) > 100]
+			d = data#[np.nansum(data,axis=(1,2)) > 100]
 			summed = np.nansum(d,axis=(1,2))
-			summed[summed < 1e5] = np.nan # magic number alert
+			#summed[summed < 1e5] = np.nan # magic number alert
 			lim = np.percentile(summed[np.isfinite(summed)],5)
 			ind = np.where((summed < lim))[0]
 			reference = np.nanmedian(d[ind],axis=(0))
@@ -785,7 +788,7 @@ class tessreduce():
 		ap_sky = convolve(ap_sky,np.ones((sky_out,sky_out))) - convolve(ap_sky,np.ones((sky_in,sky_in)))
 		ap_sky[ap_sky == 0] = np.nan
 		m = sigma_clip((self.ref)*ap_sky,sigma=2).mask
-		#ap_sky[m] = np.nan
+		ap_sky[m] = np.nan
 		
 		temp = np.nansum(data*ap_tar,axis=(1,2))
 		ind = temp < np.percentile(temp,40)
@@ -803,7 +806,7 @@ class tessreduce():
 		else:
 			tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
 		tar -= sky_med * tar_ap**2
-		tar_err = sky_std * tar_ap**2
+		tar_err = sky_std #* tar_ap**2
 		#tar[tar_err > 100] = np.nan
 		#sky_med[tar_err > 100] = np.nan
 		if self.tpf is not None:
@@ -892,6 +895,8 @@ class tessreduce():
 		if ground:
 			if self.ground.ztf is None:
 				self.ground.get_ztf()
+			if self.lc_units.lower() == 'counts':
+				self.to_flux()
 
 		if lc is None:
 			lc = self.lc
@@ -944,6 +949,15 @@ class tessreduce():
 		ax.set_xlabel('Time (MJD)')
 		ax.legend()
 		return
+
+	def to_lightkurve(self,lc=None):
+		if lc is None:
+			lc = self.lc
+		if lc.shape[0] == 3:
+			light = lk.LightCurve(time=lc[0],flux=lc[1],flux_err=lc[2])
+		else:
+			light = lk.LightCurve(time=lc[0],flux=lc[1])
+		return light
 
 	def reduce(self, aper = None, shift = True, parallel = True, calibrate=True,
 				scale = 'counts', bin_size = 0, plot = True, all_output = True,
@@ -1018,9 +1032,11 @@ class tessreduce():
 			print('made reference')
 		# make source mask
 		self.Make_mask(maglim=18,strapsize=4,scale=mask_scale)#Source_mask(ref,grid=0)
-		if np.nansum(self.mask) < self.mask.shape[0] * self.mask.shape[1] * .1:
-			print('mask is too dense, lowering mask_scale to 0.5')
-			self.Make_mask(maglim=18,strapsize=4,scale=0.5)
+		frac = np.nansum((self.mask == 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
+		#print('mask frac ',frac)
+		if frac < 0.05:
+			print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
+			self.Make_mask(maglim=15,strapsize=4,scale=0.5)
 		if self.verbose > 0:
 			print('made source mask')
 		# calculate background for each frame
@@ -1034,8 +1050,9 @@ class tessreduce():
 			raise ValueError('bkg all nans')
 		
 		flux = strip_units(self.flux)
-
-		self.flux = self.flux - self.bkg
+		
+		self.flux = flux - self.bkg
+		
 		if self.verbose > 0:
 			print('background subtracted')
 		self.get_ref()
@@ -1064,6 +1081,11 @@ class tessreduce():
 				print('rerunning for difference image')
 			# reseting to do diffim 
 			self.Make_mask(maglim=18,strapsize=4,scale=mask_scale*.5)#Source_mask(ref,grid=0)
+			frac = np.nansum((self.mask== 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
+			#print('mask frac ',frac)
+			if frac < 0.3:
+				print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
+				self.Make_mask(maglim=15,strapsize=4,scale=0.5)
 			# assuming that the target is in the centre, so masking it out 
 			m_tar = np.zeros_like(self.mask,dtype=int)
 			m_tar[self.size//2,self.size//2]= 1
@@ -1089,6 +1111,7 @@ class tessreduce():
 		mask[mask ==0] = np.nan
 		err = np.nanmean(mask*self.flux,axis=(1,2))
 		if calibrate:
+			print('Field calibration')
 			self.field_calibrate()
 
 		if diff_lc:
