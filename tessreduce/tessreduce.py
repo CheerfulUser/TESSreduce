@@ -284,6 +284,24 @@ def Smooth_motion(Centroids,tpf):
 		smoothed[:,1] = savgol_filter(Centroids[:,1],51,3)
 	return smoothed
 
+def grid_shift(input):
+		data = input[0]
+		offset = input[1]
+		x = np.arange(0, data.shape[1])
+		y = np.arange(0, data.shape[0])
+		arr = np.ma.masked_invalid(data)
+
+		xx, yy = np.meshgrid(x, y)
+		#get only the valid values
+		x1 = xx[~arr.mask]
+		y1 = yy[~arr.mask]
+		newarr = arr[~arr.mask]
+
+		shifted = griddata((x1, y1), newarr.ravel(),
+               			   (xx+offset[0], yy+offset[1]),method='cubic')
+		return shifted
+
+
 def Lightcurve(flux, aper,zeropoint=20.44, normalise = False):
 	"""
 	Calculate a light curve from a time series of images through aperature photometry.
@@ -527,7 +545,7 @@ class tessreduce():
 		if type(data) != np.ndarray:
 			data = data.value
 		if (start is None) & (stop is None):
-			d = data#[np.nansum(data,axis=(1,2)) > 100]
+			d = data[self.tpf.quality==0]#np.nansum(data,axis=(1,2)) > 100]
 			summed = np.nansum(d,axis=(1,2))
 			#summed[summed < 1e5] = np.nan # magic number alert
 			lim = np.percentile(summed[np.isfinite(summed)],5)
@@ -606,9 +624,6 @@ class tessreduce():
 		self.shift = smooth
 
 
-
-
-
 	def Shift_images(self,median=False):
 		"""
 		Shifts data by the values given in offset. Breaks horribly if data is all 0.
@@ -631,24 +646,32 @@ class tessreduce():
 
 		"""
 		shifted = self.flux.copy()
-		scale = np.nanmedian(shifted)
-		shifted = shifted / scale
+		#scale = np.nanmedian(shifted)
+		#shifted = shifted / scale
 		#shifted[shifted<0] = np.nan
 		nans = ~np.isfinite(shifted)
 		shifted[nans] = 0.
+		print('loop start')
 		if ~median:
-			for i in range(len(shifted)):
-				if np.nansum(abs(shifted[i])) > 0:
-					shifted[i] = shift(shifted[i],[-self.shift[i,1],-self.shift[i,0]],mode='nearest',order=3, prefilter=False)
-			self.flux = shifted*scale
+			if self.parallel:
+				ind = np.arange(0,len(shifted))
+				num_cores = multiprocessing.cpu_count()
+				s = Parallel(n_jobs=num_cores)(delayed(grid_shift)([shifted[i],self.shift[i]]) for i in ind)
+				shifted = s 
+			else:
+				for i in range(len(shifted)):
+					if np.nansum(abs(shifted[i])) > 0:
+						shifted[i] = grid_shift([shifted[i],self.shift[i]])
+
+			self.flux = shifted#*scale
 		else:
 			for i in range(len(shifted)):
 				if np.nansum(abs(shifted[i])) > 0:
 					shifted[i] = shift(self.ref,[self.shift[i,1],self.shift[i,0]],mode='nearest',order=3, prefilter=False)
-			self.flux -= shifted * scale
-
+			self.flux -= shifted# * scale
 				#print(psutil.virtual_memory().available * 100 / psutil.virtual_memory().total)
 		#shifted[nans] = np.nan
+		return
 		
 
 
@@ -864,9 +887,11 @@ class tessreduce():
 			maxind = maxind[0]
 		except:
 			pass
+		d = data[maxind]
+		nonan = np.isfinite(d)
 		plt.imshow(data[maxind],origin='lower',
-				   vmin=np.percentile(data[maxind],16),
-				   vmax=np.percentile(data[maxind],99),
+				   vmin=np.percentile(d[nonan],16),
+				   vmax=np.percentile(d[nonan],95),
 				   aspect='auto')
 		plt.colorbar()
 		ap = ap_tar
@@ -1084,7 +1109,7 @@ class tessreduce():
 				self.Centroids_DAO()
 		if diff is not None:
 			self.diff = diff
-		if ~self.diff:
+		if not self.diff:
 			self.Shift_images()
 			if self.verbose > 0:
 				print('images shifted')
