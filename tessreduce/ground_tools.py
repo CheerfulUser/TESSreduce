@@ -11,7 +11,6 @@ except:
     print('WARNING: using old Alerce API')
     a_current = False
 import json
-client = Alerce()
 
 
 def get_ztf(oid):
