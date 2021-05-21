@@ -29,7 +29,7 @@ REQUIRED = ['lightkurve>=2.0.0',
             'astropy',
             'joblib',
             'multiprocess',
-            'scikit-learn',
+            'scikit-learn>=0.24.1',
             'alerce',
             'tess-point',
             'tabulate']
