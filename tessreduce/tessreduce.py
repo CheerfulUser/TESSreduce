@@ -431,8 +431,48 @@ def sn_lookup(name,time='disc',buffer=0):
 		print('No TESS coverage')
 		return None
 
+def spacetime_lookup(ra,dec,time,buffer=0):
+	if type(ra) == str:
+		c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
+		ra = c.ra.deg
+		dec = c.dec.deg
 
+	outID, outEclipLong, outEclipLat, outSecs, outCam, outCcd, outColPix, \
+	outRowPix, scinfo = focal_plane(0, ra, dec)
+	
+	sec_times = pd.read_csv(package_directory + 'sector_mjd.csv')
+	if len(outSecs) > 0:
+		ind = outSecs - 1 
+		secs = sec_times.iloc[ind]
+		disc_start = secs['mjd_start'].values - time
+		disc_end = secs['mjd_end'].values - time
 
+		covers = []
+		differences = []
+		tr_list = []
+		tab = []
+		for i in range(len(disc_start)):
+			ds = disc_start[i]
+			de = disc_end[i]
+			if (ds-buffer < 0) & (de + buffer> 0):
+				cover = True
+				dif = 0
+			elif (de+buffer < 0):
+				cover = False
+				dif = de
+			elif (ds-buffer > 0):
+				cover = False
+				dif = ds
+			covers += [cover]
+			differences += [dif]
+			tab += [[secs.Sector.values[i], cover, dif]]
+			tr_list += [[ra, dec, secs.Sector.values[i], cover]]
+
+		print(tabulate(tab, headers=['Sector', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
+		return tr_list
+	else:
+		print('No TESS coverage')
+		return None
 class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,sn_list=None,tpf=None,size=90,sector=None,reduce=False,
@@ -1284,10 +1324,10 @@ class tessreduce():
 				print('remade mask')
 
 			self.flux = strip_units(self.tpf.flux)
-			
-			self.Shift_images()
-			if self.verbose > 0:
-				print('shifting images')
+			if self.align:
+				self.Shift_images()
+				if self.verbose > 0:
+					print('shifting images')
 			self.flux -= self.ref
 			if self.verbose > 0:
 				print('background')
