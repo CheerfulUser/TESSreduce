@@ -32,6 +32,9 @@ from astropy.stats import sigma_clip
 import multiprocessing
 from joblib import Parallel, delayed
 
+from tess_stars2px import tess_stars2px_function_entry as focal_plane
+from tabulate import tabulate
+
 from .catalog_tools import *
 from .calibration_tools import *
 from .ground_tools import ground
@@ -298,7 +301,7 @@ def grid_shift(input):
 		newarr = arr[~arr.mask]
 
 		shifted = griddata((x1, y1), newarr.ravel(),
-               			   (xx+offset[0], yy+offset[1]),method='cubic')
+						   (xx+offset[0], yy+offset[1]),method='cubic')
 		return shifted
 
 
@@ -345,10 +348,94 @@ def Lightcurve(flux, aper,zeropoint=20.44, normalise = False):
 
 	return LC
 
+def sn_lookup(name,time='disc',buffer=0):
+	"""
+	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
+	discovery/max times and coordinates.
+
+	-------
+	Inoputs
+	-------
+	name : str
+		catalog name
+	time : str
+		reference time to use, can be either disc, or max
+	buffer : float
+		overlap buffer time in days 
+
+	-------
+	Returns
+	-------
+	tr_list : list
+		list of ra, dec, and sector that can be put into tessreduce.
+	"""
+	url = 'https://api.astrocats.space/{}'.format(name)
+	response = requests.get(url)
+	json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
+	d = json.loads(json_acceptable_string)
+	if list(d.keys())[0] == 'message':
+		print(d['message'])
+		return None
+	else:
+		disc_t = d[name]['discoverdate'][0]['value']
+		disc_t = Time(disc_t.replace('/','-'))
+		
+
+	max_t = d[name]['maxdate'][0]['value']
+	max_t = Time(max_t.replace('/','-'))
+
+	ra = d[name]['ra'][-1]['value']
+	dec = d[name]['dec'][-1]['value']
+	c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
+	ra = c.ra.deg
+	dec = c.dec.deg
+	
+	outID, outEclipLong, outEclipLat, outSecs, outCam, outCcd, outColPix, \
+	outRowPix, scinfo = focal_plane(0, ra, dec)
+	
+	sec_times = pd.read_csv(package_directory + 'sector_mjd.csv')
+	if len(outSecs) > 0:
+		ind = outSecs - 1 
+		secs = sec_times.iloc[ind]
+		if (time.lower() == 'disc') | (time.lower() == 'discovery'):
+			disc_start = secs['mjd_start'].values - disc_t.mjd
+			disc_end = secs['mjd_end'].values - disc_t.mjd
+		elif (time.lower() == 'max') | (time.lower() == 'peak'):
+			disc_start = secs['mjd_start'].values - max_t.mjd
+			disc_end = secs['mjd_end'].values - max_t.mjd
+
+		covers = []
+		differences = []
+		tr_list = []
+		tab = []
+		for i in range(len(disc_start)):
+			ds = disc_start[i]
+			de = disc_end[i]
+			if (ds-buffer < 0) & (de + buffer> 0):
+				cover = True
+				dif = 0
+			elif (de+buffer < 0):
+				cover = False
+				dif = de
+			elif (ds-buffer > 0):
+				cover = False
+				dif = ds
+			covers += [cover]
+			differences += [dif]
+			tab += [[secs.Sector.values[i], cover, dif]]
+			tr_list += [[ra, dec, secs.Sector.values[i], cover]]
+
+		print(tabulate(tab, headers=['Sector', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
+		return tr_list
+	else:
+		print('No TESS coverage')
+		return None
+
+
 
 class tessreduce():
 
-	def __init__(self,ra=None,dec=None,name=None,tpf=None,size=90,sector=None,reduce=False,
+	def __init__(self,ra=None,dec=None,name=None,sn_list=None,tpf=None,size=90,sector=None,reduce=False,
 				 align=True,parallel=True,diff=False,quality_bitmask='default',verbose=1):
 		"""
 		Class to reduce tess data.
@@ -368,26 +455,35 @@ class tessreduce():
 		
 
 		# calculated 
-		self.mask   = None
-		self.shift  = None
-		self.bkg	= None
-		self.flux   = None
-		self.ref	= None
-		self.wcs	= None
-		self.qe	 = None
-		self.lc	 = None
-		self.sky	= None
-		self.events = None
-		self.zp	 = None
-		self.zp_e = None
+		self.mask    = None
+		self.shift   = None
+		self.bkg	 = None
+		self.flux    = None
+		self.ref	 = None
+		self.wcs	 = None
+		self.qe	     = None
+		self.lc	     = None
+		self.sky  	 = None
+		self.events  = None
+		self.zp	     = None
+		self.zp_e    = None
 		self.sn_name = None
-		
+		self.ebv     = 0
 		# repeat for backup
 		self.tzp	 = None
-		self.tzp_e = None
-		self.ebv = 0
+		self.tzp_e   = None
+		
 		# light curve units 
 		self.lc_units = 'Counts'
+
+
+		if sn_list is not None:
+			sn_list = np.array(sn_list,dtype=object)
+			if len(sn_list.shape) > 1:
+				sn_list = sn_list[sn_list[:,3].astype('bool')][0]
+			self.ra = sn_list[0]
+			self.dec = sn_list[1]
+			self.sector = sn_list[2]
 
 		if tpf is not None:
 			if type(tpf) == str:
@@ -396,6 +492,7 @@ class tessreduce():
 			self.wcs  = self.tpf.wcs
 			self.ra   = self.tpf.ra
 			self.dec  = self.tpf.dec
+
 		elif self.check_coord():
 			self.Get_TESS(quality_bitmask=quality_bitmask)
 
@@ -623,7 +720,7 @@ class tessreduce():
 		smooth[nans] = np.nan
 		self.shift = smooth
 
-
+	'''
 	def Shift_images(self,median=False):
 		"""
 		Shifts data by the values given in offset. Breaks horribly if data is all 0.
@@ -651,7 +748,7 @@ class tessreduce():
 		#shifted[shifted<0] = np.nan
 		nans = ~np.isfinite(shifted)
 		shifted[nans] = 0.
-		print('loop start')
+		
 		if ~median:
 			if self.parallel:
 				ind = np.arange(0,len(shifted))
@@ -671,9 +768,43 @@ class tessreduce():
 			self.flux -= shifted# * scale
 				#print(psutil.virtual_memory().available * 100 / psutil.virtual_memory().total)
 		#shifted[nans] = np.nan
-		return
+		return'''
 		
+	def Shift_images(self,median=False):
+		"""
+		Shifts data by the values given in offset. Breaks horribly if data is all 0.
+		Parameters
+		----------
+		Offset : array 
+			centroid offsets relative to a reference image
+		Data : array
+			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
+		median : bool
+			if true then the shift direction will be reveresed to shift the reference
+		Returns
+		-------
+		shifted : array
+			array shifted to match the offsets given
+		"""
+		shifted = self.flux.copy()
+		scale = np.nanmedian(shifted)
+		shifted = shifted / scale
+		#shifted[shifted<0] = np.nan
+		nans = ~np.isfinite(shifted)
+		shifted[nans] = 0.
+		if ~median:
+			for i in range(len(shifted)):
+				if np.nansum(abs(shifted[i])) > 0:
+					shifted[i] = shift(shifted[i],[-self.shift[i,1],-self.shift[i,0]],mode='nearest',order=3, prefilter=False)
+			self.flux = shifted*scale
+		else:
+			for i in range(len(shifted)):
+				if np.nansum(abs(shifted[i])) > 0:
+					shifted[i] = shift(self.ref,[self.shift[i,1],self.shift[i,0]],mode='nearest',order=3, prefilter=False)
+			self.flux -= shifted * scale
 
+				#print(psutil.virtual_memory().available * 100 / psutil.virtual_memory().total)
+		#shifted[nans] = np.nan
 
 
 
@@ -977,6 +1108,26 @@ class tessreduce():
 		return
 
 	def to_lightkurve(self,lc=None,flux_unit=None):
+		"""
+		Convert TESSreduce light curve into lighkurve.lightcurve object. Flux units are recorded
+		
+		-----------------
+		Inputs (optional)
+		-----------------
+		lc : array
+			light curve with 2xn or 3xn shape
+		flux_unit : str
+			units of the light curve flux 
+			Valid options:
+				counts
+				mjy
+				cgs
+		-------
+		Returns
+		-------
+		light : lightcurve
+			lightkurve lightcurve object. All lk function will work on this!
+		"""
 		if lc is None:
 			lc = self.lc
 		if flux_unit is None:
@@ -1213,6 +1364,25 @@ class tessreduce():
 		self.lc = lc
 
 	def lc_events(self,err=None,duration=10,sig=5):
+		"""
+		Use clustering to detect individual high SNR events in a light curve.
+		Clustering isn't incredibly robust, so it could be better.
+
+		-----------------
+		Inputs (optional)
+		-----------------
+		err : array
+			flux error to be used in weighting of events
+		duration : int 
+			How long an event needs to last for before being detected
+		sig : float
+			significance of the detection above the background
+		--------
+		Returns
+		-------
+		self.events : list
+			list of light curves for all identified events 
+		"""
 		lc = self.lc
 		ind = np.isfinite(lc[1])
 		lc = lc[:,ind]
@@ -1233,6 +1403,9 @@ class tessreduce():
 		self.events = lcs
 
 	def event_plotter(self,**kwargs):
+		"""
+		Lazy plotting tool for checking the detected events.
+		"""
 		if self.events is None:
 			self.lc_events(**kwargs)
 		plt.figure()
@@ -1240,7 +1413,7 @@ class tessreduce():
 		for i in range(len(self.events)):
 			plt.plot(self.events[i,0],self.events[i,1],'*',label='Event {}'.format(i))
 		plt.xlabel('MJD')
-		plt.ylabel('Counts')
+		plt.ylabel('Flux')
 
 
 	def detrend_transient(self,lc=None,err=None,Mask=None,variable=False,sig = 5, 
@@ -1474,6 +1647,39 @@ class tessreduce():
 
 	### serious calibration 
 	def field_calibrate(self,zp_single=True,plot=False):
+		"""
+		In-situ flux calibration for TESSreduce light curves. This uses the
+		flux calibration method developed in Ridden-Harper et al. 2021 where a broadband 
+		filter is reconstructed by a linear combination of PS1 filters + a non linear colour term.
+		Here, we calibrate to all PS1 stars in the tpf region by first calculating the 
+		stellar extinction in E(B-V) using stellar locus regression. We then identify all reasonably 
+		isolated stars with g-r < 1 and i < 17 in the TPF. For each isolated source we calculate the
+		expected TESS magnitude, including all sources within 2.5 pixels (52.5''), and compare 
+		that to TESS aperture photometry. Averaging together all valid sources gives us a 
+		good representation of the TESS zeropoint. 
+
+		Since we currently only use PS1 photometry, this method is only avaiable in areas of 
+		PS1 coverage, so dec > -30. 
+
+		-------
+		Options
+		-------
+		zp_single : bool
+			if True all points through time are averaged to a single zp
+			if False then the zp is time varying, creating an extra photometric correction
+			for light curves, but with increased error in the zp.
+		plot : bool
+			if True then diagnostic plots will be created
+		-------
+		Returns
+		-------
+		self.ebv : float 
+			estimated E(B-V) extinction from stellar locus regression
+		self.zp/tzp : float
+			TESS photometric zeropoint
+		self.zp_e/tzp_e : float
+			error in the photometric zeropoint
+		"""
 		if self.dec < -30:
 			print('Target is too far south with Dec = {} for PS1 photometry.'.format(self.dec) +
 				  " Can't calibrate at this time, so using zp = 20.44.")
@@ -1611,6 +1817,10 @@ class tessreduce():
 		return
 
 	def to_mag(self,zp=None,zp_e=0):
+		"""
+		Convert the TESS lc into magnitude space.
+		This is non reversible, since negative values will be lost.
+		"""
 		if (zp is None) & (self.zp is not None):
 			zp = self.zp
 			zp_e = self.zp_e
@@ -1628,6 +1838,42 @@ class tessreduce():
 		return
 
 	def to_flux(self,zp=None,zp_e=0,flux_type='mjy',plot=False):
+		"""
+		Convert the TESS lc to physical flux. Either the field calibrated zp 
+		or a given zp can be used. 
+
+		-----------------
+		Inputs (optional)
+		-----------------
+		zp : float
+			tess zeropoint 
+		zp_e : float
+			error in the tess zeropoint
+		flux_type : str
+			Valid options:
+			mjy 
+			jy
+			erg/cgs
+			tess/counts
+		-------
+		Options
+		-------
+		plot : bool
+			plot the field calibration figures, if used.
+
+		-------
+		Returns
+		-------
+		self.lc : array
+			converted to the requested unit
+		self.zp : float
+			updated with the new zeropoint 
+		self.zp_e : float 
+			updated with the new zeropoint error
+		self.lc_units : str
+			updated with the flux unit used
+
+		"""
 		if (zp is None) & (self.zp is not None):
 			zp = self.zp
 			zp_e = self.zp_e
@@ -1897,6 +2143,34 @@ def Calibrate_lc(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
 ### Serious source mask
 
 def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None):
+	"""
+	Make a source mask from the PS1 and Gaia catalogs.
+
+	------
+	Inputs
+	------
+	tpf : lightkurve target pixel file
+		tpf of the desired region
+	maglim : float
+		magnitude limit in PS1 i band  and Gaia G band for sources.
+	scale : float
+		scale factor for default mask size 
+	strapsize : int
+		size of the mask for TESS straps 
+	badpix : str
+		not implemented correctly, so just ignore! 
+
+	-------
+	Returns
+	-------
+	total mask : bitmask
+		a bitwise mask for the given tpf. Bits are as follows:
+		0 - background
+		1 - catalogue source
+		2 - saturated source
+		4 - strap mask
+		8 - bad pixel (not used)
+	"""
 	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
 	wcs = tpf.wcs
 	image = tpf.flux[100]

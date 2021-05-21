@@ -30,7 +30,9 @@ REQUIRED = ['lightkurve',
             'joblib',
             'multiprocess',
             'scikit-learn',
-             'alerce']
+            'alerce',
+            'tess-point',
+            'tabulate']
 
 # What packages are optional?
 EXTRAS = {

@@ -2,3 +2,4 @@ include README.md LICENSE
 include tessreduce/tess_straps.csv
 include tessreduce/calspec_mags.npy
 include tessreduce/Tonry_splines.txt
+include tessreduce/sector_mjd.csv
