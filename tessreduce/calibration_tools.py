@@ -121,66 +121,6 @@ def Tonry_reduce(Data,plot=False):
     #clipped_data = data.iloc[clips[0]] 
     return res.x, dat
 
-def zeropointPlotter(K,err, Colours, Compare, ID, fitfilt, Save, Residuals = False, Close = True):
-
-    plt.figure(figsize=(10,6))
-    plt.suptitle(fitfilt + ' band \n ID: ' + str(ID) + ', Zp = ' + str(np.round(K,3)[0]) + '$\pm$' + str(np.round(abs(err),3)[0]))
-    for i in range(len(Compare)):
-        X,Y = Compare[i]
-        ob_x, ob_y, locus = Get_lcs(X,Y,K,Colours,fitfilt)
-
-        ind = np.where((Colours['obs g-r'][0,:] <= .8) & (Colours['obs g-r'][0,:] >= 0.2))[0]
-        ob_x = ob_x[:,ind]
-        ob_y = ob_y[:,ind]
-        
-        
-        plt.subplot(2,2,i+1)
-        plt.xlabel(X)
-        plt.ylabel(Y)
-        if i == 2:
-            if Residuals:
-                dist = Dist_tensor(X,Y,K,Colours,fitfilt,Tensor = True)
-                
-                plt.errorbar(ob_x[0,:],dist,ob_y[1,:],fmt='.',alpha=0.4,label='Observed')
-                plt.axhline(0,ls='--',color='k',label='Pickles model')
-                plt.legend(loc='upper center', bbox_to_anchor=(1.5, .5))
-                plt.ylabel(r'('+ Y +')obs - (' + Y + ')syn')
-                #plt.ylim(-.6, .6)
-            else:
-                plt.errorbar(ob_x[0,:],ob_y[0,:],ob_y[1,:],fmt='.',alpha=0.4,label='Observed')
-                ind = (locus[0,:] > 0.3) & (locus[0,:] < 0.8)
-                plt.plot(locus[0,ind],locus[1,ind],label='Pickles model')
-                plt.legend(loc='upper center', bbox_to_anchor=(1.5, .5))
-                plt.xlim(0.3, .8)
-                #plt.ylim(-.5, 1)
-        else:
-            if Residuals:
-                dist = Dist_tensor(X,Y,K,Colours,fitfilt,Tensor = True)
-                plt.axhline(0,ls='--',color='k',label='offset = {}'.format(np.round(K[0],4)))
-                plt.errorbar(ob_x[0,:],dist,ob_y[1,:],fmt='.',alpha=0.4)
-                #plt.legend()
-                plt.ylabel(r'('+ Y +')obs - (' + Y + ')syn')
-                #plt.hist(dist.flatten(),bins=100)
-                #plt.ylim(-.6, .6)
-            else:
-                plt.errorbar(ob_x[0,:],ob_y[0,:],ob_y[1,:],fmt='.',alpha=0.4)
-                ind = (locus[0,:] > 0.3) & (locus[0,:] < 0.8)
-                plt.plot(locus[0,ind],locus[1,ind])
-                #plt.xlim(-0.5, 1)
-                plt.xlim(0.3, .8)
-                #plt.ylim(-.5, 1)
-    plt.subplots_adjust(wspace=.25,hspace=.25)
-    
-    path = Save + 'id_'+str(ID) +'/' + fitfilt+ '/' 
-    Save_space(path)
-    if Residuals:
-        plt.savefig(path+ fitfilt + '_fit_id' + str(ID) +'_residual.png')
-    else:
-        plt.savefig(path+ fitfilt + '_fit_id' + str(ID) + '.png')
-    if Close:
-        plt.close()
-    return
-
 
 
 def sigma_mask(data,error= None,sigma=3,Verbose= False):
@@ -197,6 +137,9 @@ def sigma_mask(data,error= None,sigma=3,Verbose= False):
 
 
 def Get_lcs(X,Y,K,Colours,fitfilt = ''):
+    """
+    Make the colour combinations
+    """
     keys = np.array(list(Colours.keys()))
 
     xind = 'mod ' + X == keys
@@ -229,6 +172,9 @@ def Get_lcs(X,Y,K,Colours,fitfilt = ''):
 def Dot_prod_error(x,y,Model):
     """
     Calculate the error projection in the direction of a selected point.
+    ------------------
+    Currently not used
+    ------------------
     """
     #print(Model.shape)
     adj = y[0,:] - Model[1,:]
@@ -245,6 +191,33 @@ def Dot_prod_error(x,y,Model):
 
 
 def Dist_tensor(X,Y,K,Colours,fitfilt='',Tensor=False,Plot = False):
+    """
+    Calculate the distance of sources in colour space from the model stellar locus.
+    
+    ------
+    Inputs
+    ------
+    X : str
+        string containing the colour combination for the X axis 
+    Y : str
+        string containing the colour combination for the Y axis 
+    K : str 
+        Not sure...
+    Colours : dict
+        dictionary of colour combinations for all sources 
+    fitfilt : str 
+         Not used...
+     Tensor : bool
+        if true this returns the distance tensor instead of the total sum
+    Plot : bool
+        if true this makes diagnotic plots
+
+    -------
+    Returns
+    -------
+    residual : float
+        residuals of distances from all points to the model locus. 
+    """
     ob_x, ob_y, locus = Get_lcs(X,Y,K,Colours,fitfilt)
     
     ind = np.where((Colours['obs g-r'][0,:] <= .8) & (Colours['obs g-r'][0,:] >= 0.2))[0]
@@ -298,58 +271,6 @@ def Dist_tensor(X,Y,K,Colours,fitfilt='',Tensor=False,Plot = False):
     return residual + cut_points * 100
 
 
-def Cut_data(K,Data,Model,Compare,Extinction,Band = '',Plot=False):
-    Colours = Make_colours(Data,Model,Compare,Extinction, Redden = False)
-    keys = list(Colours.keys())
-    bads = []
-    for X,Y in Compare:
-        #X = 'g-r'
-        #Y = 'i-z'
-        dist = Dist_tensor(X,Y,K,Colours,Band,True)
-        if len(dist) > 5:
-
-            ob_x, ob_y, locus = Get_lcs(X,Y,K,Colours,Band)
-            ob_x2, ob_y2, locus = Get_lcs(X,Y,K,Colours,Band)
-            ind = np.where((Colours['obs g-r'][0,:] <= .8) & (Colours['obs g-r'][0,:] >= 0.2))[0]
-
-            #if X == 'g-r':
-            #   ind = np.where((ob_x[0,:] <= .9) & (ob_x[0,:] >= 0.2) & (ob_y[1,:] < 0.5))[0]
-            #elif X == 'r-i':
-            #   ind = np.where((ob_x[0,:] <= .6) & (ob_x[0,:] >= 0) & (ob_y[1,:] < 0.5))[0]
-            ob_x = ob_x[:,ind]
-            ob_y = ob_y[:,ind]
-
-            #print(Colours)
-            #bad = []
-            #print(type(dist))
-            #print('std',np.nanstd(dist.flatten()))
-            dist = dist.flatten()
-            finiteinds = np.where(np.isfinite(dist))[0]
-            #dist[~np.isfinite(dist)] = np.nan
-            #print(ob_y)
-            bad = sigma_mask(dist,error=ob_y[:,1],sigma=3)
-            bad = finiteinds[bad]
-            #for i in range(len(dist)):
-                #print(dist[i],ob_y[1,i])
-             #   if abs(dist[i]) > 1:
-                    #print(dist,ob_y[0,i])
-              #   bad += [i]
-              #  if abs(dist[i]) > 10*ob_y[1,i]:
-
-               #     bad += [i]
-            if Plot:
-                plt.figure()
-                plt.errorbar(ob_x2[0,:],ob_y2[0,:],yerr = ob_y2[1,:],fmt='.')
-                plt.errorbar(locus[0,:],locus[1,:])
-                #plt.errorbar(ob_x[0,bad],ob_y[0,bad],yerr = ob_y[1,bad],fmt='.')
-                plt.errorbar(ob_x2[0,ind[bad]],ob_y2[0,ind[bad]],yerr = ob_y2[1,ind[bad]],fmt='r.')
-                #plt.xlim(.5,0.9)
-            bads += [ind[bad]]
-    bads = np.array(bads)
-    return bads
-
-
-
 def Make_colours(Data, Model, Compare, Extinction = 0, Redden = False,Tonry=False):
     #R = {'g': 3.518, 'r':2.617, 'i':1.971, 'z':1.549, 'y': 1.286, 'k':2.431,'tess':1.809}#'z':1.549} # value from bayestar
     R = {'g': 3.61562687, 'r':2.58602003, 'i':1.90959054, 'z':1.50168735, 
@@ -387,36 +308,6 @@ def Make_colours(Data, Model, Compare, Extinction = 0, Redden = False,Tonry=Fals
             colours['obs ' + x] -= Extinction*((R[x.split('-')[0]] - R[x.split('-')[1]]))
             colours['obs ' + y] -= Extinction*(R[y.split('-')[0]] - R[y.split('-')[1]])
     return colours 
-
-def SLR_residual_multi(K,Data,Model,Compare,Ex,Band=''):
-    #print('guess ', K)
-    #params = Parms_dict(K)
-    Colours = Make_colours(Data, Model, Compare, Extinction = Ex, Redden = False)
-    
-    res = 0
-    #print(K)
-    for x,y in Compare:
-        residual = Dist_tensor(x,y,K,Colours,Band,Tensor=True,Plot=False)
-        if len(residual)>0:
-            res += np.nansum(abs(residual))
-        else:
-            res = np.inf
-    #print('residual ', res)
-    return res
-    
-def Fit_zeropoint(Data,Model,Compare,Ex,Band):
-    k = 0
-    res = minimize(SLR_residual_multi,k,args=(Data,Model,Compare,Ex,Band))
-    #Colours = Make_colours(Data,Model,Compare,Extinction = Ex)
-    bads = Cut_data(k,Data,Model,Compare,Ex,Band=Band)
-
-    inds = np.ones(len(Data))
-    for b in bads:
-        inds[b] = 0
-    data = Data.iloc[inds > 0]
-    #print(inds)
-    res = minimize(SLR_residual_multi,k,args=(data,Model,Compare,Ex,Band))
-    return res.x, data
 
 
 def Isolated_stars(pos,Tmag,flux,Median, Distance = 7, Aperture=3, Mag = 16):
@@ -465,31 +356,3 @@ def Isolated_stars(pos,Tmag,flux,Median, Distance = 7, Aperture=3, Mag = 16):
     else:
         raise ValueError('No stars brighter than {} Tmag and isolated by {} pix. Concider lowering brightness.'.format(Mag,Distance))
     return ind, clips, time_series
-
-
-#def mag2flux(mag,zp=25):
-#    flux = 10**(-1/2.5*(mag-zp))
-#    return flux
-
-
-def ps1_to_tess(g,r,i,z,y):
-    zp = 25
-    g = mag2flux(g,zp)
-    r = mag2flux(r,zp)
-    i = mag2flux(i,zp)
-    z = mag2flux(z,zp)
-    y = mag2flux(y,zp)
-    
-    cr = 0.25582823; ci = 0.27609407; cz = 0.35809516
-    cy = 0.11244277; cp = 0.00049096
-
-    t = (cr*r + ci*i + cz*z + cy*y)*(g/i)**cp
-
-    t = -2.5*np.log10(t) + zp
-
-    return t 
-
-
-
-
-

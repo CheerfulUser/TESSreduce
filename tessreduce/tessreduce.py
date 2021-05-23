@@ -60,6 +60,10 @@ from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
 
+import requests
+import json
+
+
 def strip_units(data):
 	if type(data) != np.ndarray:
 		data = data.value
@@ -348,20 +352,26 @@ def Lightcurve(flux, aper,zeropoint=20.44, normalise = False):
 
 	return LC
 
-def sn_lookup(name,time='disc',buffer=0):
+def sn_lookup(name,time='disc',buffer=0,print_table=True):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
 	discovery/max times and coordinates.
 
-	-------
-	Inoputs
-	-------
+	------
+	Inputs
+	------
 	name : str
 		catalog name
 	time : str
 		reference time to use, can be either disc, or max
 	buffer : float
 		overlap buffer time in days 
+	
+	-------
+	Options
+	-------
+	print_table : bool 
+		if true then the lookup table is printed
 
 	-------
 	Returns
@@ -425,13 +435,42 @@ def sn_lookup(name,time='disc',buffer=0):
 			tab += [[secs.Sector.values[i], cover, dif]]
 			tr_list += [[ra, dec, secs.Sector.values[i], cover]]
 
-		print(tabulate(tab, headers=['Sector', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
+		if print_table: 
+			print(tabulate(tab, headers=['Sector', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
 		return tr_list
 	else:
 		print('No TESS coverage')
 		return None
 
-def spacetime_lookup(ra,dec,time,buffer=0):
+def spacetime_lookup(ra,dec,time,buffer=0,print_table=True):
+	"""
+	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
+	discovery/max times and coordinates.
+
+	------
+	Inputs
+	------
+	ra : float or str
+		ra of object
+	dec : float or str
+		dec of object
+	time : float
+		reference time to use, must be in MJD
+	buffer : float
+		overlap buffer time in days 
+	
+	-------
+	Options
+	-------
+	print_table : bool 
+		if true then the lookup table is printed
+
+	-------
+	Returns
+	-------
+	tr_list : list
+		list of ra, dec, and sector that can be put into tessreduce.
+	"""
 	if type(ra) == str:
 		c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
 		ra = c.ra.deg
@@ -467,12 +506,13 @@ def spacetime_lookup(ra,dec,time,buffer=0):
 			differences += [dif]
 			tab += [[secs.Sector.values[i], cover, dif]]
 			tr_list += [[ra, dec, secs.Sector.values[i], cover]]
-
-		print(tabulate(tab, headers=['Sector', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
+		if print_table: 
+			print(tabulate(tab, headers=['Sector', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
 		return tr_list
 	else:
 		print('No TESS coverage')
 		return None
+
 class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,sn_list=None,tpf=None,size=90,sector=None,reduce=False,
@@ -534,7 +574,9 @@ class tessreduce():
 			self.dec  = self.tpf.dec
 
 		elif self.check_coord():
-			self.Get_TESS(quality_bitmask=quality_bitmask)
+			if self.verbose>0:
+				print('getting TPF from TESScut')
+			self.get_TESS(quality_bitmask=quality_bitmask)
 
 		self.ground = ground(ra = self.ra, dec = self.dec)
 
@@ -548,7 +590,7 @@ class tessreduce():
 		else:
 			return True
 
-	def Get_TESS(self,ra=None,dec=None,name=None,Size=None,Sector=None,quality_bitmask='default'):
+	def get_TESS(self,ra=None,dec=None,name=None,Size=None,Sector=None,quality_bitmask='default'):
 		"""
 		Use the lightcurve interface with TESScut to get an FFI cutout 
 		of a region around the given coords.
@@ -594,7 +636,7 @@ class tessreduce():
 		self.flux = strip_units(tpf.flux)
 		self.wcs  = tpf.wcs
 
-	def Make_mask(self,maglim=19,scale=1,strapsize=4):
+	def make_mask(self,maglim=19,scale=1,strapsize=4):
 		data = strip_units(self.flux)
 
 		mask = Cat_mask(self.tpf,maglim,scale,strapsize)
@@ -632,7 +674,7 @@ class tessreduce():
 					bkg_smth[i] = Smooth_bkg(flux[i]*m)
 		else:
 			print('Small tpf, using percentile cut background')
-			bkg_smth = self.Small_background()
+			bkg_smth = self.small_background()
 
 		strap = ((((self.mask & 4) * ((self.mask | 4) == 4))) > 0) * 1.0
 		strap[strap==0] = np.nan
@@ -652,7 +694,7 @@ class tessreduce():
 		self.bkg = bkg 
 
 
-	def Small_background(self):
+	def small_background(self):
 		bkg = np.zeros_like(self.flux)
 		flux = strip_units(self.flux)
 		lim = np.percentile(flux,10,axis=(1,2))
@@ -706,7 +748,7 @@ class tessreduce():
 		self.ref = reference
 
 
-	def Centroids_DAO(self):
+	def centroids_DAO(self):
 		"""
 		Calculate the centroid shifts of time series images.
 		
@@ -759,58 +801,8 @@ class tessreduce():
 		nans = np.nansum(f,axis=(1,2)) ==0
 		smooth[nans] = np.nan
 		self.shift = smooth
-
-	'''
-	def Shift_images(self,median=False):
-		"""
-		Shifts data by the values given in offset. Breaks horribly if data is all 0.
-
-		Parameters
-		----------
-		Offset : array 
-			centroid offsets relative to a reference image
-
-		Data : array
-			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
-
-		median : bool
-			if true then the shift direction will be reveresed to shift the reference
-
-		Returns
-		-------
-		shifted : array
-			array shifted to match the offsets given
-
-		"""
-		shifted = self.flux.copy()
-		#scale = np.nanmedian(shifted)
-		#shifted = shifted / scale
-		#shifted[shifted<0] = np.nan
-		nans = ~np.isfinite(shifted)
-		shifted[nans] = 0.
 		
-		if ~median:
-			if self.parallel:
-				ind = np.arange(0,len(shifted))
-				num_cores = multiprocessing.cpu_count()
-				s = Parallel(n_jobs=num_cores)(delayed(grid_shift)([shifted[i],self.shift[i]]) for i in ind)
-				shifted = s 
-			else:
-				for i in range(len(shifted)):
-					if np.nansum(abs(shifted[i])) > 0:
-						shifted[i] = grid_shift([shifted[i],self.shift[i]])
-
-			self.flux = shifted#*scale
-		else:
-			for i in range(len(shifted)):
-				if np.nansum(abs(shifted[i])) > 0:
-					shifted[i] = shift(self.ref,[self.shift[i,1],self.shift[i,0]],mode='nearest',order=3, prefilter=False)
-			self.flux -= shifted# * scale
-				#print(psutil.virtual_memory().available * 100 / psutil.virtual_memory().total)
-		#shifted[nans] = np.nan
-		return'''
-		
-	def Shift_images(self,median=False):
+	def shift_images(self,median=False):
 		"""
 		Shifts data by the values given in offset. Breaks horribly if data is all 0.
 		Parameters
@@ -908,7 +900,7 @@ class tessreduce():
 		return binlc
 
 
-	def Diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
+	def diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
 				sky_in=5,sky_out=9,plot=False,mask=None):
 		"""
 		Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
@@ -1084,14 +1076,21 @@ class tessreduce():
 		------
 		Inputs (Optional)
 		------
-			lc : np.array
-				light curve with dimensions of at least [2,n]
-			ax : matplotlib axes
-				existing figure axes to add data to 
+		lc : np.array
+			light curve with dimensions of at least [2,n]
+		ax : matplotlib axes
+			existing figure axes to add data to 
+		time_bin : float
+			time range to bin data to in days. ie 1 = 24 hours.
+		-------
+		Options
+		-------
+			ground : bool
+				if True then ground based data is plotted alongside TESS
 		"""
 		if ground:
 			if self.ground.ztf is None:
-				self.ground.get_ztf()
+				self.ground.get_ztf_data()
 			if self.lc_units.lower() == 'counts':
 				self.to_flux()
 
@@ -1260,12 +1259,12 @@ class tessreduce():
 		if self.verbose > 0:
 			print('made reference')
 		# make source mask
-		self.Make_mask(maglim=18,strapsize=4,scale=mask_scale)#Source_mask(ref,grid=0)
+		self.make_mask(maglim=18,strapsize=4,scale=mask_scale)#Source_mask(ref,grid=0)
 		frac = np.nansum((self.mask == 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 		#print('mask frac ',frac)
 		if frac < 0.05:
 			print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-			self.Make_mask(maglim=15,strapsize=4,scale=0.5)
+			self.make_mask(maglim=15,strapsize=4,scale=0.5)
 		if self.verbose > 0:
 			print('made source mask')
 		# calculate background for each frame
@@ -1293,15 +1292,15 @@ class tessreduce():
 			if self.verbose > 0:
 				print('calculating centroids')
 			try:
-				self.Centroids_DAO()
+				self.centroids_DAO()
 			except:
 				print('Something went wrong, switching to serial')
 				self.parallel = False
-				self.Centroids_DAO()
+				self.centroids_DAO()
 		if diff is not None:
 			self.diff = diff
 		if not self.diff:
-			self.Shift_images()
+			self.shift_images()
 			if self.verbose > 0:
 				print('images shifted')
 
@@ -1309,12 +1308,12 @@ class tessreduce():
 			if self.verbose > 0:
 				print('rerunning for difference image')
 			# reseting to do diffim 
-			self.Make_mask(maglim=18,strapsize=4,scale=mask_scale*.5)#Source_mask(ref,grid=0)
+			self.make_mask(maglim=18,strapsize=4,scale=mask_scale*.5)#Source_mask(ref,grid=0)
 			frac = np.nansum((self.mask== 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 			#print('mask frac ',frac)
 			if frac < 0.3:
 				print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-				self.Make_mask(maglim=15,strapsize=4,scale=0.5)
+				self.make_mask(maglim=15,strapsize=4,scale=0.5)
 			# assuming that the target is in the centre, so masking it out 
 			m_tar = np.zeros_like(self.mask,dtype=int)
 			m_tar[self.size//2,self.size//2]= 1
@@ -1325,7 +1324,7 @@ class tessreduce():
 
 			self.flux = strip_units(self.tpf.flux)
 			if self.align:
-				self.Shift_images()
+				self.shift_images()
 				if self.verbose > 0:
 					print('shifting images')
 			self.flux -= self.ref
@@ -1344,13 +1343,13 @@ class tessreduce():
 			self.field_calibrate()
 
 		if diff_lc:
-			self.lc, self.sky = self.Diff_lc(plot=True,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
+			self.lc, self.sky = self.diff_lc(plot=True,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
 		else:
-			self.Make_lc(aperture=aper,bin_size=bin_size,
+			self.make_lc(aperture=aper,bin_size=bin_size,
 								zeropoint = self.zp,scale=scale)#,normalise=False)
 		
 
-	def Make_lc(self,aperture = None,bin_size=0,zeropoint=None,scale='counts',clip = False):
+	def make_lc(self,aperture = None,bin_size=0,zeropoint=None,scale='counts',clip = False):
 		"""
 		Perform aperature photometry on a time series of images
 
@@ -2075,111 +2074,6 @@ def Multiple_day_breaks(lc):
 
 
 
-
-
-
-def Calculate_err(tpf,flux):
-
-	tab = Unified_catalog(tpf,magnitude_limit=18)
-	if len(tab)> 10:
-		col = tab.col.values + .5
-		row = tab.row.values + .5
-		pos = np.array([col,row]).T
-
-		median = np.nanmedian(flux,axis=0)
-
-		index, med_cut, stamps = Isolated_stars(pos,tab['tmag'].values,flux,median,Distance=3)
-
-		isolated = tab.iloc[index]
-		ps1ind = np.isfinite(isolated['imag'].values)
-
-		isolated = isolated.iloc[ps1ind]
-		med_cut = med_cut[ps1ind]
-		stamps = stamps[ps1ind]
-		isolc = np.nansum(stamps,axis=(2,3))
-		ind = ((np.nanmedian(isolc,axis=1) > 100) & (np.nanmedian(isolc,axis=1)*.1 >= np.nanstd(isolc,axis=1)) 
-				& (np.nanmedian(isolc,axis=1) < 1000))
-		isolc = isolc[ind]
-		isolated = isolated[ind]
-		if len(isolated) < 10:
-			warnings.warn('Only {} sources used for zerpoint calculation. Errors may be larger than reported'.format(len(isolated)))
-		err = np.nanstd(isolc-np.nanmedian(isolc,axis=1)[:,np.newaxis],axis=0)
-		return err
-	else:
-		warnings.warn('No reference cataloge sources to isolate stars. Can not calculate error with this method')
-
-
-def Calibrate_lc(tpf,flux,ID=None,diagnostic=False,ref='z',fit='tess'):
-	"""
-
-	"""
-	if ID is None:
-		ID = tpf.targetid
-	tab = Unified_catalog(tpf,magnitude_limit=18)
-	col = tab.col.values + .5
-	row = tab.row.values + .5
-	pos = np.array([col,row]).T
-
-	median = np.nanmedian(flux,axis=0)
-
-	index, med_cut, stamps = Isolated_stars(pos,tab['tmag'].values,flux,median,Distance=3)
-
-	isolated = tab.iloc[index]
-	ps1ind = np.isfinite(isolated['imag'].values)
-
-	isolated = isolated.iloc[ps1ind]
-	med_cut = med_cut[ps1ind]
-	stamps = stamps[ps1ind]
-	isolc = np.nansum(stamps,axis=(2,3))
-	ind = (np.nanmedian(isolc,axis=1) > 100) & (np.nanmedian(isolc,axis=1)*.1 >= np.nanstd(isolc,axis=1)) & (np.nanmedian(isolc,axis=1) < 1000)
-	isolc = isolc[ind]
-	isolated = isolated[ind]
-	if len(isolated) < 10:
-		warnings.warn('Only {} sources used for zerpoint calculation. Errors may be larger than reported'.format(len(isolated)))
-	err = np.nanstd(isolc-np.nanmedian(isolc,axis=1)[:,np.newaxis],axis=0)
-	higherr = sigma_clip(err,sigma=2).mask
-
-	if diagnostic:
-		plt.figure()
-		plt.title('Isolated reference stars')
-		for i in range(len(isolc)):
-			plt.plot(-2.5*np.log10(isolc[i]))
-			plt.ylabel('System magnitude')
-			plt.xlabel('Frame number')
-			plt.minorticks_on()
-
-	isolated = Reformat_df(isolated)
-	# column names here are just to conform with the calibration code 
-	isolated['tessMeanPSFMag'] = -2.5*np.log10(np.nanmedian(isolc[:,~higherr],axis=1))
-	# need to do a proper accounting of errors.
-	isolated['tessMeanPSFMagErr'] = .1
-	try:
-		#return(isolated)
-		if diagnostic:
-			extinction, good_sources = Tonry_reduce(isolated,plot=True)
-		else: 
-			extinction, good_sources = Tonry_reduce(isolated,plot=False)
-
-		model = np.load(package_directory+'calspec_mags.npy',allow_pickle=True).item()
-
-		compare_ref = np.array([['g-r','r-'+ref],['g-r','i-'+ref],['g-r','y-'+ref],['g-r','g-i']])
-		compare_fit = np.array([['g-r','r-'+fit],['g-r',fit+'-y'],['g-r',fit+'-i'],['g-r',fit+'-z']])
-
-		zp_ref, d_ref = Fit_zeropoint(good_sources,model,compare_ref,extinction,ref)
-		zp_fit, d_fit = Fit_zeropoint(good_sources,model,compare_fit,extinction,fit)
-
-		if diagnostic:
-			c_fit = Make_colours(d_fit,model,compare_fit,Extinction = extinction)
-			zeropointPlotter(zp_fit,zp_ref,c_fit,compare_fit,ID,fit,'figs/'+ID,Close=False)
-			zeropointPlotter(zp_fit,zp_ref,c_fit,compare_fit,ID,fit,'figs/'+ID,Residuals=True,Close=False)
-
-		zero_point = zp_fit
-		zero_point_err = zp_ref
-		zp = np.array([zero_point, zero_point_err])
-	except:
-		zp = np.array([20.44, 0])
-	return zp, err
-
 ### Serious source mask
 
 def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None):
@@ -2285,43 +2179,3 @@ def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=48*2):
 	mask = np.nansum(segments[overlap],axis=0)>0 
 	mask = convolve(mask,np.ones(buffer)) > 0
 	return mask
-
-# ground based stuff
-
-import requests
-import json
-
-def get_sn_name(self):
-	url = 'https://api.astrocats.space/catalog?ra={ra}&dec={dec}&closest'.format(self.ra,self.dec)
-	response = requests.get(url)
-	json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
-	d = json.loads(json_acceptable_string)
-	try:
-		print(d['message'])
-		self.sn_name = None
-		return 
-	except:
-		self.sn_name = list(d.keys())[0]
-		return
-
-def alias(name,catalog='ztf'):
-	url = 'https://api.astrocats.space/{}/alias'.format(name)
-	response = requests.get(url)
-	json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
-	d = json.loads(json_acceptable_string)
-	try:
-		print(d['message'])
-		return 'none'
-	except:
-		pass
-	alias = d[name]['alias']
-	names = [x['value'] for x in alias]
-	names = np.array(names)
-	ind = [x.lower().startswith(catalog) for x in names]
-	return names[ind][0]
-
-
-
-
-
-

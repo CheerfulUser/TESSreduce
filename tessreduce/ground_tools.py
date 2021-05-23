@@ -1,7 +1,10 @@
 import pandas as pd
 import numpy as np
 import requests
+import json
+
 a_current = True
+
 try:
     from alerce.core import Alerce
     client = Alerce()
@@ -57,7 +60,19 @@ def get_ztf(oid):
 class ground():
     def __init__(self,ra=None,dec=None,sn_name=None):
         """
-        Class to reduce tess data.
+        Class to gather and organise ground data for transients.
+        
+        ------
+        Inputs
+        ------
+        ra : float 
+            right ascension in decimal degrees 
+        dec : float 
+            declination in decimal degrees
+        sn_name : str 
+            transient catalogue name
+
+
         """
         self.ra  = ra
         self.dec  = dec 
@@ -75,6 +90,9 @@ class ground():
 
 
     def get_sn_name(self):
+        """
+        If coordinates are known then get the transient name from OSC
+        """
         url = 'https://api.astrocats.space/catalog?ra={ra}&dec={dec}&closest'.format(ra = self.ra, dec = self.dec)
         response = requests.get(url)
         json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
@@ -88,11 +106,25 @@ class ground():
             return
 
     def alias(self,catalog='ztf'):
+        """
+        Cross refeerence the OSC to get selected catalog names 
+        
+        -----
+        Input
+        -----
+        catalog : str
+            shorthand name for catalog, currently only "ztf" is implemented.
+        """
+        if catalog.lower() != 'ztf':
+            m = 'Only ztf is available at this time'
+            raise ValueError(m)
+        # query the OSC
         url = 'https://api.astrocats.space/{}/alias'.format(self.sn_name)
         response = requests.get(url)
         json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
         d = json.loads(json_acceptable_string)
         try:
+            # check if the lookup failed
             print(d['message'])
             return None
         except:
@@ -101,14 +133,18 @@ class ground():
         names = [x['value'] for x in alias]
         names = np.array(names)
         ind = [x.lower().startswith(catalog) for x in names]
-        print(names[ind])
+        #print(names[ind])
         try:
+            # return the cotalog specific name if it exists 
             return names[ind][0]
         except:
             return None
 
 
-    def get_ztf(self):
+    def get_ztf_data(self):
+        """
+        Gets the ztf light curve data. First checks that the transient name is defined
+        """
         if self.sn_name is None:
             self.get_sn_name()
         ztf_name = self.alias(catalog='ztf')
@@ -119,7 +155,15 @@ class ground():
 
 
     def to_flux(self,flux_type='mjy'):
+        """
+        Convert the ground based data from magnitude space to selected flux space.
 
+        ------
+        Inputs
+        ------
+        flux_type : str
+            flux type to convert to, currently only "mjy", "jy", and "erg"/"cgs" are available.
+        """
         if flux_type.lower() == 'mjy':
             flux_zp = 16.4
             self.flux_type = 'mJy'
@@ -137,53 +181,5 @@ class ground():
         self.ztf['flux_e'] = self.ztf['flux'].values * self.ztf['mag_e'].values * np.log(10)/2.5
         self.ztf['fluxlim'] = 10**((self.ztf['maglim'].values - flux_zp)/-2.5)
 
-        # Add in other lcs if ever get 
+        # Add in other lcs if ever queryable   
         return  
-
-
-def plot_ztf_target(oid,fig=None):
-    """ Given a ZTF target id, this will plot a ZTF light curve from Alerce.
-    
-    Parameters
-    ----------
-    oid : str
-        ZTF target id.
-        
-    """
-        
-    SN_det, SN_nondet = get_ztf(oid)
-
-    # plotting properties
-    labels = {1: 'g', 2: 'r'}
-    markers = {1: '--o', 2: '--s'}
-    sizes = {1: 60, 2: 60}
-    colors = {1: '#56E03A', 2: '#D42F4B'}  # color blind friendly green and red 
-    
-    if fig is None:
-        fig, ax = plt.subplots(figsize=(12, 7))
-      
-    # loop the passbands
-    for fid in ['g', 'r']:
-        
-        # plot detections if available
-        mask = SN_det.fid == fid
-        if np.sum(mask) > 0:
-            # note that the detections index is candid and that we are plotting the psf corrected magnitudes
-            plt.errorbar(SN_det[mask].mjd, SN_det[mask].magpsf, 
-                yerr = SN_det[mask].sigmapsf, c=colors[fid], label=labels[fid], fmt=markers[fid])
-        
-        # plot non detections if available
-        mask = (SN_nondet.fid == fid) & (SN_nondet.diffmaglim > -900)
-        if np.sum(mask) > 0:     
-            # non detections index is mjd
-            plt.scatter(SN_nondet[mask].mjd, SN_nondet[mask].diffmaglim, c=colors[fid], alpha = 0.6,
-                marker='v', s=sizes[fid])
-    if fig is None:    
-        ax.set_xlabel('MJD', fontsize=14)
-        ax.set_ylabel('Apparent Mag.', fontsize=14)
-        ax.set_title(oid, fontsize=16)
-        plt.xticks(fontsize=14)
-        plt.yticks(fontsize=14)
-        plt.gca().invert_yaxis()
-        ax.legend(frameon=False,fontsize=16)
-    return
