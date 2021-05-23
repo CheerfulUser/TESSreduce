@@ -515,7 +515,7 @@ def spacetime_lookup(ra,dec,time,buffer=0,print_table=True):
 
 class tessreduce():
 
-	def __init__(self,ra=None,dec=None,name=None,sn_list=None,tpf=None,size=90,sector=None,reduce=False,
+	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,reduce=False,
 				 align=True,parallel=True,diff=False,quality_bitmask='default',verbose=1):
 		"""
 		Class to reduce tess data.
@@ -557,13 +557,13 @@ class tessreduce():
 		self.lc_units = 'Counts'
 
 
-		if sn_list is not None:
-			sn_list = np.array(sn_list,dtype=object)
-			if len(sn_list.shape) > 1:
-				sn_list = sn_list[sn_list[:,3].astype('bool')][0]
-			self.ra = sn_list[0]
-			self.dec = sn_list[1]
-			self.sector = sn_list[2]
+		if obs_list is not None:
+			obs_list = np.array(obs_list,dtype=object)
+			if len(obs_list.shape) > 1:
+				obs_list = obs_list[obs_list[:,3].astype('bool')][0]
+			self.ra = obs_list[0]
+			self.dec = obs_list[1]
+			self.sector = obs_list[2]
 
 		if tpf is not None:
 			if type(tpf) == str:
