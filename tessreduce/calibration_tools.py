@@ -18,6 +18,11 @@ from .sigmacut import calcaverageclass
 
 from scipy.interpolate import UnivariateSpline
 
+fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
+inches_per_pt = 1.0/72.27               # Convert pt to inches
+golden_mean = (np.sqrt(5)-1.0)/2.0         # Aesthetic ratio
+fig_width = fig_width_pt*inches_per_pt  # width in inches
+
 def Save_space(Save):
     """
     Creates a pathm if it doesn't already exist.
@@ -84,7 +89,7 @@ def Tonry_fit(K,Data,Model,Compare):
     res = Tonry_residual(Colours)
     return res
 
-def Tonry_reduce(Data,plot=False):
+def Tonry_reduce(Data,plot=False,savename=None):
     '''
     Uses the Tonry et al. 2012 PS1 splines to fit dust and find all outliers.
     '''
@@ -111,13 +116,19 @@ def Tonry_reduce(Data,plot=False):
         #print('Pass ' + str(i+1) + ': '  + str(res.x[0]))
     clips[0][clips[0]] = clips[1]
     if plot:
+        orig = Make_colours(dat,tonry,compare,Extinction = 0, Tonry = True)
         colours = Make_colours(dat,tonry,compare,Extinction = res.x, Tonry = True)
-        plt.figure()
-        plt.title('Fit to Tonry et al. 2012 PS1 stellar locus')
-        plt.plot(colours['obs r-i'],colours['obs g-r'],'.')
-        plt.plot(colours['mod r-i'],colours['mod g-r'])
-        plt.xlabel('r-i')
-        plt.ylabel('g-r')
+        plt.figure(figsize=(1.5*fig_width,1*fig_width))
+        #plt.title('Fit to Tonry et al. 2012 PS1 stellar locus')
+        plt.plot(orig['obs r-i'].flatten(),orig['obs g-r'].flatten(),'C1+',alpha=0.5,label='Raw')
+        plt.plot(colours['obs r-i'].flatten(),colours['obs g-r'].flatten(),'C0.',alpha=0.5,label='Corrected')
+        plt.plot(colours['mod r-i'].flatten(),colours['mod g-r'].flatten(),'k-',label='Model')
+        plt.xlabel('$r-i$',fontsize=15)
+        plt.ylabel('$g-r$',fontsize=15)
+        plt.text(1, 0.25, '$E(B-V)={}$'.format(str(np.round(res.x[0],3))))
+        plt.legend()
+        if savename is not None:
+            plt.savefig(savename + '_SLR.pdf', bbox_inches = "tight")
     #clipped_data = data.iloc[clips[0]] 
     return res.x, dat
 

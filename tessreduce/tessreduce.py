@@ -39,6 +39,7 @@ from .catalog_tools import *
 from .calibration_tools import *
 from .ground_tools import ground
 from .rescale_straps import correct_straps
+from .syndiff import PS1_scene
 
 # turn off runtime warnings (lots from logic on nans)
 import warnings
@@ -63,6 +64,11 @@ from astropy.time import Time
 import requests
 import json
 
+
+fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
+inches_per_pt = 1.0/72.27               # Convert pt to inches
+golden_mean = (np.sqrt(5)-1.0)/2.0         # Aesthetic ratio
+fig_width = fig_width_pt*inches_per_pt  # width in inches
 
 def strip_units(data):
 	if type(data) != np.ndarray:
@@ -281,14 +287,14 @@ def Smooth_motion(Centroids,tpf):
 		ind1 = np.where(ind1 != 0)[0]
 		ind2 = np.nansum(tpf.flux[split:],axis=(1,2))
 		ind2 = np.where(ind2 != 0)[0] + split
-		smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],51,3)
-		smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],51,3)
+		smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],25,3)
+		smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],25,3)
 
-		smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],51,3)
-		smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],51,3)
+		smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],25,3)
+		smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],25,3)
 	except IndexError:
-		smoothed[:,0] = savgol_filter(Centroids[:,0],51,3)		
-		smoothed[:,1] = savgol_filter(Centroids[:,1],51,3)
+		smoothed[:,0] = savgol_filter(Centroids[:,0],25,3)		
+		smoothed[:,1] = savgol_filter(Centroids[:,1],25,3)
 	return smoothed
 
 def grid_shift(input):
@@ -516,7 +522,7 @@ def spacetime_lookup(ra,dec,time,buffer=0,print_table=True):
 class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,reduce=False,
-				 align=True,parallel=True,diff=False,quality_bitmask='default',verbose=1):
+				 align=True,parallel=True,diff=True,plot=False,savename=None,quality_bitmask='default',verbose=1):
 		"""
 		Class to reduce tess data.
 		"""
@@ -532,7 +538,9 @@ class tessreduce():
 		self.diff = diff
 		self.tpf = tpf
 
-		
+		# Plotting
+		self.plot = plot
+		self.savename = savename
 
 		# calculated 
 		self.mask    = None
@@ -658,7 +666,9 @@ class tessreduce():
 		self.mask = fullmask
 
 	def background(self):
-
+		"""
+		Calculate the background for all frames in the TPF.
+		"""
 		m = (self.mask == 0) * 1.
 		m[m==0] = np.nan
 
@@ -748,7 +758,7 @@ class tessreduce():
 		self.ref = reference
 
 
-	def centroids_DAO(self):
+	def centroids_DAO(self,plot=None,savename=None):
 		"""
 		Calculate the centroid shifts of time series images.
 		
@@ -771,6 +781,10 @@ class tessreduce():
 		smooth : array
 			smoothed displacement of the centroids compared to the Median
 		"""
+		if plot is None:
+			plot = self.plot
+		if savename is None:
+			savename = self.savename
 		# hack solution for new lightkurve
 		f = strip_units(self.flux)
 		m = self.ref.copy()
@@ -801,6 +815,23 @@ class tessreduce():
 		nans = np.nansum(f,axis=(1,2)) ==0
 		smooth[nans] = np.nan
 		self.shift = smooth
+		if plot:
+			#meds[meds==0] = np.nan
+			t = self.tpf.time.mjd
+			ind = np.where(np.diff(t) > .5)[0]
+			smooth[ind,:] = np.nan
+			plt.figure(figsize=(1.5*fig_width,1*fig_width))
+			plt.plot(t,meds[:,0],'.',label='Row shift',alpha =0.5)
+			plt.plot(t,smooth[:,0],'-',label='Smoothed row shift')
+			plt.plot(t,meds[:,1],'.',label='Col shift',alpha =0.5)
+			plt.plot(t,smooth[:,1],'-',label='Smoothed col shift')
+			#plt.plot(thing,'+')
+			plt.ylabel('Shift (pixels)',fontsize=15)
+			plt.xlabel('Time (MJD)',fontsize=15)
+			plt.legend()
+			#plt.tight_layout()
+			if savename is not None:
+				plt.savefig(savename+'_disp.pdf', bbox_inches = "tight")
 		
 	def shift_images(self,median=False):
 		"""
@@ -901,7 +932,7 @@ class tessreduce():
 
 
 	def diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
-				sky_in=5,sky_out=9,plot=False,mask=None):
+				sky_in=5,sky_out=9,plot=None,savename=None,mask=None):
 		"""
 		Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
 		then it degaults to the centre. Sky flux is calculated with an annulus aperture surrounding 
@@ -944,6 +975,11 @@ class tessreduce():
 				sky[0] = time, sky[1] = flux, sky[2] = flux error
 				
 		"""
+		if plot is None:
+			plot = self.plot
+		if savename is None:
+			savename = self.savename
+
 		data = strip_units(self.flux)
 		if ((ra is None) | (dec is None)) & ((x is None) | (y is None)):
 			ra = self.ra 
@@ -1003,7 +1039,8 @@ class tessreduce():
 		
 		if plot:
 			self.dif_diag_plot(ap_tar,ap_sky,lc = lc,sky=sky,data=data)
-		
+			if savename is not None:
+				plt.savefig(savename + '_diff_diag.pdf', bbox_inches = "tight")
 		return lc, sky
 
 	def dif_diag_plot(self,ap_tar,ap_sky,lc=None,sky=None,data=None):
@@ -1032,7 +1069,7 @@ class tessreduce():
 			sky = self.sky
 		if data is None:
 			data = self.flux
-		plt.figure(figsize=(9,4))
+		plt.figure(figsize=(3*fig_width,1*fig_width))
 		plt.subplot(121)
 		plt.fill_between(lc[0],sky[1]-sky[2],sky[1]+sky[2],alpha=.5,color='C1')
 		plt.plot(sky[0],sky[1],'C1.',label='Sky')
@@ -1040,8 +1077,8 @@ class tessreduce():
 		plt.plot(lc[0],lc[1],'C0.',label='Target')
 		binned = self.bin_data(lc=lc)
 		plt.plot(binned[0],binned[1],'C2.',label='6hr bin')
-		plt.xlabel('MJD')
-		plt.ylabel('Counts')
+		plt.xlabel('Time (MJD)',fontsize=15)
+		plt.ylabel('Flux ($e^-/s$)',fontsize=15)
 		plt.legend(loc=4)
 
 		plt.subplot(122)
@@ -1056,7 +1093,10 @@ class tessreduce():
 				   vmin=np.percentile(d[nonan],16),
 				   vmax=np.percentile(d[nonan],95),
 				   aspect='auto')
-		plt.colorbar()
+		cbar = plt.colorbar()
+		cbar.set_label('$e^-/s$',fontsize=15)
+		plt.xlabel('Column',fontsize=15)
+		plt.ylabel('Row',fontsize=15)
 		ap = ap_tar
 		ap[ap==0] = np.nan
 		#plt.imshow(ap,origin='lower',alpha = 0.2)
@@ -1121,28 +1161,28 @@ class tessreduce():
 				rind = self.ground.ztf.fid.values == 'r'
 				ztfg = self.ground.ztf.iloc[gind]
 				ztfr = self.ground.ztf.iloc[rind]
-				ax.scatter(ztfg.mjd,ztfg.maglim,c='C2',alpha = 0.6,marker='v',label='ZTF g non-detec')
-				ax.scatter(ztfr.mjd,ztfr.maglim,c='r',alpha = 0.6,marker='v',label='ZTF r non-detec')
+				ax.scatter(ztfg.mjd,ztfg.maglim,c='C2',s=.5,alpha = 0.6,marker='v',label='ZTF g non-detec')
+				ax.scatter(ztfr.mjd,ztfr.maglim,c='r',s=.5,alpha = 0.6,marker='v',label='ZTF r non-detec')
 
-				ax.errorbar(ztfg.mjd, ztfg.mag,yerr = ztfg.mag_e, c='C2', fmt='o', label='ZTF g')
-				ax.errorbar(ztfr.mjd, ztfr.mag,yerr = ztfr.mag_e, c='r', fmt='o', label='ZTF r')
-				ax.set_ylabel('Apparent magnitude')
+				ax.errorbar(ztfg.mjd, ztfg.mag,yerr = ztfg.mag_e, c='C2', fmt='o', ms= 5, label='ZTF g')
+				ax.errorbar(ztfr.mjd, ztfr.mag,yerr = ztfr.mag_e, c='r', fmt='o', ms=5, label='ZTF r')
+				ax.set_ylabel('Apparent magnitude',fontsize=15)
 		else:
-			ax.set_ylabel('Flux (' + self.lc_units + ')')
+			ax.set_ylabel('Flux (' + self.lc_units + ')',fontsize=15)
 			if ground & (self.ground.ztf is not None):
 				self.ground.to_flux(flux_type=self.lc_units)
 				gind = self.ground.ztf.fid.values == 'g'
 				rind = self.ground.ztf.fid.values == 'r'
 				ztfg = self.ground.ztf.iloc[gind]
 				ztfr = self.ground.ztf.iloc[rind]
-				ax.scatter(ztfg.mjd,ztfg.fluxlim,c='C2',alpha = 0.6,marker='v',label='ZTF g non-detec')
-				ax.scatter(ztfr.mjd,ztfr.fluxlim,c='r',alpha = 0.6,marker='v',label='ZTF r non-detec')
+				ax.scatter(ztfg.mjd,ztfg.fluxlim,c='C2',alpha = 0.6,s=20,marker='v',label='ZTF g non-detec')
+				ax.scatter(ztfr.mjd,ztfr.fluxlim,c='r',alpha = 0.6,s=20,marker='v',label='ZTF r non-detec')
 
-				ax.errorbar(ztfg.mjd, ztfg.flux,yerr = ztfg.flux_e, c='C2', fmt='o', label='ZTF g')
-				ax.errorbar(ztfr.mjd, ztfr.flux,yerr = ztfr.flux_e, c='r', fmt='o', label='ZTF r')
+				ax.errorbar(ztfg.mjd, ztfg.flux,yerr = ztfg.flux_e,ms=4, c='C2', fmt='o', label='ZTF g')
+				ax.errorbar(ztfr.mjd, ztfr.flux,yerr = ztfr.flux_e, ms=4, c='r', fmt='o', label='ZTF r')
 
 
-		ax.set_xlabel('Time (MJD)')
+		ax.set_xlabel('Time (MJD)',fontsize=15 )
 		ax.legend()
 		return
 
@@ -1188,9 +1228,8 @@ class tessreduce():
 		return light
 
 	def reduce(self, aper = None, shift = True, parallel = True, calibrate=True,
-				scale = 'counts', bin_size = 0, plot = True, all_output = True,
-				mask_scale = 1,diff_lc = True,diff=True,verbose=None,
-				tar_ap=5,sky_in=7,sky_out=11):
+				scale = 'counts', bin_size = 0, plot = True, mask_scale = 1,
+				diff_lc = True,diff=True,verbose=None, tar_ap=5,sky_in=7,sky_out=11):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
@@ -1297,12 +1336,14 @@ class tessreduce():
 				print('Something went wrong, switching to serial')
 				self.parallel = False
 				self.centroids_DAO()
+		
 		if diff is not None:
 			self.diff = diff
 		if not self.diff:
-			self.shift_images()
-			if self.verbose > 0:
-				print('images shifted')
+			if self.align:
+				self.shift_images()
+				if self.verbose > 0:
+					print('images shifted')
 
 		if self.diff:
 			if self.verbose > 0:
@@ -1334,10 +1375,6 @@ class tessreduce():
 			self.flux -= self.bkg
 
 
-		zp = np.array([20.44,0])
-		mask = (self.mask ==0) * 1.
-		mask[mask ==0] = np.nan
-		err = np.nanmean(mask*self.flux,axis=(1,2))
 		if calibrate:
 			print('Field calibration')
 			self.field_calibrate()
@@ -1685,7 +1722,7 @@ class tessreduce():
 
 
 	### serious calibration 
-	def field_calibrate(self,zp_single=True,plot=False):
+	def field_calibrate(self,zp_single=True,plot=None,savename=None):
 		"""
 		In-situ flux calibration for TESSreduce light curves. This uses the
 		flux calibration method developed in Ridden-Harper et al. 2021 where a broadband 
@@ -1719,6 +1756,10 @@ class tessreduce():
 		self.zp_e/tzp_e : float
 			error in the photometric zeropoint
 		"""
+		if plot is None:
+			plot = self.plot
+		if savename is None:
+			savename = self.savename
 		if self.dec < -30:
 			print('Target is too far south with Dec = {} for PS1 photometry.'.format(self.dec) +
 				  " Can't calibrate at this time, so using zp = 20.44.")
@@ -1737,7 +1778,7 @@ class tessreduce():
 		x,y = self.wcs.all_world2pix(tab.RAJ2000.values,tab.DEJ2000.values,0)
 		tab['col'] = x
 		tab['row'] = y
-		e, dat = Tonry_reduce(tab,plot=False)
+		e, dat = Tonry_reduce(tab,plot=plot,savename=savename)
 		self.ebv = e[0]
 
 		gr = (dat.gmag - dat.rmag).values
@@ -1810,30 +1851,48 @@ class tessreduce():
 			plt.imshow(self.ref,origin='lower',vmax = np.percentile(self.ref[nonan],80),vmin=0)
 			plt.scatter(d.col.iloc[eind],d.row.iloc[eind],color='r')
 			plt.title('Calibration sources')
-			plt.ylabel('Row')
-			plt.xlabel('Column')
+			plt.ylabel('Row',fontsize=15)
+			plt.xlabel('Column',fontsize=15)
+
+			if savename is not None:
+				plt.savefig(savename + 'cal_sources.pdf', bbox_inches = "tight")
 
 
 			mask = sigma_mask(mzp,3)
-			plt.figure(figsize=(8,4))
+			plt.figure(figsize=(3*fig_width,1*fig_width))
 			plt.subplot(121)
 			plt.hist(mzp[mask],alpha=0.5)
 			#plt.axvline(averager.mean,color='C1')
 			#plt.axvspan(averager.mean-averager.stdev,averager.mean+averager.stdev,alpha=0.3,color='C1')
-			plt.axvspan(med-std,med+std,alpha=0.3,color='C1')
-			plt.axvline(med,color='C1')
-			plt.xlabel('Zeropoint')
-			plt.ylabel('Occurrence')
+			#plt.axvspan(med-std,med+std,alpha=0.3,color='C1')
+			med = med
+			low = med-std
+			high = med+std
+			plt.axvline(med,ls='--',color='k')
+			plt.axvline(low,ls=':',color='k')
+			plt.axvline(high,ls=':',color='k')
+
+			s = '$'+str((np.round(med,3)))+'^{+' + str((np.round(high-med,3)))+'}_{'+str((np.round(low-med,3)))+'}$'
+			plt.annotate(s,(.70,.8),fontsize=13,xycoords='axes fraction')
+			plt.xlabel('Zeropoint',fontsize=15)
+			plt.ylabel('Occurrence',fontsize=15)
+			plt.gca().xaxis.set_major_locator(plt.MaxNLocator(6))
 
 			plt.subplot(122)
-			plt.plot(self.tpf.time.mjd[mask],mzp[mask],'.')
+			plt.plot(self.tpf.time.mjd[mask],mzp[mask],'.',alpha=0.5)
 			#plt.axhspan(averager.mean-averager.stdev,averager.mean+averager.stdev,alpha=0.3,color='C1')
 			#plt.axhline(averager.mean,color='C1')
-			plt.axhspan(med-std,med+std,alpha=0.3,color='C1')
-			plt.axhline(med,color='C1')
-			plt.ylabel('Zeropoint')
-			plt.xlabel('MJD')
+			#plt.axhspan(med-std,med+std,alpha=0.3,color='C1')
+
+			plt.axhline(low,color='k',ls=':')
+			plt.axhline(high,color='k',ls=':')
+			plt.axhline(med,color='k',ls='--')
+
+			plt.ylabel('Zeropoint',fontsize=15)
+			plt.xlabel('MJD',fontsize=15)
 			plt.tight_layout()
+			if savename is not None:
+				plt.savefig(savename + 'cal_zp.pdf', bbox_inches = "tight")
 
 		if zp_single:
 			mzp = med#averager.mean
