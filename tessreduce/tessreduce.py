@@ -39,7 +39,7 @@ from .catalog_tools import *
 from .calibration_tools import *
 from .ground_tools import ground
 from .rescale_straps import correct_straps
-from .syndiff import PS1_scene
+#from .syndiff import PS1_scene
 
 # turn off runtime warnings (lots from logic on nans)
 import warnings
@@ -522,7 +522,8 @@ def spacetime_lookup(ra,dec,time,buffer=0,print_table=True):
 class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,reduce=False,
-				 align=True,parallel=True,diff=True,plot=False,savename=None,quality_bitmask='default',verbose=1):
+				 align=True,parallel=True,diff=True,plot=False,savename=None,quality_bitmask='default',verbose=1,
+				 cache_dir=None):
 		"""
 		Class to reduce tess data.
 		"""
@@ -584,7 +585,7 @@ class tessreduce():
 		elif self.check_coord():
 			if self.verbose>0:
 				print('getting TPF from TESScut')
-			self.get_TESS(quality_bitmask=quality_bitmask)
+			self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
 
 		self.ground = ground(ra = self.ra, dec = self.dec)
 
@@ -598,7 +599,7 @@ class tessreduce():
 		else:
 			return True
 
-	def get_TESS(self,ra=None,dec=None,name=None,Size=None,Sector=None,quality_bitmask='default'):
+	def get_TESS(self,ra=None,dec=None,name=None,Size=None,Sector=None,quality_bitmask='default',cache_dir=None):
 		"""
 		Use the lightcurve interface with TESScut to get an FFI cutout 
 		of a region around the given coords.
@@ -638,7 +639,7 @@ class tessreduce():
 		if Size is None:
 			Size = self.size
 		
-		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=Size)
+		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=Size,download_dir=cache_dir)
 	
 		self.tpf  = tpf
 		self.flux = strip_units(tpf.flux)
