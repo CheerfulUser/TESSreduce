@@ -297,66 +297,6 @@ def Smooth_motion(Centroids,tpf):
 		smoothed[:,1] = savgol_filter(Centroids[:,1],25,3)
 	return smoothed
 
-def grid_shift(input):
-		data = input[0]
-		offset = input[1]
-		x = np.arange(0, data.shape[1])
-		y = np.arange(0, data.shape[0])
-		arr = np.ma.masked_invalid(data)
-
-		xx, yy = np.meshgrid(x, y)
-		#get only the valid values
-		x1 = xx[~arr.mask]
-		y1 = yy[~arr.mask]
-		newarr = arr[~arr.mask]
-
-		shifted = griddata((x1, y1), newarr.ravel(),
-						   (xx+offset[0], yy+offset[1]),method='cubic')
-		return shifted
-
-
-def Lightcurve(flux, aper,zeropoint=20.44, normalise = False):
-	"""
-	Calculate a light curve from a time series of images through aperature photometry.
-
-	Parameters
-	----------
-	flux : array
-		3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
-
-	aper : array
-		mask for data to perform aperature photometry 
-
-	normalise : bool
-		normalise the light curve to the median
-
-	Returns
-	-------
-	LC : array
-		light curve 
-
-	"""
-	# hack solution for new lightkurve
-	if type(flux) != np.ndarray:
-		flux = flux.value
-
-	aper[aper == 0] = np.nan
-	LC = np.nansum(flux*aper, axis = (1,2))
-	LC[LC == 0] = np.nan
-	scale = 'counts'
-	for k in range(len(LC)):
-		if np.isnan(flux[k]*aper).all():
-			LC[k] = np.nan
-
-	if scale.lower() == 'normalise':
-		LC = LC / np.nanmedian(LC)
-	elif scale.lower() == 'magnitude':
-		LC = -2.5*np.log10(LC) + zeropoint
-	elif scale.lower() == 'flux':
-		LC = -2.5*np.log10(LC) + zeropoint
-		#LC = 10**
-
-	return LC
 
 def sn_lookup(name,time='disc',buffer=0,print_table=True):
 	"""
@@ -646,6 +586,7 @@ class tessreduce():
 		self.wcs  = tpf.wcs
 
 	def make_mask(self,maglim=19,scale=1,strapsize=4):
+		# make a diagnostic plot for mask
 		data = strip_units(self.flux)
 
 		mask = Cat_mask(self.tpf,maglim,scale,strapsize)
@@ -1229,7 +1170,7 @@ class tessreduce():
 		return light
 
 	def reduce(self, aper = None, shift = True, parallel = True, calibrate=True,
-				scale = 'counts', bin_size = 0, plot = True, mask_scale = 1,
+				bin_size = 0, plot = True, mask_scale = 1,
 				diff_lc = True,diff=True,verbose=None, tar_ap=5,sky_in=7,sky_out=11):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
@@ -1310,7 +1251,7 @@ class tessreduce():
 		# calculate background for each frame
 		if self.verbose > 0:
 			print('calculating background')
-		
+		# calculate the background
 		self.background()
 
 		if np.isnan(self.bkg).all():
@@ -1318,13 +1259,13 @@ class tessreduce():
 			raise ValueError('bkg all nans')
 		
 		flux = strip_units(self.flux)
-		
+		# subtract background from unitless flux
 		self.flux = flux - self.bkg
 		
 		if self.verbose > 0:
 			print('background subtracted')
-		self.get_ref()
-		#return flux, bkg
+		
+		
 		if np.isnan(self.flux).all():
 			raise ValueError('flux all nans')
 
@@ -1348,12 +1289,22 @@ class tessreduce():
 
 		if self.diff:
 			if self.verbose > 0:
-				print('rerunning for difference image')
+				print('!!Re-running for difference image!!')
 			# reseting to do diffim 
+
+			self.flux = strip_units(self.tpf.flux)
+			if self.align:
+				self.shift_images()
+				if self.verbose > 0:
+					print('shifting images')
+			
+			# subtract reference
+			self.flux -= self.ref
+			# remake mask
 			self.make_mask(maglim=18,strapsize=4,scale=mask_scale*.5)#Source_mask(ref,grid=0)
 			frac = np.nansum((self.mask== 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 			#print('mask frac ',frac)
-			if frac < 0.3:
+			if frac < 0.05:
 				print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
 				self.make_mask(maglim=15,strapsize=4,scale=0.5)
 			# assuming that the target is in the centre, so masking it out 
@@ -1363,13 +1314,7 @@ class tessreduce():
 			self.mask = self.mask | m_tar
 			if self.verbose > 0:
 				print('remade mask')
-
-			self.flux = strip_units(self.tpf.flux)
-			if self.align:
-				self.shift_images()
-				if self.verbose > 0:
-					print('shifting images')
-			self.flux -= self.ref
+			# background
 			if self.verbose > 0:
 				print('background')
 			self.background()
