@@ -1,5 +1,5 @@
 import sys, os, re, copy, time
-import scipy
+import numpy as np
 
 class calcaverageclass:
     def __init__(self):
@@ -88,48 +88,48 @@ class calcaverageclass:
             useold = copy.deepcopy(self.use)
 
             # old
-            #self.use = scipy.where(abs(data-self.mean)<=Nsigma*noise,True,False)
+            #self.use = np.where(abs(data-self.mean)<=Nsigma*noise,True,False)
             #if mask!=None:
-            #    self.use = self.use &  (scipy.logical_not(mask))
-            #self.Nchanged = len(data[scipy.where(useold!=self.use)])
+            #    self.use = self.use &  (np.logical_not(mask))
+            #self.Nchanged = len(data[np.where(useold!=self.use)])
 
 
             # New
             if mask is None:
-                self.use = scipy.where(abs(data-self.mean)<=Nsigma*noise,True,False)
+                self.use = np.where(abs(data-self.mean)<=Nsigma*noise,True,False)
             else:
-                self.use = scipy.where((abs(data-self.mean)<=Nsigma*noise) & (scipy.logical_not(mask)),True,False)
+                self.use = np.where((abs(data-self.mean)<=Nsigma*noise) & (np.logical_not(mask)),True,False)
 
-            self.Nchanged = len(scipy.where(useold!=self.use)[0])
+            self.Nchanged = len(np.where(useold!=self.use)[0])
 
             del useold
         else:
             # use all data.
             if mask is None:
-                self.use = scipy.ones(data.shape, dtype=bool)
+                self.use = np.ones(data.shape, dtype=bool)
             else:
-                self.use = scipy.ones(data.shape, dtype=bool) &  (scipy.logical_not(mask))
+                self.use = np.ones(data.shape, dtype=bool) &  (np.logical_not(mask))
             self.Nchanged = 0
 
         if data[self.use].size-1.0>0:
             if medianflag:
-                self.mean = scipy.median(data[self.use])
+                self.mean = np.median(data[self.use])
                 #self.mean_err = None
-                self.stdev =  scipy.sqrt(1.0/(data[self.use].size-1.0)*scipy.sum(scipy.square(data[self.use] - self.mean)))/self.c4(data[self.use].size)
-                self.mean_err = self.stdev/scipy.sqrt(data[self.use].size-1)
+                self.stdev =  np.sqrt(1.0/(data[self.use].size-1.0)*np.sum(np.square(data[self.use] - self.mean)))/self.c4(data[self.use].size)
+                self.mean_err = self.stdev/np.sqrt(data[self.use].size-1)
                 self.X2norm = None
             else:
-                c1 = scipy.sum(1.0*data[self.use]/scipy.square(noise[self.use]))
-                c2 = scipy.sum(1.0/scipy.square(noise[self.use]))
+                c1 = np.sum(1.0*data[self.use]/np.square(noise[self.use]))
+                c2 = np.sum(1.0/np.square(noise[self.use]))
                 self.mean = c1/c2
-                self.mean_err = scipy.sqrt(1.0/c2)
+                self.mean_err = np.sqrt(1.0/c2)
                 if self.calc_stdev_X2_flag and data[self.use].size>1:
-                    self.X2norm = 1.0/(data[self.use].size-1.0)*scipy.sum(scipy.square((data[self.use] - self.mean)/noise[self.use]))
+                    self.X2norm = 1.0/(data[self.use].size-1.0)*np.sum(np.square((data[self.use] - self.mean)/noise[self.use]))
                 else:
                     self.X2norm = None
 
             if self.calc_stdev_X2_flag and data[self.use].size>1:
-                self.stdev = scipy.sqrt(1.0/(data[self.use].size-1.0)*scipy.sum(scipy.square(data[self.use] - self.mean)))/self.c4(data[self.use].size)
+                self.stdev = np.sqrt(1.0/(data[self.use].size-1.0)*np.sum(np.square(data[self.use] - self.mean)))/self.c4(data[self.use].size)
             else:
                 self.stdev = None
         else:
@@ -144,7 +144,7 @@ class calcaverageclass:
         #self.Ntot = data.size
         #self.Nskipped = data.size-self.Nused
         #if mask!=None:
-        #    self.Nskipped -= len(scipy.where(mask>0)[0])
+        #    self.Nskipped -= len(np.where(mask>0)[0])
 
 
         self.Nused = data[self.use].size
@@ -152,10 +152,10 @@ class calcaverageclass:
         self.Nskipped = data.size-self.Nused
         if not (mask is None):
             #old
-            #self.Nskipped -= (data.size-data[scipy.logical_not(mask)].size)
+            #self.Nskipped -= (data.size-data[np.logical_not(mask)].size)
 
             # new: more efficient
-            self.Nskipped -= len(scipy.where(mask)[0])
+            self.Nskipped -= len(np.where(mask)[0])
 
     def calcaverage_sigmacut(self,data,mask=None,mean=None,stdev=None,Nsigma=None,fixmean=None,medianflag=False,verbose=0):
         if mean!=None:
@@ -169,28 +169,28 @@ class calcaverageclass:
         if Nsigma!=None and self.stdev!=None:
             useold = copy.deepcopy(self.use)
 
-            #self.use = scipy.where(abs(data-self.mean)<=Nsigma*self.stdev,True,False)
+            #self.use = np.where(abs(data-self.mean)<=Nsigma*self.stdev,True,False)
             #
             #if mask!=None:
-            #    self.use = self.use &  (scipy.logical_not(mask))
+            #    self.use = self.use &  (np.logical_not(mask))
 
             if mask is None:
-                self.use = scipy.where(abs(data-self.mean)<=Nsigma*self.stdev,True,False)
+                self.use = np.where(abs(data-self.mean)<=Nsigma*self.stdev,True,False)
             else:
-                self.use = scipy.where((abs(data-self.mean)<=Nsigma*self.stdev) & (scipy.logical_not(mask)),True,False)
+                self.use = np.where((abs(data-self.mean)<=Nsigma*self.stdev) & (np.logical_not(mask)),True,False)
 
             # old
-            # self.Nchanged = len(data[scipy.where(useold!=self.use)])
+            # self.Nchanged = len(data[np.where(useold!=self.use)])
 
             # New
-            self.Nchanged = len(scipy.where(useold!=self.use)[0])
+            self.Nchanged = len(np.where(useold!=self.use)[0])
             del useold
         else:
             # use all data.
             if mask is None:
-                self.use = scipy.ones(data.shape, dtype=bool)
+                self.use = np.ones(data.shape, dtype=bool)
             else:
-                self.use = scipy.ones(data.shape, dtype=bool) &  (scipy.logical_not(mask))
+                self.use = np.ones(data.shape, dtype=bool) &  (np.logical_not(mask))
 
 
             self.Nchanged = 0
@@ -199,32 +199,32 @@ class calcaverageclass:
 
         if fixmean==None:
             if medianflag:
-                self.mean = scipy.median(data4use)
+                self.mean = np.median(data4use)
             else:
-                self.mean = scipy.mean(data4use)
+                self.mean = np.mean(data4use)
 
         if data4use.size>1:
             #print '1,',time.asctime()
-            self.stdev = scipy.sqrt(1.0/(data4use.size-1.0)*scipy.sum(scipy.square(data4use - self.mean)))/self.c4(data4use.size)
+            self.stdev = np.sqrt(1.0/(data4use.size-1.0)*np.sum(np.square(data4use - self.mean)))/self.c4(data4use.size)
             #print '2,',time.asctime()
         else:
             self.stdev = None
 
 
-                # scipy.std = sqrt(1/N*sum((x-x_average)^2), NOT 1/(N-1)
-                #self.stdev = scipy.std(data4use)
+                # np.std = sqrt(1/N*sum((x-x_average)^2), NOT 1/(N-1)
+                #self.stdev = np.std(data4use)
 
             #else:
             #    if data4use.size>1:
-            #        self.stdev = scipy.sqrt(data4use.size/(data4use.size-1.0)*scipy.mean((data4use - self.mean)*(data4use - self.mean)))
+            #        self.stdev = np.sqrt(data4use.size/(data4use.size-1.0)*np.mean((data4use - self.mean)*(data4use - self.mean)))
             #    else:
             #        self.stdev = None
 
         self.Nused = data4use.size
         self.Ntot = data.size
         if self.Nused>0 and (not(self.stdev is None)):
-            self.mean_err = 1.0*self.stdev/scipy.sqrt(self.Nused)
-            self.stdev_err = 1.0*self.stdev/scipy.sqrt(2.0*self.Nused)
+            self.mean_err = 1.0*self.stdev/np.sqrt(self.Nused)
+            self.stdev_err = 1.0*self.stdev/np.sqrt(2.0*self.Nused)
         else:
             self.mean_err = None
             self.mean = None
@@ -236,10 +236,10 @@ class calcaverageclass:
         self.Nskipped = data.size-self.Nused
         if not (mask is None):
             # old: inefficent memory use
-            # self.Nskipped -= (data.size-data[scipy.logical_not(mask)].size)
+            # self.Nskipped -= (data.size-data[np.logical_not(mask)].size)
 
             # new: more efficient
-            self.Nskipped -= len(scipy.where(mask)[0])
+            self.Nskipped -= len(np.where(mask)[0])
 
         del data4use
 
@@ -278,9 +278,9 @@ class calcaverageclass:
 
         if saveused:
             if mask is None:
-                self.clipped = scipy.logical_not(self.use)
+                self.clipped = np.logical_not(self.use)
             else:
-                self.clipped = scipy.logical_not(self.use) &  scipy.logical_not(mask)
+                self.clipped = np.logical_not(self.use) &  np.logical_not(mask)
         else:
             del(self.use)
         return(0)
