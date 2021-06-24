@@ -211,7 +211,7 @@ def Smooth_bkg(data, extrapolate = True):
 			if extrapolate:
 				estimate[np.isnan(estimate)] = nearest[np.isnan(estimate)]
 			
-			estimate = gaussian_filter(estimate,1)
+			estimate = gaussian_filter(estimate,2)
 		else:
 			estimate = np.zeros_like(data) * np.nan	
 	else:
