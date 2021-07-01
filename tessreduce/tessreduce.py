@@ -463,7 +463,7 @@ class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,reduce=False,
 				 align=True,parallel=True,diff=True,plot=False,savename=None,quality_bitmask='default',verbose=1,
-				 cache_dir=None):
+				 cache_dir=None,calibrate=True):
 		"""
 		Class to reduce tess data.
 		"""
@@ -475,7 +475,7 @@ class tessreduce():
 		self.sector   = sector
 		self.verbose   = verbose
 		self.parallel   = parallel
-		self.calibrate   = False
+		self.calibrate   = calibrate
 		self.diff = diff
 		self.tpf = tpf
 
@@ -1086,7 +1086,7 @@ class tessreduce():
 			lab = time_bin *24
 
 		if ax is None:
-			plt.figure()
+			plt.figure(figsize=(1.5*fig_width,1*fig_width))
 			ax = plt.gca()
 		if lc.shape[0] > lc.shape[1]:
 			ax.plot(lc[:,0],lc[:,1],'k.',alpha = 0.4,ms=1,label='$TESS$')
@@ -1261,7 +1261,8 @@ class tessreduce():
 		flux = strip_units(self.flux)
 		# subtract background from unitless flux
 		self.flux = flux - self.bkg
-		
+		# get a ref with low background
+		self.get_ref()
 		if self.verbose > 0:
 			print('background subtracted')
 		
