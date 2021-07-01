@@ -489,6 +489,7 @@ class tessreduce():
 		self.bkg	 = None
 		self.flux    = None
 		self.ref	 = None
+		self.ref_ind = None
 		self.wcs	 = None
 		self.qe	     = None
 		self.lc	     = None
@@ -671,18 +672,16 @@ class tessreduce():
 		reference : array
 			reference array from which the source mask is identified
 		'''
-		# hack solution for new lightkurve
 		data = strip_units(self.flux)
-		if type(data) != np.ndarray:
-			data = data.value
 		if (start is None) & (stop is None):
-			d = data[self.tpf.quality==0]#np.nansum(data,axis=(1,2)) > 100]
+			ind = self.tpf.quality==0
+			d = deepcopy(data)[ind]
 			summed = np.nansum(d,axis=(1,2))
-			#summed[summed < 1e5] = np.nan # magic number alert
 			lim = np.percentile(summed[np.isfinite(summed)],5)
-			ind = np.where((summed < lim))[0]
-			reference = np.nanmedian(d[ind],axis=(0))
-			#reference = data[np.nanmin(summed) == summed]
+			summed[summed>lim] = 0
+			inds = np.where(ind)[0]
+			ref_ind = inds[np.argmax(summed)]
+			reference = data[ref_ind]
 			if len(reference.shape) > 2:
 				reference = reference[0]
 		elif (start is not None) & (stop is None):
@@ -698,6 +697,7 @@ class tessreduce():
 			stop = int(stop)
 			reference = np.nanmedian(data[start:stop],axis=(0))
 		self.ref = reference
+		self.ref_ind = ref_ind
 
 
 	def centroids_DAO(self,plot=None,savename=None):
@@ -1171,7 +1171,7 @@ class tessreduce():
 
 	def reduce(self, aper = None, shift = True, parallel = True, calibrate=True,
 				bin_size = 0, plot = True, mask_scale = 1,
-				diff_lc = True,diff=True,verbose=None, tar_ap=5,sky_in=7,sky_out=11):
+				diff_lc = True,diff=True,verbose=None, tar_ap=3,sky_in=7,sky_out=11):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
@@ -1262,7 +1262,7 @@ class tessreduce():
 		# subtract background from unitless flux
 		self.flux = flux - self.bkg
 		# get a ref with low background
-		self.get_ref()
+		self.ref = deepcopy(self.flux[self.ref_ind])
 		if self.verbose > 0:
 			print('background subtracted')
 		
@@ -1300,6 +1300,7 @@ class tessreduce():
 					print('shifting images')
 			
 			# subtract reference
+			self.ref = deepcopy(self.flux[self.ref_ind])
 			self.flux -= self.ref
 			# remake mask
 			self.make_mask(maglim=18,strapsize=4,scale=mask_scale*.5)#Source_mask(ref,grid=0)
@@ -1744,7 +1745,7 @@ class tessreduce():
 			
 			dist = np.sqrt((tab.col.values-x)**2 + (tab.row.values-y)**2)
 			
-			ind = dist < 2.5
+			ind = dist < 1.5
 			close = tab.iloc[ind]
 			
 			d['gmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.gmag.values,25))) + 25
@@ -1762,11 +1763,11 @@ class tessreduce():
 		for i in range(len(d)):
 			mask = np.zeros_like(self.ref)
 			mask[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
-			mask = convolve(mask,np.ones((5,5)))
+			mask = convolve(mask,np.ones((3,3)))
 			flux += [np.nansum(tflux*mask,axis=(1,2))]
 			m2 = np.zeros_like(self.ref)
 			m2[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
-			m2 = convolve(m2,np.ones((7,7))) - mask
+			m2 = convolve(m2,np.ones((7,7))) - convolve(m2,np.ones((5,5)))
 			eflux += [np.nansum(tflux*m2,axis=(1,2))]
 			if np.nansum(self.ref*m2) > 100:
 				eind[i] = 1
