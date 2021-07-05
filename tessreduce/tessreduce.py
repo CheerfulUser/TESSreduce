@@ -632,7 +632,7 @@ class tessreduce():
 		strap = (self.mask == 4) * 1.0
 		strap[strap==0] = np.nan
 		if len(strap.shape) == 3: 
-			strap = strap[ref_ind]
+			strap = strap[self.ref_ind]
 
 		data = strip_units(self.flux)
 		qes = np.zeros_like(bkg_smth) * np.nan
