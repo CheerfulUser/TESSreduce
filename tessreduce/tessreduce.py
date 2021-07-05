@@ -629,8 +629,10 @@ class tessreduce():
 			print('Small tpf, using percentile cut background')
 			bkg_smth = self.small_background()
 
-		strap = ((((self.mask & 4) * ((self.mask | 4) == 4))) > 0) * 1.0
+		strap = (self.mask == 4) * 1.0
 		strap[strap==0] = np.nan
+		if len(strap.shape) == 3: 
+			strap = strap[ref_ind]
 
 		data = strip_units(self.flux)
 		qes = np.zeros_like(bkg_smth) * np.nan
@@ -1171,7 +1173,8 @@ class tessreduce():
 
 	def reduce(self, aper = None, shift = True, parallel = True, calibrate=True,
 				bin_size = 0, plot = True, mask_scale = 1,
-				diff_lc = True,diff=True,verbose=None, tar_ap=3,sky_in=7,sky_out=11):
+				diff_lc = True,diff=True,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
+				moving_mask=None):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
@@ -1179,9 +1182,6 @@ class tessreduce():
 		----------
 		Parameters 
 		----------
-		tpf : lightkurve target pixel file
-			tpf to act on 
-
 		aper : None, list, array
 			aperature to do photometry on
 
@@ -1314,6 +1314,11 @@ class tessreduce():
 			m_tar[self.size//2,self.size//2]= 1
 			m_tar = convolve(m_tar,np.ones((5,5)))
 			self.mask = self.mask | m_tar
+			if moving_mask is not None:
+				temp = np.zeros_like(tess.flux,dtype=int)
+				temp[:,:,:] = self.mask
+				self.mask = self.mask | moving_mask
+
 			if self.verbose > 0:
 				print('remade mask')
 			# background
