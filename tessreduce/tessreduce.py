@@ -192,8 +192,8 @@ def Smooth_bkg(data, extrapolate = True):
 		an array indicating where extrapolation was used
 
 	"""
-	data[data == 0] = np.nan
-	if np.nansum(data) > 0:
+	#data[data == 0] = np.nan
+	if (~np.isnan(data)).any():
 		x = np.arange(0, data.shape[1])
 		y = np.arange(0, data.shape[0])
 		arr = np.ma.masked_invalid(data)
@@ -215,7 +215,7 @@ def Smooth_bkg(data, extrapolate = True):
 		else:
 			estimate = np.zeros_like(data) * np.nan	
 	else:
-		estimate = np.zeros_like(data) * np.nan
+		estimate = np.zeros_like(data) #* np.nan	
 
 	return estimate
 
@@ -1300,7 +1300,7 @@ class tessreduce():
 					print('shifting images')
 			
 			# subtract reference
-			self.ref = deepcopy(self.flux[self.ref_ind])
+			self.ref = deepcopy(self.flux[self.ref_ind] - self.bkg[self.ref_ind])
 			self.flux -= self.ref
 			# remake mask
 			self.make_mask(maglim=18,strapsize=4,scale=mask_scale*.5)#Source_mask(ref,grid=0)
