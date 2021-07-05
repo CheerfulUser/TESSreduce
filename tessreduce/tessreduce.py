@@ -1315,9 +1315,9 @@ class tessreduce():
 			m_tar = convolve(m_tar,np.ones((5,5)))
 			self.mask = self.mask | m_tar
 			if moving_mask is not None:
-				temp = np.zeros_like(tess.flux,dtype=int)
+				temp = np.zeros_like(self.flux,dtype=int)
 				temp[:,:,:] = self.mask
-				self.mask = self.mask | moving_mask
+				self.mask = temp | moving_mask
 
 			if self.verbose > 0:
 				print('remade mask')
