@@ -1714,24 +1714,30 @@ class tessreduce():
 		if savename is None:
 			savename = self.savename
 		if self.dec < -30:
-			print('Target is too far south with Dec = {} for PS1 photometry.'.format(self.dec) +
-				  " Can't calibrate at this time, so using zp = 20.44.")
-			self.zp = 20.44
-			self.zp_e = 0
-			return 
+			if self.verbose > 0:
+				print('Target is below -30 dec, calibrating to SkyMapper photometry.')
+			table = Get_Catalogue(self.tpf,Catalog='skymapper')
+			table = Skymapper_df(table)
+			system = 'skymapper'
+		else:
+			if self.verbose > 0:
+				print('Target is above -30 dec, calibrating to PS1 photometry.')
+			table = Get_Catalogue(self.tpf,Catalog='ps1')
+			system = 'ps1'
+
 		if self.diff:
 			tflux = self.flux + self.ref
 		else:
 			tflux = self.flux
-
-		table = Get_Catalogue(self.tpf,Catalog='ps1')
+			
 
 		ind = (table.imag.values < 19) & (table.imag.values > 14)
 		tab = table.iloc[ind]
 		x,y = self.wcs.all_world2pix(tab.RAJ2000.values,tab.DEJ2000.values,0)
 		tab['col'] = x
 		tab['row'] = y
-		e, dat = Tonry_reduce(tab,plot=plot,savename=savename)
+		
+		e, dat = Tonry_reduce(tab,plot=plot,savename=savename,system=system)
 		self.ebv = e[0]
 
 		gr = (dat.gmag - dat.rmag).values
@@ -1757,9 +1763,13 @@ class tessreduce():
 			d['rmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.rmag.values,25))) + 25
 			d['imag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.imag.values,25))) + 25
 			d['zmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.zmag.values,25))) + 25
-			d['ymag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.ymag.values,25))) + 25
+			if system == 'ps1':
+				d['ymag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.ymag.values,25))) + 25
 		# convert to tess mags
-		d = PS1_to_TESS_mag(d,ebv=self.ebv)
+		if system == 'ps1':
+			d = PS1_to_TESS_mag(d,ebv=self.ebv)
+		else:
+			d = SM_to_TESS_mag(d,ebv=self.ebv)
 
 
 		flux = []
@@ -1852,7 +1862,7 @@ class tessreduce():
 			stdzp = std#averager.stdev
 
 		if abs(mzp-20.44) > 2:
-			print('WARNING! field calibration is unreliable, using the default zp = 20.44')
+			print('!!!WARNING!!! field calibration is unreliable, using the default zp = 20.44')
 			self.zp = 20.44
 			self.zp_e = 0
 			# backup for when messing around with flux later

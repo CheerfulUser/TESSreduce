@@ -132,6 +132,32 @@ def PS1_to_TESS_mag(PS1,ebv = 0):
     PS1['tmag'] = t
     return PS1
 
+def SM_to_TESS_mag(SM,ebv = 0):
+    zp = 25
+    gr = (SM.gmag - SM.rmag).values
+    
+    eg, e = R_val('g',gr=gr,ext=ebv,system='skymapper')
+    er, e = R_val('r',gr=gr,ext=ebv,system='skymapper')
+    ei, e = R_val('i',gr=gr,ext=ebv,system='skymapper') 
+    ez, e = R_val('z',gr=gr,ext=ebv,system='skymapper')
+    et, e = R_val('tess',gr=gr,ext=ebv)
+    eg = eg  * ebv; er = er  * ebv; ei = ei  * ebv
+    ez = ez  * ebv; et = et  * ebv
+
+    g = mag2flux(SM.gmag.values - eg,zp)
+    r = mag2flux(SM.rmag.values - er,zp)
+    i = mag2flux(SM.imag.values - ei,zp)
+    z = mag2flux(SM.zmag.values - ez,zp)
+    
+    cr = 0.25825435; ci = 0.35298213
+    cz = 0.39388206; cp = -0.00170817
+
+    t = (cr*r + ci*i + cz*z)*(g/i)**cp
+    t = -2.5*np.log10(t) + zp + et
+    SM['tmag'] = t
+    return SM
+
+
 
 def Get_PS1(tpf, magnitude_limit = 18, Offset = 10):
 	"""
@@ -193,6 +219,11 @@ def Skymapper_df(sm):
     df['rmag'] = sm['rPSF'].values
     df['imag'] = sm['iPSF'].values
     df['zmag'] = sm['zPSF'].values
+
+    df['e_gmag'] = sm['gPSF'].values * np.nan
+    df['e_rmag'] = sm['rPSF'].values * np.nan
+    df['e_imag'] = sm['iPSF'].values * np.nan
+    df['e_zmag'] = sm['zPSF'].values * np.nan
 
     df['gKmag'] = sm['gPetro'].values
     df['rKmag'] = sm['rPetro'].values
