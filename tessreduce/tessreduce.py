@@ -13,6 +13,7 @@ from copy import deepcopy
 from scipy.ndimage.filters import convolve
 from scipy.ndimage import shift
 from scipy.ndimage import gaussian_filter
+from scipy.ndimage import median_filter
 
 from sklearn.cluster import OPTICS, cluster_optics_dbscan
 
@@ -66,8 +67,8 @@ import json
 
 
 fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
-inches_per_pt = 1.0/72.27               # Convert pt to inches
-golden_mean = (np.sqrt(5)-1.0)/2.0         # Aesthetic ratio
+inches_per_pt = 1.0/72.27			   # Convert pt to inches
+golden_mean = (np.sqrt(5)-1.0)/2.0		 # Aesthetic ratio
 fig_width = fig_width_pt*inches_per_pt  # width in inches
 
 def strip_units(data):
@@ -211,7 +212,8 @@ def Smooth_bkg(data, extrapolate = True):
 			if extrapolate:
 				estimate[np.isnan(estimate)] = nearest[np.isnan(estimate)]
 			
-			estimate = gaussian_filter(estimate,2)
+			estimate = gaussian_filter(estimate,1)
+			#estimate = median_filter(estimate,20)
 		else:
 			estimate = np.zeros_like(data) * np.nan	
 	else:
@@ -256,9 +258,47 @@ def Calculate_shifts(data,mx,my,daofind):
 			ind = np.argmin(dist,axis=1)
 			indo = np.nanmin(dist) < 1
 			ind = ind[indo]
-			shifts[0,indo] = x[ind] - mx[indo]
-			shifts[1,indo] = y[ind] - my[indo]
+			shifts[1,indo] = mx[indo] - x[ind]
+			shifts[0,indo] = my[indo] - y[ind]
 	return shifts
+
+def image_sub(theta, image, ref):
+	dx, dy = theta
+	s = shift(image,([dx,dy]))
+	diff = abs(ref-s)
+	return np.nansum(diff[5:-5,5:-5])
+
+def difference_shifts(image,ref):
+	"""
+	Calculate the offsets of sources identified by photutils from a reference
+
+	Parameters
+	----------
+	data : array
+		a single frame from the tpf
+
+	mx : array
+		mean row positions for the centroids from the reference image
+
+	my : array
+		mean col positions for the centroids from the reference image
+
+	daofind : DAOStarFinder
+		module to find the centroid positions
+
+	Returns
+	-------
+	shifts : array
+		row and col shift to match the data centroids to the reference image
+
+	"""
+	if np.nansum(abs(image)) > 0:
+		x0= [0,0]
+		res = minimize(image_sub,x0,args=(image,ref),method = 'Nelder-Mead')
+		s = res.x
+	else:
+		s = np.zeros((2)) * np.nan
+	return s
 
 def Smooth_motion(Centroids,tpf):
 	"""
@@ -287,15 +327,56 @@ def Smooth_motion(Centroids,tpf):
 		ind1 = np.where(ind1 != 0)[0]
 		ind2 = np.nansum(tpf.flux[split:],axis=(1,2))
 		ind2 = np.where(ind2 != 0)[0] + split
-		smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],15,3)
-		smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],15,3)
+		smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],25,3)
+		smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],25,3)
 
-		smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],15,3)
-		smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],15,3)
+		smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],25,3)
+		smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],25,3)
 	except IndexError:
-		smoothed[:,0] = savgol_filter(Centroids[:,0],15,3)		
-		smoothed[:,1] = savgol_filter(Centroids[:,1],15,3)
+		smoothed[:,0] = savgol_filter(Centroids[:,0],25,3)		
+		smoothed[:,1] = savgol_filter(Centroids[:,1],25,3)
 	return smoothed
+
+
+def smooth_zp(zp,time):
+	"""
+	Calculate the smoothed centroid shift 
+
+	Parameters
+	----------
+	zp : array
+		centroid shifts from all frames
+
+
+	time : lightkurve targetpixelfile
+		tpf
+
+	Returns
+	-------
+	smoothed : array
+		smoothed displacement of the centroids
+
+	"""
+	smoothed = np.zeros_like(zp) * np.nan
+	plt.figure()
+	plt.plot(time,zp,'.')
+	try:
+		split = np.where(np.diff(time) > 0.5)[0][0] + 1
+		# ugly, but who cares
+		ind1 = np.isfinite(zp[:split])
+		ind2 = np.isfinite(zp[split:]) + split
+	
+		smoothed[ind1] = savgol_filter(zp[ind1],15,3)
+		smoothed[ind2] = savgol_filter(zp[ind2],15,3)
+
+		smoothed[ind1] = savgol_filter(zp[ind1],15,3)
+		smoothed[ind2] = savgol_filter(zp[ind2],15,3)
+	except IndexError:
+		smoothed[:] = savgol_filter(zp[:],15,3)
+		smoothed[:] = savgol_filter(zp[:],15,3)
+	err = np.nanstd(zp - smoothed)
+
+	return smoothed, err
 
 
 def sn_lookup(name,time='disc',buffer=0,print_table=True):
@@ -467,15 +548,15 @@ class tessreduce():
 		"""
 		Class to reduce tess data.
 		"""
-		self.ra   = ra
-		self.dec   = dec 
-		self.name   = name
-		self.size   = size
-		self.align   = align
-		self.sector   = sector
-		self.verbose   = verbose
-		self.parallel   = parallel
-		self.calibrate   = calibrate
+		self.ra = ra
+		self.dec = dec 
+		self.name = name
+		self.size = size
+		self.align = align
+		self.sector = sector
+		self.verbose = verbose
+		self.parallel = parallel
+		self.calibrate = calibrate
 		self.diff = diff
 		self.tpf = tpf
 
@@ -484,24 +565,24 @@ class tessreduce():
 		self.savename = savename
 
 		# calculated 
-		self.mask    = None
-		self.shift   = None
-		self.bkg	 = None
-		self.flux    = None
-		self.ref	 = None
+		self.mask = None
+		self.shift = None
+		self.bkg = None
+		self.flux = None
+		self.ref = None
 		self.ref_ind = None
-		self.wcs	 = None
-		self.qe	     = None
-		self.lc	     = None
-		self.sky  	 = None
-		self.events  = None
-		self.zp	     = None
-		self.zp_e    = None
+		self.wcs = None
+		self.qe = None
+		self.lc = None
+		self.sky = None
+		self.events = None
+		self.zp = None
+		self.zp_e = None
 		self.sn_name = None
-		self.ebv     = 0
+		self.ebv = 0
 		# repeat for backup
-		self.tzp	 = None
-		self.tzp_e   = None
+		self.tzp = None
+		self.tzp_e = None
 		
 		# light curve units 
 		self.lc_units = 'Counts'
@@ -580,7 +661,7 @@ class tessreduce():
 		if Size is None:
 			Size = self.size
 		
-		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=Size,download_dir=cache_dir)
+		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=Size)#,download_dir=cache_dir)
 	
 		self.tpf  = tpf
 		self.flux = strip_units(tpf.flux)
@@ -640,7 +721,8 @@ class tessreduce():
 			s = (data[i]*strap)/bkg_smth[i]
 			q = np.zeros_like(s) * np.nan
 			for j in range(s.shape[1]):
-				q[:,j] = np.nanmedian(abs(s[:,j]))
+				ind = ~sigma_clip(s[:,j]).mask
+				q[:,j] = np.nanmedian(abs(s[ind,j]))
 			q[np.isnan(q)] =1 
 			qes[i] = q
 		bkg = bkg_smth * qes
@@ -735,7 +817,7 @@ class tessreduce():
 
 		mean, med, std = sigma_clipped_stats(m, sigma=3.0)
 		
-		daofind = DAOStarFinder(fwhm=3.0, threshold=5.*std)
+		daofind = DAOStarFinder(fwhm=2.0, threshold=10.*std)
 		s = daofind(m - med)
 		mx = s['xcentroid']
 		my = s['ycentroid']
@@ -765,10 +847,10 @@ class tessreduce():
 			ind = np.where(np.diff(t) > .5)[0]
 			smooth[ind,:] = np.nan
 			plt.figure(figsize=(1.5*fig_width,1*fig_width))
-			plt.plot(t,meds[:,0],'.',label='Row shift',alpha =0.5)
-			plt.plot(t,smooth[:,0],'-',label='Smoothed row shift')
-			plt.plot(t,meds[:,1],'.',label='Col shift',alpha =0.5)
-			plt.plot(t,smooth[:,1],'-',label='Smoothed col shift')
+			plt.plot(t,meds[:,1],'.',label='Row shift',alpha =0.5)
+			plt.plot(t,smooth[:,1],'-',label='Smoothed row shift')
+			plt.plot(t,meds[:,0],'.',label='Col shift',alpha =0.5)
+			plt.plot(t,smooth[:,0],'-',label='Smoothed col shift')
 			#plt.plot(thing,'+')
 			plt.ylabel('Shift (pixels)',fontsize=15)
 			plt.xlabel('Time (MJD)',fontsize=15)
@@ -777,6 +859,74 @@ class tessreduce():
 			if savename is not None:
 				plt.savefig(savename+'_disp.pdf', bbox_inches = "tight")
 		
+	def fit_shift(self,plot=None,savename=None):
+		"""
+		Calculate the centroid shifts of time series images.
+
+		Parameters
+		----------
+		Flux : array 
+			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
+
+		Median : array
+			median image used for the position reference
+
+		TPF : lightkurve targetpixelfile
+			tpf
+
+		parallel : bool
+			if True then parallel processing will be used for shift calculations
+
+		Returns
+		-------
+		smooth : array
+			smoothed displacement of the centroids compared to the Median
+		"""
+		if plot is None:
+			plot = self.plot
+		if savename is None:
+			savename = self.savename
+		
+		f = self.flux
+		m = self.ref.copy()#flux[self.ref_ind].copy()
+
+		if self.parallel:
+
+			num_cores = multiprocessing.cpu_count()
+			shifts = Parallel(n_jobs=num_cores)(
+				delayed(difference_shifts)(frame,m) for frame in f)
+			shifts = np.array(shifts)
+		else:
+			shifts = np.zeros((len(f),2)) * np.nan
+			for i in range(len(f)):
+				shifts[i,:] = difference_shifts(f[i],m)
+
+
+		#smooth = Smooth_motion(meds,self.tpf)
+		#nans = np.nansum(f,axis=(1,2)) ==0
+		#smooth[nans] = np.nan
+		if self.shift is not None:
+			self.shift += shifts
+		else:
+			self.shift = shift
+		if plot:
+			#meds[meds==0] = np.nan
+			t = self.tpf.time.mjd
+			ind = np.where(np.diff(t) > .5)[0]
+			shifts[ind,:] = np.nan
+			plt.figure(figsize=(1.5*fig_width,1*fig_width))
+			plt.plot(t,shifts[:,0],'.',label='Row shift',alpha =0.5)
+			plt.plot(t,shifts[:,1],'.',label='Col shift',alpha =0.5)
+
+			plt.ylabel('Shift (pixels)',fontsize=15)
+			plt.xlabel('Time (MJD)',fontsize=15)
+			plt.legend()
+			#plt.tight_layout()
+			if savename is not None:
+				plt.savefig(savename+'_disp_corr.pdf', bbox_inches = "tight")
+
+
+
 	def shift_images(self,median=False):
 		"""
 		Shifts data by the values given in offset. Breaks horribly if data is all 0.
@@ -794,21 +944,23 @@ class tessreduce():
 			array shifted to match the offsets given
 		"""
 		shifted = self.flux.copy()
-		scale = np.nanmedian(shifted)
-		shifted = shifted / scale
-		#shifted[shifted<0] = np.nan
 		nans = ~np.isfinite(shifted)
 		shifted[nans] = 0.
-		if ~median:
+		if median:
 			for i in range(len(shifted)):
 				if np.nansum(abs(shifted[i])) > 0:
-					shifted[i] = shift(shifted[i],[-self.shift[i,1],-self.shift[i,0]],mode='nearest',order=3, prefilter=False)
-			self.flux = shifted*scale
+					shifted[i] = shift(self.ref,[-self.shift[i,1],-self.shift[i,0]])
+			self.flux -= shifted
 		else:
 			for i in range(len(shifted)):
 				if np.nansum(abs(shifted[i])) > 0:
-					shifted[i] = shift(self.ref,[self.shift[i,1],self.shift[i,0]],mode='nearest',order=3, prefilter=False)
-			self.flux -= shifted * scale
+					shifted[i] = shift(shifted[i],[self.shift[i,0],self.shift[i,1]],mode='nearest')#mode='constant',cval=np.nan)
+			#shifted[0,:] = np.nan
+			#shifted[-1,:] = np.nan
+			#shifted[:,0] = np.nan
+			#shifted[:,-1] = np.nan
+			self.flux = shifted
+			
 
 				#print(psutil.virtual_memory().available * 100 / psutil.virtual_memory().total)
 		#shifted[nans] = np.nan
@@ -1171,7 +1323,7 @@ class tessreduce():
 			light = lk.LightCurve(time=Time(lc[0], format='mjd'),flux=lc[1] * unit)
 		return light
 
-	def reduce(self, aper = None, shift = True, parallel = True, calibrate=True,
+	def reduce(self, aper = None, align = True, parallel = True, calibrate=True,
 				bin_size = 0, plot = True, mask_scale = 1,
 				diff_lc = True,diff=True,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
 				moving_mask=None):
@@ -1232,9 +1384,9 @@ class tessreduce():
 		else:
 			small = False
 
-		if small & shift:
+		if small & align:
 			print('Unlikely to get good shifts from a small tpf, so shift has been set to False')
-			shift = False
+			self.align = False
 
 		self.get_ref()
 		if self.verbose > 0:
@@ -1275,10 +1427,15 @@ class tessreduce():
 				print('calculating centroids')
 			try:
 				self.centroids_DAO()
+				#self.shift_images()
+				#self.ref = deepcopy(self.flux[self.ref_ind])
+				#self.fit_shift()
+				#self.fit_shift()
 			except:
 				print('Something went wrong, switching to serial')
 				self.parallel = False
-				self.centroids_DAO()
+				#self.centroids_DAO()
+				self.fit_shift()
 		
 		if diff is not None:
 			self.diff = diff
@@ -1292,16 +1449,18 @@ class tessreduce():
 			if self.verbose > 0:
 				print('!!Re-running for difference image!!')
 			# reseting to do diffim 
-
 			self.flux = strip_units(self.tpf.flux)
 			if self.align:
 				self.shift_images()
+
 				if self.verbose > 0:
 					print('shifting images')
 			
 			# subtract reference
-			self.ref = deepcopy(self.flux[self.ref_ind] - self.bkg[self.ref_ind])
+			self.ref = deepcopy(self.flux[self.ref_ind])
 			self.flux -= self.ref
+
+			self.ref -= self.bkg[self.ref_ind]
 			# remake mask
 			self.make_mask(maglim=18,strapsize=4,scale=mask_scale*.5)#Source_mask(ref,grid=0)
 			frac = np.nansum((self.mask== 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
@@ -1816,7 +1975,7 @@ class tessreduce():
 			plt.title('Calibration sources')
 			plt.ylabel('Row',fontsize=15)
 			plt.xlabel('Column',fontsize=15)
-
+			plt.colorbar()
 			if savename is not None:
 				plt.savefig(savename + 'cal_sources.pdf', bbox_inches = "tight")
 
@@ -1861,7 +2020,11 @@ class tessreduce():
 			mzp = med#averager.mean
 			stdzp = std#averager.stdev
 
-		if abs(mzp-20.44) > 2:
+		else:
+			zp = np.nanmedian(zp,axis=0)
+			mzp,stdzp = smooth_zp(zp, self.tpf.time.mjd)
+
+		if (abs(mzp-20.44) > 2).all():
 			print('!!!WARNING!!! field calibration is unreliable, using the default zp = 20.44')
 			self.zp = 20.44
 			self.zp_e = 0
@@ -1961,22 +2124,23 @@ class tessreduce():
 			raise ValueError(m)
 
 		flux = self.lc[1] * 10**((zp - flux_zp)/-2.5)
-		flux_e2 = (10**((zp-flux_zp)/-2.5))**2 * self.lc[2]**2 + (self.lc[1]/-2.5 * 10**((zp-flux_zp)/-2.5))**2 * zp_e**2
+		flux_e2 = ((10**((zp-flux_zp)/-2.5))**2 * self.lc[2]**2 + 
+					(self.lc[1]/-2.5 * 10**((zp-flux_zp)/-2.5))**2 * zp_e**2)
 		flux_e = np.sqrt(flux_e2)
 		self.lc[1] = flux
 		self.lc[2] = flux_e
 
 
 		if flux_type.lower() == 'mjy':
-			self.zp = 16.4
+			self.zp = self.zp * 0 + 16.4
 			self.zp_e = 0
 			self.lc_units = 'mJy'
 		if flux_type.lower() == 'jy':
-			self.zp = 8.9
+			self.zp = self.zp * 0 + 8.9
 			self.zp_e = 0
 			self.lc_units = 'Jy'
 		elif (flux_type.lower() == 'erg') | (flux_type.lower() == 'cgs'):
-			self.zp = -48.6
+			self.zp = self.zp * 0 -48.6
 			self.zp_e = 0
 			self.lc_units = 'cgs'
 		elif (flux_type.lower() == 'tess') | (flux_type.lower() == 'counts'):
@@ -2098,7 +2262,7 @@ def Multiple_day_breaks(lc):
 
 ### Serious source mask
 
-def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None):
+def Cat_mask(tpf,maglim=19,scale=1,strapsize=4,badpix=None):
 	"""
 	Make a source mask from the PS1 and Gaia catalogs.
 
