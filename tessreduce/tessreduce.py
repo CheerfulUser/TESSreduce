@@ -661,7 +661,7 @@ class tessreduce():
 		if Size is None:
 			Size = self.size
 		
-		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=Size)#,download_dir=cache_dir)
+		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=Size,download_dir=cache_dir)
 	
 		self.tpf  = tpf
 		self.flux = strip_units(tpf.flux)
