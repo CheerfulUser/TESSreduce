@@ -12,7 +12,25 @@ TESSreduce can be installed through pip:
 `pip install git+https://github.com/CheerfulUser/TESSreduce.git`
 
 Example reduction for SN 2020fqv:
+```python
+import tessreduce as tr
+obs = tr.sn_lookup('sn2020fqv')
 ```
+|   Sector | Covers   |   Time difference  |
+|          |          |             (days) |
+|----------+----------+--------------------|
+|       23 | True     |                  0 |
+|       49 | False    |                697 |
+```python
+tess = tr.tessreduce(obs_list=obs)
+tess.reduce()
+# If you want to remove residual background trends from a bright as best as possible
+detrend = tess.detrend_transient()
+```
+![plot](./figs/detrend_comparison.png)
+
+**OR**
+```python
 import tessreduce as tr
 ra = 189.1385817
 dec = 11.2316535
@@ -21,20 +39,20 @@ tess.reduce()
 # If you want to remove residual background trends from a bright as best as possible
 detrend = tess.detrend_transient()
 ```
-![plot](./figs/detrend_comparison.png)
+
 
 # Flux calibration
 
 TESSreduce can calibrate TESS counts to physical flux, or AB magnitudes, by using PS1 data. If your field is dec > -30 and you want a flux calibrated light curve then use:
-```
+```python
 tess.to_flux()
 ```
 **OR**
-```
+```python
 tess.to_mag()
 ```
 Several options are available for flux and are interchangeable, however, mag is currently not reversible. To easily plot the resulting light curve:
-```
+```python
 tess.plotter()
 ```
 
