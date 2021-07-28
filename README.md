@@ -15,13 +15,12 @@ Example reduction for SN 2020fqv:
 ```python
 import tessreduce as tr
 obs = tr.sn_lookup('sn2020fqv')
-```
 |   Sector | Covers   |   Time difference  |
 |          |          |             (days) |
 |----------+----------+--------------------|
 |       23 | True     |                  0 |
 |       49 | False    |                697 |
-```python
+
 tess = tr.tessreduce(obs_list=obs)
 tess.reduce()
 # If you want to remove residual background trends from a bright as best as possible
