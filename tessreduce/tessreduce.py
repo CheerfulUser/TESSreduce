@@ -212,8 +212,8 @@ def Smooth_bkg(data, extrapolate = True):
 			if extrapolate:
 				estimate[np.isnan(estimate)] = nearest[np.isnan(estimate)]
 			
-			estimate = gaussian_filter(estimate,1)
-			#estimate = median_filter(estimate,20)
+			estimate = gaussian_filter(estimate,1.5)
+			#estimate = median_filter(estimate,5)
 		else:
 			estimate = np.zeros_like(data) * np.nan	
 	else:
@@ -256,7 +256,7 @@ def Calculate_shifts(data,mx,my,daofind):
 			dist = dist + np.sqrt((x[np.newaxis,:] - mx[:,np.newaxis])**2 + 
 								  (y[np.newaxis,:] - my[:,np.newaxis])**2)
 			ind = np.argmin(dist,axis=1)
-			indo = np.nanmin(dist) < 1
+			indo = (np.nanmin(dist) < 1)
 			ind = ind[indo]
 			shifts[1,indo] = mx[indo] - x[ind]
 			shifts[0,indo] = my[indo] - y[ind]
@@ -712,13 +712,17 @@ class tessreduce():
 
 		strap = (self.mask == 4) * 1.0
 		strap[strap==0] = np.nan
+		# check if its a time varying mask
 		if len(strap.shape) == 3: 
 			strap = strap[self.ref_ind]
+		mask = ((self.mask & 1) == 0) * 1.0
+		mask[mask==0] = np.nan
 
-		data = strip_units(self.flux)
+		data = strip_units(self.flux) * mask
 		qes = np.zeros_like(bkg_smth) * np.nan
 		for i in range(data.shape[0]):
 			s = (data[i]*strap)/bkg_smth[i]
+			s[s > np.percentile(s,50)] = np.nan
 			q = np.zeros_like(s) * np.nan
 			for j in range(s.shape[1]):
 				ind = ~sigma_clip(s[:,j]).mask
@@ -817,11 +821,16 @@ class tessreduce():
 
 		mean, med, std = sigma_clipped_stats(m, sigma=3.0)
 		
-		daofind = DAOStarFinder(fwhm=2.0, threshold=10.*std)
+		daofind = DAOStarFinder(fwhm=2.0, threshold=10.*std,exclude_border=True)
 		s = daofind(m - med)
 		mx = s['xcentroid']
 		my = s['ycentroid']
-		
+		x_mid = self.flux.shape[2] / 2
+		y_mid = self.flux.shape[1] / 2
+		#ind = #((abs(mx - x_mid) <= 30) & (abs(my - y_mid) <= 30) & 
+		ind =   (abs(mx - x_mid) >= 5) & (abs(my - y_mid) >= 5)
+		mx = mx[ind]
+		my = my[ind]
 		if self.parallel:
 			
 			num_cores = multiprocessing.cpu_count()
@@ -1434,14 +1443,15 @@ class tessreduce():
 			except:
 				print('Something went wrong, switching to serial')
 				self.parallel = False
-				#self.centroids_DAO()
-				self.fit_shift()
+				self.centroids_DAO()
+				#self.fit_shift()
 		
 		if diff is not None:
 			self.diff = diff
 		if not self.diff:
 			if self.align:
 				self.shift_images()
+				self.flux[np.nansum(self.tpf.flux.value,axis=(1,2))==0] = np.nan
 				if self.verbose > 0:
 					print('images shifted')
 
@@ -1450,12 +1460,13 @@ class tessreduce():
 				print('!!Re-running for difference image!!')
 			# reseting to do diffim 
 			self.flux = strip_units(self.tpf.flux)
+
 			if self.align:
 				self.shift_images()
 
 				if self.verbose > 0:
 					print('shifting images')
-			
+			self.flux[np.nansum(self.tpf.flux.value,axis=(1,2))==0] = np.nan
 			# subtract reference
 			self.ref = deepcopy(self.flux[self.ref_ind])
 			self.flux -= self.ref
