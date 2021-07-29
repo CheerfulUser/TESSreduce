@@ -1187,23 +1187,25 @@ class tessreduce():
 		plt.legend(loc=4)
 
 		plt.subplot(122)
+		ap = ap_tar
+		ap[ap==0] = np.nan
 		maxind = np.where((np.nanmax(lc[1]) == lc[1]))[0]
 		try:
 			maxind = maxind[0]
 		except:
 			pass
 		d = data[maxind]
-		nonan = np.isfinite(d)
+		nonan1 = np.isfinite(d)
+		nonan2 = np.isfinite(d*ap)
 		plt.imshow(data[maxind],origin='lower',
-				   vmin=np.percentile(d[nonan],16),
-				   vmax=np.percentile(d[nonan],95),
+				   vmin=np.percentile(d[nonan1],16),
+				   vmax=np.percentile(d[nonan2],80),
 				   aspect='auto')
 		cbar = plt.colorbar()
 		cbar.set_label('$e^-/s$',fontsize=15)
 		plt.xlabel('Column',fontsize=15)
 		plt.ylabel('Row',fontsize=15)
-		ap = ap_tar
-		ap[ap==0] = np.nan
+		
 		#plt.imshow(ap,origin='lower',alpha = 0.2)
 		#plt.imshow(ap_sky,origin='lower',alpha = 0.8,cmap='hot')
 		y,x = np.where(ap_sky > 0)
