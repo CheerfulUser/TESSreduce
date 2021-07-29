@@ -11,7 +11,7 @@ TESSreduce can be installed through pip:
 
 `pip install git+https://github.com/CheerfulUser/TESSreduce.git`
 
-Example reduction for SN 2020fqv:
+Example reduction for SN 2018fub:
 ```python
 import tessreduce as tr
 obs = tr.sn_lookup('sn2018fub')
@@ -56,6 +56,7 @@ Several options are available for flux and are interchangeable, however, mag is 
 ```python
 tess.plotter()
 ```
+![plot](./figs/fub_cal.png)
 
 
 There are a lot of other functions burried in TESSreduce which currently aren't well documented, so for more information contact me at: rridden@stsci.edu
