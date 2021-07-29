@@ -14,30 +14,28 @@ TESSreduce can be installed through pip:
 Example reduction for SN 2020fqv:
 ```python
 import tessreduce as tr
-obs = tr.sn_lookup('sn2020fqv')
+obs = tr.sn_lookup('sn2018fub')
 ```
 ```
 |   Sector | Covers   |   Time difference  |
 |          |          |             (days) |
 |----------+----------+--------------------|
-|       23 | True     |                  0 |
-|       49 | False    |                697 |
+|        2 | True     |                  0 |
+|       29 | False    |                721 |
 ```
 
 ```python
-tess = tr.tessreduce(obs_list=obs)
-tess.reduce()
-# If you want to remove residual background trends from a bright as best as possible
-detrend = tess.detrend_transient()
+tess = tr.tessreduce(obs_list=obs,plot=False,reduce=True)
 ```
-![plot](./figs/detrend_comparison.png)
+![plot](./figs/fub_diff_diag.pdf)
 
 **OR**
 ```python
 import tessreduce as tr
-ra = 189.1385817
-dec = 11.2316535
-tess = tr.tessreduce(ra=ra,dec=dec)
+ra = 10.127
+dec = -50.687
+sector = 2
+tess = tr.tessreduce(ra=ra,dec=dec,sector=sector)
 tess.reduce()
 # If you want to remove residual background trends from a bright as best as possible
 detrend = tess.detrend_transient()
