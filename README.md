@@ -27,7 +27,7 @@ obs = tr.sn_lookup('sn2018fub')
 ```python
 tess = tr.tessreduce(obs_list=obs,plot=False,reduce=True)
 ```
-![plot](./figs/fub_diff_diag.pdf)
+![plot](./figs/fub.png)
 
 **OR**
 ```python
