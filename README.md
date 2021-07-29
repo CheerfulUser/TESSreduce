@@ -37,8 +37,6 @@ dec = -50.687
 sector = 2
 tess = tr.tessreduce(ra=ra,dec=dec,sector=sector)
 tess.reduce()
-# If you want to remove residual background trends from a bright as best as possible
-detrend = tess.detrend_transient()
 ```
 
 
