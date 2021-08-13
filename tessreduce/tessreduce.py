@@ -266,7 +266,7 @@ def image_sub(theta, image, ref):
 	dx, dy = theta
 	s = shift(image,([dx,dy]))
 	diff = abs(ref-s)
-	return np.nansum(diff[5:-5,5:-5])
+	return np.nansum(diff[20:-20,20:-20])
 
 def difference_shifts(image,ref):
 	"""
@@ -1334,10 +1334,10 @@ class tessreduce():
 			light = lk.LightCurve(time=Time(lc[0], format='mjd'),flux=lc[1] * unit)
 		return light
 
-	def reduce(self, aper = None, align = True, parallel = True, calibrate=True,
+	def reduce(self, aper = None, align = None, parallel = True, calibrate=True,
 				bin_size = 0, plot = True, mask_scale = 1,
 				diff_lc = True,diff=True,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
-				moving_mask=None):
+				moving_mask=None,mask=None,double_shift=True):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
@@ -1394,8 +1394,10 @@ class tessreduce():
 			small = True	
 		else:
 			small = False
+		if align is not None:
+			self.align = align
 
-		if small & align:
+		if small & self.align:
 			print('Unlikely to get good shifts from a small tpf, so shift has been set to False')
 			self.align = False
 
@@ -1403,14 +1405,19 @@ class tessreduce():
 		if self.verbose > 0:
 			print('made reference')
 		# make source mask
-		self.make_mask(maglim=18,strapsize=4,scale=mask_scale)#Source_mask(ref,grid=0)
-		frac = np.nansum((self.mask == 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
-		#print('mask frac ',frac)
-		if frac < 0.05:
-			print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-			self.make_mask(maglim=15,strapsize=4,scale=0.5)
-		if self.verbose > 0:
-			print('made source mask')
+		if mask is None:
+			self.make_mask(maglim=18,strapsize=4,scale=mask_scale)#Source_mask(ref,grid=0)
+			frac = np.nansum((self.mask == 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
+			#print('mask frac ',frac)
+			if frac < 0.05:
+				print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
+				self.make_mask(maglim=15,strapsize=4,scale=0.5)
+			if self.verbose > 0:
+				print('made source mask')
+		else:
+			self.mask = mask
+			if self.verbose > 0:
+				print('assigned source mask')
 		# calculate background for each frame
 		if self.verbose > 0:
 			print('calculating background')
@@ -1438,10 +1445,11 @@ class tessreduce():
 				print('calculating centroids')
 			try:
 				self.centroids_DAO()
-				#self.shift_images()
-				#self.ref = deepcopy(self.flux[self.ref_ind])
-				#self.fit_shift()
-				#self.fit_shift()
+				if double_shift:
+					self.shift_images()
+					self.ref = deepcopy(self.flux[self.ref_ind])
+					self.fit_shift()
+				
 			except:
 				print('Something went wrong, switching to serial')
 				self.parallel = False
