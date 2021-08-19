@@ -1951,7 +1951,7 @@ class tessreduce():
 		else:
 			d = SM_to_TESS_mag(d,ebv=self.ebv)
 
-
+		print('!!!!')
 		flux = []
 		eflux = []
 		eind = np.zeros(len(d))
@@ -1964,7 +1964,10 @@ class tessreduce():
 			m2[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
 			m2 = convolve(m2,np.ones((7,7))) - convolve(m2,np.ones((5,5)))
 			eflux += [np.nansum(tflux*m2,axis=(1,2))]
-			if np.nansum(self.ref*m2) > 100:
+			mag = -2.5*np.log10(np.nansum((self.ref*m2))) + 20.44
+			print('!!!!!',mag)
+			if (mag <= d.tmag.values[i]+1):# | (mag <= 17):
+				print('?????',mag)
 				eind[i] = 1
 		eind = eind == 0
 		flux = np.array(flux)
