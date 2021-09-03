@@ -469,7 +469,7 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True):
 		print('No TESS coverage')
 		return None
 
-def spacetime_lookup(ra,dec,time,buffer=0,print_table=True):
+def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
 	discovery/max times and coordinates.
@@ -498,6 +498,10 @@ def spacetime_lookup(ra,dec,time,buffer=0,print_table=True):
 	tr_list : list
 		list of ra, dec, and sector that can be put into tessreduce.
 	"""
+	if time is None:
+		print('!!! WARNING no MJD time specified, using default of 59000')
+		time = 59000
+
 	if type(ra) == str:
 		c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
 		ra = c.ra.deg
@@ -662,7 +666,9 @@ class tessreduce():
 			Size = self.size
 		
 		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=Size,download_dir=cache_dir)
-	
+		if tpf is None:
+			m = 'Failure in TESScut api, not sure why.'
+			raise ValueError(m)
 		self.tpf  = tpf
 		self.flux = strip_units(tpf.flux)
 		self.wcs  = tpf.wcs
@@ -1337,7 +1343,7 @@ class tessreduce():
 	def reduce(self, aper = None, align = None, parallel = True, calibrate=True,
 				bin_size = 0, plot = True, mask_scale = 1,
 				diff_lc = True,diff=True,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
-				moving_mask=None,mask=None,double_shift=True):
+				moving_mask=None,mask=None,double_shift=False):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
@@ -1951,7 +1957,7 @@ class tessreduce():
 		else:
 			d = SM_to_TESS_mag(d,ebv=self.ebv)
 
-		print('!!!!')
+		
 		flux = []
 		eflux = []
 		eind = np.zeros(len(d))
@@ -1965,9 +1971,8 @@ class tessreduce():
 			m2 = convolve(m2,np.ones((7,7))) - convolve(m2,np.ones((5,5)))
 			eflux += [np.nansum(tflux*m2,axis=(1,2))]
 			mag = -2.5*np.log10(np.nansum((self.ref*m2))) + 20.44
-			print('!!!!!',mag)
+			
 			if (mag <= d.tmag.values[i]+1):# | (mag <= 17):
-				print('?????',mag)
 				eind[i] = 1
 		eind = eind == 0
 		flux = np.array(flux)
@@ -2043,12 +2048,14 @@ class tessreduce():
 		if zp_single:
 			mzp = med#averager.mean
 			stdzp = std#averager.stdev
+			compare = abs(mzp-20.44) > 2
 
 		else:
 			zp = np.nanmedian(zp,axis=0)
 			mzp,stdzp = smooth_zp(zp, self.tpf.time.mjd)
+			compare = (abs(mzp-20.44) > 2).any()
 
-		if (abs(mzp-20.44) > 2).all():
+		if compare:
 			print('!!!WARNING!!! field calibration is unreliable, using the default zp = 20.44')
 			self.zp = 20.44
 			self.zp_e = 0
