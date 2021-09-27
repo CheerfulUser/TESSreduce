@@ -1935,7 +1935,7 @@ class tessreduce():
 		pos_ind = (1 < x) & (x < self.ref.shape[0]-2) & (1 < y) & (y < self.ref.shape[0]-2)
 		d = d.iloc[pos_ind]
 
-			# account for crowding 
+		# account for crowding 
 		for i in range(len(d)):
 			x = d.col.values[i]
 			y = d.row.values[i]
@@ -1952,6 +1952,14 @@ class tessreduce():
 			if system == 'ps1':
 				d['ymag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.ymag.values,25))) + 25
 		# convert to tess mags
+		if len(d) < 10:
+			print('!!!WARNING!!! field calibration is unreliable, using the default zp = 20.44')
+			self.zp = 20.44
+			self.zp_e = 0.5
+			# backup for when messing around with flux later
+			self.tzp = 20.44
+			self.tzp_e = 0.5
+			return
 		if system == 'ps1':
 			d = PS1_to_TESS_mag(d,ebv=self.ebv)
 		else:
@@ -1983,6 +1991,9 @@ class tessreduce():
 
 		#calculate the zeropoint
 		zp = d.tmag.values[:,np.newaxis] + 2.5*np.log10(flux) 
+		if len(zp) == 0:
+			zp = np.array([20.44])
+		print(d)
 		mzp = np.zeros_like(zp[0]) * np.nan
 		stdzp = np.zeros_like(zp[0]) * np.nan
 		for i in range(zp.shape[1]):
@@ -2058,10 +2069,10 @@ class tessreduce():
 		if compare:
 			print('!!!WARNING!!! field calibration is unreliable, using the default zp = 20.44')
 			self.zp = 20.44
-			self.zp_e = 0
+			self.zp_e = 0.5
 			# backup for when messing around with flux later
 			self.tzp = 20.44
-			self.tzp_e = 0
+			self.tzp_e = 0.5
 		else:
 			self.zp = mzp
 			self.zp_e = stdzp
