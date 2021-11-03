@@ -885,6 +885,7 @@ class tessreduce():
 			plt.xlabel('Time (MJD)',fontsize=15)
 			plt.legend()
 			#plt.tight_layout()
+			plt.show()
 			if savename is not None:
 				plt.savefig(savename+'_disp.pdf', bbox_inches = "tight")
 		
@@ -951,6 +952,7 @@ class tessreduce():
 			plt.xlabel('Time (MJD)',fontsize=15)
 			plt.legend()
 			#plt.tight_layout()
+			plt.show()
 			if savename is not None:
 				plt.savefig(savename+'_disp_corr.pdf', bbox_inches = "tight")
 
@@ -1164,6 +1166,7 @@ class tessreduce():
 		
 		if plot:
 			self.dif_diag_plot(ap_tar,ap_sky,lc = lc,sky=sky,data=data)
+			plt.show()
 			if savename is not None:
 				plt.savefig(savename + '_diff_diag.pdf', bbox_inches = "tight")
 		return lc, sky
@@ -1875,6 +1878,99 @@ class tessreduce():
 
 
 	### serious calibration 
+	def isolated_star_lcs(self):
+		if self.dec < -30:
+			if self.verbose > 0:
+				print('Target is below -30 dec, calibrating to SkyMapper photometry.')
+			table = Get_Catalogue(self.tpf,Catalog='skymapper')
+			table = Skymapper_df(table)
+			system = 'skymapper'
+		else:
+			if self.verbose > 0:
+				print('Target is above -30 dec, calibrating to PS1 photometry.')
+			table = Get_Catalogue(self.tpf,Catalog='ps1')
+			system = 'ps1'
+
+		if self.diff:
+			tflux = self.flux + self.ref
+		else:
+			tflux = self.flux
+			
+
+		ind = (table.imag.values < 19) & (table.imag.values > 14)
+		tab = table.iloc[ind]
+		x,y = self.wcs.all_world2pix(tab.RAJ2000.values,tab.DEJ2000.values,0)
+		tab['col'] = x
+		tab['row'] = y
+		
+		e, dat = Tonry_reduce(tab,system=system)
+		self.ebv = e[0]
+
+		gr = (dat.gmag - dat.rmag).values
+		ind = (gr < 1) & (dat.imag.values < 17)
+		d = dat.iloc[ind]
+		x,y = self.wcs.all_world2pix(d.RAJ2000.values,d.DEJ2000.values,0)
+		d['col'] = x
+		d['row'] = y
+		pos_ind = (1 < x) & (x < self.ref.shape[0]-2) & (1 < y) & (y < self.ref.shape[0]-2)
+		d = d.iloc[pos_ind]
+
+		# account for crowding 
+		for i in range(len(d)):
+			x = d.col.values[i]
+			y = d.row.values[i]
+			
+			dist = np.sqrt((tab.col.values-x)**2 + (tab.row.values-y)**2)
+			
+			ind = dist < 1.5
+			close = tab.iloc[ind]
+			
+			d['gmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.gmag.values,25))) + 25
+			d['rmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.rmag.values,25))) + 25
+			d['imag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.imag.values,25))) + 25
+			d['zmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.zmag.values,25))) + 25
+			if system == 'ps1':
+				d['ymag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.ymag.values,25))) + 25
+		# convert to tess mags
+		if len(d) < 10:
+			print('!!!WARNING!!! field calibration is unreliable, using the default zp = 20.44')
+			self.zp = 20.44
+			self.zp_e = 0.5
+			# backup for when messing around with flux later
+			self.tzp = 20.44
+			self.tzp_e = 0.5
+			return
+		if system == 'ps1':
+			d = PS1_to_TESS_mag(d,ebv=self.ebv)
+		else:
+			d = SM_to_TESS_mag(d,ebv=self.ebv)
+
+		
+		flux = []
+		eflux = []
+		eind = np.zeros(len(d))
+		for i in range(len(d)):
+			mask = np.zeros_like(self.ref)
+			mask[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
+			mask = convolve(mask,np.ones((3,3)))
+			flux += [np.nansum(tflux*mask,axis=(1,2))]
+			m2 = np.zeros_like(self.ref)
+			m2[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
+			m2 = convolve(m2,np.ones((7,7))) - convolve(m2,np.ones((5,5)))
+			eflux += [np.nansum(tflux*m2,axis=(1,2))]
+			mag = -2.5*np.log10(np.nansum((self.ref*m2))) + 20.44
+			
+			if (mag <= d.tmag.values[i]+1):# | (mag <= 17):
+				eind[i] = 1
+		eind = eind == 0
+		flux = np.array(flux)
+		eflux = np.array(eflux)
+		#eind = abs(eflux) > 20
+		flux[~eind] = np.nan
+
+		return flux[eind], d.iloc[eind]
+
+
 	def field_calibrate(self,zp_single=True,plot=None,savename=None):
 		"""
 		In-situ flux calibration for TESSreduce light curves. This uses the
@@ -2007,7 +2103,7 @@ class tessreduce():
 		zp = d.tmag.values[:,np.newaxis] + 2.5*np.log10(flux) 
 		if len(zp) == 0:
 			zp = np.array([20.44])
-		print(d)
+		
 		mzp = np.zeros_like(zp[0]) * np.nan
 		stdzp = np.zeros_like(zp[0]) * np.nan
 		for i in range(zp.shape[1]):
@@ -2030,6 +2126,7 @@ class tessreduce():
 			plt.ylabel('Row',fontsize=15)
 			plt.xlabel('Column',fontsize=15)
 			plt.colorbar()
+			plt.show()
 			if savename is not None:
 				plt.savefig(savename + 'cal_sources.pdf', bbox_inches = "tight")
 
@@ -2067,6 +2164,7 @@ class tessreduce():
 			plt.ylabel('Zeropoint',fontsize=15)
 			plt.xlabel('MJD',fontsize=15)
 			plt.tight_layout()
+			plt.show()
 			if savename is not None:
 				plt.savefig(savename + 'cal_zp.pdf', bbox_inches = "tight")
 
