@@ -1316,6 +1316,19 @@ class tessreduce():
 		ax.legend()
 		return
 
+	def save_lc(self,filename):
+		"""
+		Saves the current lightcurve out to the specified format, doesn't include the units.
+		
+		"""
+
+		lc = self.to_lightkurve()
+		format='csv'
+		if format == 'csv':
+			lc.to_csv(filename)
+		
+
+
 	def to_lightkurve(self,lc=None,flux_unit=None):
 		"""
 		Convert TESSreduce light curve into lighkurve.lightcurve object. Flux units are recorded
