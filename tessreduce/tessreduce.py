@@ -1059,7 +1059,7 @@ class tessreduce():
 
 
 	def diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
-				sky_in=5,sky_out=9,plot=None,savename=None,mask=None):
+				sky_in=5,sky_out=9,plot=None,savename=None,mask=None,diff = True):
 		"""
 		Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
 		then it degaults to the centre. Sky flux is calculated with an annulus aperture surrounding 
@@ -1144,8 +1144,8 @@ class tessreduce():
 		ind = temp < np.percentile(temp,40)
 		med = np.nanmedian(data[ind],axis=0)
 		med = np.nanmedian(data,axis=0)
-		if not self.diff:
-			data = data - self.ref
+		if not diff:
+			data = data + self.ref
 		if mask is not None:
 			ap_sky = mask
 			ap_sky[ap_sky==0] = np.nan
@@ -1370,9 +1370,23 @@ class tessreduce():
 			light = lk.LightCurve(time=Time(lc[0], format='mjd'),flux=lc[1] * unit)
 		return light
 
-	def reduce(self, aper = None, align = None, parallel = True, calibrate=True,
-				bin_size = 0, plot = True, mask_scale = 1,
-				diff_lc = True,diff=True,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
+	def _update_reduction_params(self,align,parallel,calibrate,plot,diff_lc,diff,verbose):
+		if align is not None:
+			self.align = align
+		if parallel is not None:
+			self.parallel = parallel
+		if verbose is not None:
+			self.verbose = verbose
+		if calibrate is not None:
+			self.calibrate = calibrate
+		if diff is not None:
+			self.diff = diff
+
+
+
+	def reduce(self, aper = None, align = None, parallel = None, calibrate=None,
+				bin_size = 0, plot = None, mask_scale = 1,
+				diff_lc = None,diff=None,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
 				moving_mask=None,mask=None,double_shift=False):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
@@ -1421,17 +1435,12 @@ class tessreduce():
 				light curve
 		"""
 		# make reference
-		if parallel is not None:
-			self.parallel = parallel
-		if verbose is not None:
-			self.verbose = verbose
+		self._update_reduction_params(align, parallel, calibrate, plot, diff_lc, diff, verbose)
 
 		if (self.flux.shape[1] < 30) & (self.flux.shape[2] < 30):
 			small = True	
 		else:
 			small = False
-		if align is not None:
-			self.align = align
 
 		if small & self.align:
 			print('Unlikely to get good shifts from a small tpf, so shift has been set to False')
@@ -1492,8 +1501,7 @@ class tessreduce():
 				self.centroids_DAO()
 				#self.fit_shift()
 		
-		if diff is not None:
-			self.diff = diff
+		
 		if not self.diff:
 			if self.align:
 				self.shift_images()
@@ -1544,15 +1552,13 @@ class tessreduce():
 			self.flux -= self.bkg
 
 
-		if calibrate:
+		if self.calibrate:
 			print('Field calibration')
 			self.field_calibrate()
 
-		if diff_lc:
-			self.lc, self.sky = self.diff_lc(plot=True,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
-		else:
-			self.make_lc(aperture=aper,bin_size=bin_size,
-								zeropoint = self.zp,scale=scale)#,normalise=False)
+		
+		self.lc, self.sky = self.diff_lc(plot=True,diff=self.diff_lc,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
+		
 		
 
 	def make_lc(self,aperture = None,bin_size=0,zeropoint=None,scale='counts',clip = False):
