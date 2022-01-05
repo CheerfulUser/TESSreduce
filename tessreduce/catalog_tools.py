@@ -41,16 +41,20 @@ def Get_Catalogue(tpf, Catalog = 'gaia'):
 	if Catalog == 'gaia':
 		catalog = "I/345/gaia2"
 	elif Catalog == 'dist':
-		catalog = "I/347/gaia2dis"
+		catalog = "I/350/gaiaedr3"
 	elif Catalog == 'ps1':
 		catalog = "II/349/ps1"
 	elif Catalog == 'skymapper':
 		catalog = 'II/358/smss'
 	else:
 		raise ValueError("{} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
+	if Catalog == 'gaia':
+		result = Vizier.query_region(c1, catalog=[catalog],
+                             		 radius=Angle(1890, "arcsec"),column_filters={'Gmag':'<19'})
+	else:
+		result = Vizier.query_region(c1, catalog=[catalog],
+									 radius=Angle(np.max(tpf.shape[1:]) * pix_scale, "arcsec"))
 
-	result = Vizier.query_region(c1, catalog=[catalog],
-								 radius=Angle(np.max(tpf.shape[1:]) * pix_scale, "arcsec"))
 	no_targets_found_message = ValueError('Either no sources were found in the query region '
 										  'or Vizier is unavailable')
 	#too_few_found_message = ValueError('No sources found brighter than {:0.1f}'.format(magnitude_limit))
@@ -86,6 +90,7 @@ def Get_Gaia(tpf, magnitude_limit = 18, Offset = 10):
 			'row','col']
 
 	result =  Get_Catalogue(tpf, Catalog = 'gaia')
+
 	result = result[result.Gmag < magnitude_limit]
 	if len(result) == 0:
 		raise no_targets_found_message
