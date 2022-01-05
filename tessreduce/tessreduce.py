@@ -23,6 +23,7 @@ from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.interpolate import UnivariateSpline
+from scipy.stats import pearsonr
 
 from photutils import centroid_com
 from photutils import DAOStarFinder
@@ -122,15 +123,15 @@ def Source_mask(Data, grid=0):
 	# catch for if there are no pixels that escape the mask
 	if np.nansum(np.isfinite(data)) > 10:
 		if grid > 0:
-			data[data<0] = np.nan
-			data[data >= np.percentile(data,95)] =np.nan
+			data[data<0] = 0
+			data[data >= np.nanpercentile(data,95)] = np.nan
 			grid = np.zeros_like(data)
 			size = grid
 			for i in range(grid.shape[0]//size):
 				for j in range(grid.shape[1]//size):
 					section = data[i*size:(i+1)*size,j*size:(j+1)*size]
 					section = section[np.isfinite(section)]
-					lim = np.percentile(section,1)
+					lim = np.nanpercentile(section,1)
 					grid[i*size:(i+1)*size,j*size:(j+1)*size] = lim
 			thing = data - grid
 		else:
@@ -172,7 +173,7 @@ def unknown_mask(image):
 	return mask
 
 
-def Smooth_bkg(data, extrapolate = True):
+def Smooth_bkg(data, extrapolate = True,gauss_smooth=1):
 	"""
 	Interpolate over the masked objects to derive a background estimate. 
 
@@ -212,7 +213,7 @@ def Smooth_bkg(data, extrapolate = True):
 			if extrapolate:
 				estimate[np.isnan(estimate)] = nearest[np.isnan(estimate)]
 			
-			estimate = gaussian_filter(estimate,1.5)
+			estimate = gaussian_filter(estimate,gauss_smooth)
 			#estimate = median_filter(estimate,5)
 		else:
 			estimate = np.zeros_like(data) * np.nan	
@@ -393,6 +394,15 @@ def smooth_zp(zp,time):
 	return smoothed, err
 
 
+def cor_minimizer(coeff,pix_lc,bkg_lc):
+	lc = pix_lc - coeff * bkg_lc
+	ind = np.isfinite(lc)
+	bkgnorm = bkg_lc/np.nanmax(bkg_lc)
+	pixnorm= (lc - np.nanmedian(lc))
+	pixnorm = pixnorm / np.nanmax(abs(pixnorm))
+	corr = pearsonr(pixnorm[ind],bkgnorm[ind])[0]
+	return abs(corr)
+
 def sn_lookup(name,time='disc',buffer=0,print_table=True):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
@@ -561,8 +571,8 @@ def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True):
 class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,reduce=False,
-				 align=True,parallel=True,diff=True,plot=False,savename=None,quality_bitmask='default',verbose=1,
-				 cache_dir=None,calibrate=True):
+				 align=True,parallel=True,diff=True,plot=False,corr_correction=True,savename=None,
+				 quality_bitmask='default',verbose=1,cache_dir=None,calibrate=True):
 		"""
 		Class to reduce tess data.
 		"""
@@ -575,8 +585,11 @@ class tessreduce():
 		self.verbose = verbose
 		self.parallel = parallel
 		self.calibrate = calibrate
+		self.corr_correction = corr_correction
 		self.diff = diff
 		self.tpf = tpf
+		if tpf is not None:
+			self.size = tpf.flux.shape[1]
 
 		# Plotting
 		self.plot = plot
@@ -709,7 +722,7 @@ class tessreduce():
 		fullmask = mask | (mm*1)
 		self.mask = fullmask
 
-	def background(self):
+	def background(self,calc_qe=True):
 		"""
 		Calculate the background for all frames in the TPF.
 		"""
@@ -728,7 +741,8 @@ class tessreduce():
 					bkg_smth[i] = Smooth_bkg(flux[i]*m)
 		else:
 			print('Small tpf, using percentile cut background')
-			bkg_smth = self.small_background()
+			self.small_background()
+			bkg_smth = self.bkg
 
 		strap = (self.mask == 4) * 1.0
 		strap[strap==0] = np.nan
@@ -737,19 +751,21 @@ class tessreduce():
 			strap = strap[self.ref_ind]
 		mask = ((self.mask & 1) == 0) * 1.0
 		mask[mask==0] = np.nan
-
-		data = strip_units(self.flux) * mask
-		qes = np.zeros_like(bkg_smth) * np.nan
-		for i in range(data.shape[0]):
-			s = (data[i]*strap)/bkg_smth[i]
-			s[s > np.percentile(s,50)] = np.nan
-			q = np.zeros_like(s) * np.nan
-			for j in range(s.shape[1]):
-				ind = ~sigma_clip(s[:,j]).mask
-				q[:,j] = np.nanmedian(abs(s[ind,j]))
-			q[np.isnan(q)] =1 
-			qes[i] = q
-		bkg = bkg_smth * qes
+		if calc_qe:
+			data = strip_units(self.flux) * mask
+			qes = np.zeros_like(bkg_smth) * np.nan
+			for i in range(data.shape[0]):
+				s = (data[i]*strap)/bkg_smth[i]
+				s[s > np.nanpercentile(s,50)] = np.nan
+				q = np.zeros_like(s) * np.nan
+				for j in range(s.shape[1]):
+					ind = ~sigma_clip(s[:,j]).mask
+					q[:,j] = np.nanmedian(abs(s[ind,j]))
+				q[np.isnan(q)] =1 
+				qes[i] = q
+			bkg = bkg_smth * qes
+		else:
+			bkg = bkg_smth
 		
 		self.qe = qes 
 		self.bkg = bkg 
@@ -758,7 +774,7 @@ class tessreduce():
 	def small_background(self):
 		bkg = np.zeros_like(self.flux)
 		flux = strip_units(self.flux)
-		lim = np.percentile(flux,10,axis=(1,2))
+		lim = 2*np.nanmin(flux,axis=(1,2))#np.nanpercentile(flux,1,axis=(1,2))
 		ind = flux > lim[:,np.newaxis,np.newaxis]
 		flux[ind] = np.nan
 		val = np.nanmedian(flux,axis=(1,2))
@@ -1155,7 +1171,7 @@ class tessreduce():
 			tar = np.nansum(data*ap_tar,axis=(1,2))
 		else:
 			tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
-		tar -= sky_med * tar_ap**2
+		#tar -= sky_med * tar_ap**2
 		tar_err = sky_std #* tar_ap**2
 		#tar[tar_err > 100] = np.nan
 		#sky_med[tar_err > 100] = np.nan
@@ -1221,8 +1237,8 @@ class tessreduce():
 		nonan1 = np.isfinite(d)
 		nonan2 = np.isfinite(d*ap)
 		plt.imshow(data[maxind],origin='lower',
-				   vmin=np.percentile(d[nonan1],16),
-				   vmax=np.percentile(d[nonan2],80),
+				   vmin=np.nanpercentile(d,16),
+				   vmax=np.nanpercentile(d[nonan2],80),
 				   aspect='auto')
 		cbar = plt.colorbar()
 		cbar.set_label('$e^-/s$',fontsize=15)
@@ -1370,7 +1386,11 @@ class tessreduce():
 			light = lk.LightCurve(time=Time(lc[0], format='mjd'),flux=lc[1] * unit)
 		return light
 
-	def _update_reduction_params(self,align,parallel,calibrate,plot,diff_lc,diff,verbose):
+	def _update_reduction_params(self,align,parallel,calibrate,plot,diff_lc,diff,verbose,
+								 corr_correction):
+		"""
+		Updates relevant parameters for if reduction functions are called out of order.
+		"""
 		if align is not None:
 			self.align = align
 		if parallel is not None:
@@ -1381,13 +1401,36 @@ class tessreduce():
 			self.calibrate = calibrate
 		if diff is not None:
 			self.diff = diff
+		if corr_correction is not None:
+			self.corr_correction = corr_correction
 
+
+	def correlation_corrector(self):
+		"""
+		A final corrector that removes the final ~0.5% of the background from pixels that have been 
+		interpolated over. Assuning the previously calculated background is a reasonable estimate 
+		of what the background is like this function finds the coefficient that when multiplied to the 
+		background and subtracted from the flux minimises the correlation between the background and 
+		the pixel light curve. This function saves the correlation correction as corr_coeff, and 
+		applies the correction to the flux, for all pixels that aren't included as sky pixels. 
+			This process seems to do a good job at removing some of the residual background structure 
+		that is present in some pixels. 
+
+		"""
+		x,y = np.where(self.mask > 0)
+		coeff = np.zeros_like(self.flux[0])
+		for i in range(len(x)):
+			x0 =[1e-3]
+			fit = minimize(cor_minimizer,x0,(self.flux[:,x[i],y[i]],self.bkg[:,x[i],y[i]]))
+			coeff[x[i],y[i]] = fit.x
+		self.corr_coeff = coeff
+		self.flux -= coeff[np.newaxis,:,:] * self.bkg
 
 
 	def reduce(self, aper = None, align = None, parallel = None, calibrate=None,
 				bin_size = 0, plot = None, mask_scale = 1,
 				diff_lc = None,diff=None,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
-				moving_mask=None,mask=None,double_shift=False):
+				moving_mask=None,mask=None,double_shift=False,corr_correction=True):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
@@ -1435,7 +1478,7 @@ class tessreduce():
 				light curve
 		"""
 		# make reference
-		self._update_reduction_params(align, parallel, calibrate, plot, diff_lc, diff, verbose)
+		self._update_reduction_params(align, parallel, calibrate, plot, diff_lc, diff, verbose,corr_correction)
 
 		if (self.flux.shape[1] < 30) & (self.flux.shape[2] < 30):
 			small = True	
@@ -1514,6 +1557,7 @@ class tessreduce():
 				print('!!Re-running for difference image!!')
 			# reseting to do diffim 
 			self.flux = strip_units(self.tpf.flux)
+			self.flux = self.flux / self.qe
 
 			if self.align:
 				self.shift_images()
@@ -1550,6 +1594,10 @@ class tessreduce():
 				print('background')
 			self.background()
 			self.flux -= self.bkg
+			if self.corr_correction:
+				if self.verbose > 0:
+					print('Background correlation correction')
+				self.correlation_corrector()
 
 
 		if self.calibrate:
@@ -1634,8 +1682,9 @@ class tessreduce():
 		self.events : list
 			list of light curves for all identified events 
 		"""
-		lc = self.lc
+		lc = deepcopy(self.lc)
 		ind = np.isfinite(lc[1])
+		print
 		lc = lc[:,ind]
 		mask = Cluster_cut(lc,err=err,sig=sig)
 		outliers = Identify_masks(mask)
@@ -2084,10 +2133,10 @@ class tessreduce():
 		if len(d) < 10:
 			print('!!!WARNING!!! field calibration is unreliable, using the default zp = 20.44')
 			self.zp = 20.44
-			self.zp_e = 0.5
+			self.zp_e = 0.05
 			# backup for when messing around with flux later
 			self.tzp = 20.44
-			self.tzp_e = 0.5
+			self.tzp_e = 0.05
 			return
 		if system == 'ps1':
 			d = PS1_to_TESS_mag(d,ebv=self.ebv)
@@ -2468,7 +2517,6 @@ def Cat_mask(tpf,maglim=19,scale=1,strapsize=4,badpix=None):
 	wcs = tpf.wcs
 	image = tpf.flux[100]
 	image = strip_units(image)
-
 	gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
 	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
 	if tpf.dec > -30:
