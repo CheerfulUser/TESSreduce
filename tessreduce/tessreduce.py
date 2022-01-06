@@ -397,10 +397,10 @@ def smooth_zp(zp,time):
 def cor_minimizer(coeff,pix_lc,bkg_lc):
 	lc = pix_lc - coeff * bkg_lc
 	ind = np.isfinite(lc)
-	bkgnorm = bkg_lc/np.nanmax(bkg_lc)
-	pixnorm= (lc - np.nanmedian(lc))
-	pixnorm = pixnorm / np.nanmax(abs(pixnorm))
-	corr = pearsonr(pixnorm[ind],bkgnorm[ind])[0]
+	#bkgnorm = bkg_lc/np.nanmax(bkg_lc)
+	#pixnorm= (lc - np.nanmedian(lc))
+	#pixnorm = pixnorm / np.nanmax(abs(pixnorm))
+	corr = pearsonr(lc[ind],bkg_lc[ind])[0]
 	return abs(corr)
 
 def sn_lookup(name,time='disc',buffer=0,print_table=True):
@@ -722,11 +722,14 @@ class tessreduce():
 		fullmask = mask | (mm*1)
 		self.mask = fullmask
 
-	def background(self,calc_qe=True):
+	def background(self,calc_qe=True, strap_iso=True):
 		"""
 		Calculate the background for all frames in the TPF.
 		"""
-		m = (self.mask == 0) * 1.
+		if strap_iso:
+			m = (self.mask == 0) * 1.
+		else:
+			m = ((self.mask & 1) == 0) * 1.
 		m[m==0] = np.nan
 
 		if (self.flux.shape[1] > 30) & (self.flux.shape[2] > 30):
@@ -743,31 +746,30 @@ class tessreduce():
 			print('Small tpf, using percentile cut background')
 			self.small_background()
 			bkg_smth = self.bkg
-
-		strap = (self.mask == 4) * 1.0
-		strap[strap==0] = np.nan
-		# check if its a time varying mask
-		if len(strap.shape) == 3: 
-			strap = strap[self.ref_ind]
-		mask = ((self.mask & 1) == 0) * 1.0
-		mask[mask==0] = np.nan
-		if calc_qe:
-			data = strip_units(self.flux) * mask
-			qes = np.zeros_like(bkg_smth) * np.nan
-			for i in range(data.shape[0]):
-				s = (data[i]*strap)/bkg_smth[i]
-				s[s > np.nanpercentile(s,50)] = np.nan
-				q = np.zeros_like(s) * np.nan
-				for j in range(s.shape[1]):
-					ind = ~sigma_clip(s[:,j]).mask
-					q[:,j] = np.nanmedian(abs(s[ind,j]))
-				q[np.isnan(q)] =1 
-				qes[i] = q
-			bkg = bkg_smth * qes
-		else:
-			bkg = bkg_smth
 		
-		self.qe = qes 
+		if calc_qe:
+			strap = (self.mask == 4) * 1.0
+			strap[strap==0] = np.nan
+			# check if its a time varying mask
+			if len(strap.shape) == 3: 
+				strap = strap[self.ref_ind]
+			mask = ((self.mask & 1) == 0) * 1.0
+			mask[mask==0] = np.nan
+		
+			data = strip_units(self.flux) * mask
+			norm = self.flux / bkg_smth
+			straps = norm * ((self.mask & 4)>0)
+			limit = np.nanpercentile(straps,60,axis=1)
+			straps[limit[:,np.newaxis,:] < straps] = np.nan
+			straps[straps==0] = 1
+
+			value = np.nanmedian(straps,axis=1)
+
+			qe = np.ones_like(bkg_smth) * value[:,np.newaxis,:]
+			bkg = bkg_smth * qe
+			self.qe = qe
+		else:
+			bkg = np.array(bkg_smth)
 		self.bkg = bkg 
 
 
@@ -1334,7 +1336,7 @@ class tessreduce():
 
 	def save_lc(self,filename):
 		"""
-		Saves the current lightcurve out to the specified format, doesn't include the units.
+		Saves the current lightcurve out to csv format, doesn't include the units.
 		
 		"""
 
@@ -1405,7 +1407,7 @@ class tessreduce():
 			self.corr_correction = corr_correction
 
 
-	def correlation_corrector(self):
+	def correlation_corrector(self,limit=0):
 		"""
 		A final corrector that removes the final ~0.5% of the background from pixels that have been 
 		interpolated over. Assuning the previously calculated background is a reasonable estimate 
@@ -1419,18 +1421,33 @@ class tessreduce():
 		"""
 		x,y = np.where(self.mask > 0)
 		coeff = np.zeros_like(self.flux[0])
+		ind = []
+		# find the pixels where there is significant correlation
+		for i in range(len(x)):
+			flux = self.flux[:,x[i],y[i]]
+			bkg = self.bkg[:,x[i],y[i]]
+			nonan = np.isfinite(flux)
+			corr = pearsonr(flux[nonan],bkg[nonan])[0]
+			if abs(corr) > limit:
+				ind += [i]
+		if len(ind) < 2:
+			x = [x[ind]]; y = [y[ind]]
+		else:
+			x = x[ind]; y = y[ind]
+
+		# minimize correlation in selected pixels
 		for i in range(len(x)):
 			x0 =[1e-3]
 			fit = minimize(cor_minimizer,x0,(self.flux[:,x[i],y[i]],self.bkg[:,x[i],y[i]]))
 			coeff[x[i],y[i]] = fit.x
 		self.corr_coeff = coeff
-		self.flux -= coeff[np.newaxis,:,:] * self.bkg
+		#self.flux -= coeff[np.newaxis,:,:] * self.bkg
 
 
 	def reduce(self, aper = None, align = None, parallel = None, calibrate=None,
 				bin_size = 0, plot = None, mask_scale = 1,
 				diff_lc = None,diff=None,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
-				moving_mask=None,mask=None,double_shift=False,corr_correction=True):
+				moving_mask=None,mask=None,double_shift=False,corr_correction=None):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
@@ -1592,7 +1609,7 @@ class tessreduce():
 			# background
 			if self.verbose > 0:
 				print('background')
-			self.background()
+			self.background(calc_qe = False,strap_iso = False)
 			self.flux -= self.bkg
 			if self.corr_correction:
 				if self.verbose > 0:
