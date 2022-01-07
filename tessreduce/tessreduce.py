@@ -729,7 +729,7 @@ class tessreduce():
 		if strap_iso:
 			m = (self.mask == 0) * 1.
 		else:
-			m = ((self.mask & 1) == 0) * 1.
+			m = ((self.mask & 1 == 0) & (self.mask & 2 == 0) ) * 1.
 		m[m==0] = np.nan
 
 		if (self.flux.shape[1] > 30) & (self.flux.shape[2] > 30):
