@@ -1050,7 +1050,7 @@ class tessreduce():
 			err = deepcopy(lc[1]) * np.nan
 		t	= lc[0]
 		if time_bin is None:
-			bin_size = int(bin_size)
+			bin_size = int(frames)
 			lc = []
 			x = []
 			for i in range(int(len(flux)/bin_size)):
@@ -1075,6 +1075,57 @@ class tessreduce():
 			binlc = np.array([points,l,e])
 		return binlc
 
+
+	def bin_flux(self,flux=None,time_bin=6/24,frames = None):
+		"""
+		Bin a light curve to the desired duration specified by bin_size
+
+		Parameters
+		----------
+		flux : array
+			light curve in counts 
+
+		t : array
+			time array
+
+		bin_size : int
+			number of bins to average over
+
+		Returns
+		-------
+		lc : array
+			time averaged light curve
+		t[x] : array
+			time averaged time 
+		"""
+		if flux is None:
+			flux = self.flux
+
+		t = self.tpf.time.mjd
+
+		if time_bin is None:
+			bin_size = int(frames)
+			f = []
+			x = []
+			for i in range(int(len(flux)/bin_size)):
+				if np.isnan(flux[i*bin_size:(i*bin_size)+bin_size]).all():
+					f.append(np.nan)
+					x.append(int(i*bin_size+(bin_size/2)))
+				else:
+					f.append(np.nanmedian(flux[i*bin_size:(i*bin_size)+bin_size],axis=0))
+					x.append(int(i*bin_size+(bin_size/2)))
+			binf = np.array(f)
+			bint = np.array(x)
+		else:
+			
+			points = np.arange(t[0]+time_bin*.5,t[-1],time_bin)
+			time_inds = abs(points[:,np.newaxis] - t[np.newaxis,:]) <= time_bin/2
+			f = []
+			for i in range(len(points)):
+				f += [np.nanmedian(flux[time_inds[i]],axis=0)]
+			binf = np.array(f)
+			bint = np.array(points)
+		return binf, bint
 
 	def diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
 				sky_in=5,sky_out=9,plot=None,savename=None,mask=None,diff = True):
@@ -1407,7 +1458,7 @@ class tessreduce():
 			self.corr_correction = corr_correction
 
 
-	def correlation_corrector(self,limit=0):
+	def correlation_corrector(self,limit=0.2):
 		"""
 		A final corrector that removes the final ~0.5% of the background from pixels that have been 
 		interpolated over. Assuning the previously calculated background is a reasonable estimate 
@@ -1423,11 +1474,11 @@ class tessreduce():
 		coeff = np.zeros_like(self.flux[0])
 		ind = []
 		# find the pixels where there is significant correlation
+		flux = deepcopy(self.flux)
+		bkg = deepcopy(self.bkg)
 		for i in range(len(x)):
-			flux = self.flux[:,x[i],y[i]]
-			bkg = self.bkg[:,x[i],y[i]]
-			nonan = np.isfinite(flux)
-			corr = pearsonr(flux[nonan],bkg[nonan])[0]
+			nonan = np.isfinite(flux[:,x[i],y[i]])
+			corr = pearsonr(flux[nonan,x[i],y[i]],bkg[nonan,x[i],y[i]])[0]
 			if abs(corr) > limit:
 				ind += [i]
 		if len(ind) < 2:
@@ -1438,10 +1489,10 @@ class tessreduce():
 		# minimize correlation in selected pixels
 		for i in range(len(x)):
 			x0 =[1e-3]
-			fit = minimize(cor_minimizer,x0,(self.flux[:,x[i],y[i]],self.bkg[:,x[i],y[i]]))
+			fit = minimize(cor_minimizer,x0,(flux[:,x[i],y[i]],bkg[:,x[i],y[i]]))
 			coeff[x[i],y[i]] = fit.x
 		self.corr_coeff = coeff
-		#self.flux -= coeff[np.newaxis,:,:] * self.bkg
+		self.flux -= coeff[np.newaxis,:,:] * self.bkg
 
 
 	def reduce(self, aper = None, align = None, parallel = None, calibrate=None,
@@ -1861,7 +1912,8 @@ class tessreduce():
 		detrend[1,nonan] -= trends
 		return detrend
 
-	def detrend_stellar_var(self,lc=None,err=None,Mask=None,variable=False,sig = None, sig_up = 5, sig_low = 10, tail_length=''):
+	def detrend_stellar_var(self,lc=None,err=None,Mask=None,variable=False,sig = None, 
+							sig_up = 5, sig_low = 10, tail_length=''):
 		"""
 		Removes all long term stellar variability, while preserving flares. Input a light curve 
 		with shape (2,n) and it should work!
@@ -1898,7 +1950,7 @@ class tessreduce():
 		#lc[Mask] = np.nan
 		
 		if variable:
-			size = int(lc.shape[1] * 0.04)
+			size = int(lc.shape[1] * 0.08)
 			if size % 2 == 0: size += 1
 
 			finite = np.isfinite(lc[1])
