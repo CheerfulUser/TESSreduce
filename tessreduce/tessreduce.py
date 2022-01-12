@@ -1467,7 +1467,7 @@ class tessreduce():
 			self.corr_correction = corr_correction
 
 
-	def correlation_corrector(self,limit=0.2):
+	def correlation_corrector(self,limit=0.4):
 		"""
 		A final corrector that removes the final ~0.5% of the background from pixels that have been 
 		interpolated over. Assuning the previously calculated background is a reasonable estimate 
