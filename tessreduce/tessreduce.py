@@ -403,6 +403,15 @@ def cor_minimizer(coeff,pix_lc,bkg_lc):
 	corr = pearsonr(lc[ind],bkg_lc[ind])[0]
 	return abs(corr)
 
+
+def grads_rad(flux):
+	rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
+	return rad
+
+def grad_flux_rad(flux):
+	rad = np.sqrt(flux**2+np.gradient(flux)**2)
+	return rad
+
 def sn_lookup(name,time='disc',buffer=0,print_table=True):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
@@ -2012,6 +2021,54 @@ class tessreduce():
 		detrend = deepcopy(lc)
 		detrend[1,:] = lc[1,:] - trends
 		return detrend
+
+
+	def bin_interp(self,lc=None,time_bin=6/26):
+		if lc is None:
+			lc = self.lc
+		if lc.shape[0] > lc.shape[1]:
+			lc = lc.T
+		binned = self.bin_data(lc=lc,time_bin=time_bin)
+		finite = np.isfinite(binned[1])
+		f1 = interp1d(binned[0,finite], binned[1,finite], kind='linear',fill_value='extrapolate')
+		smooth = f1(lc[0])
+		return smooth
+
+
+	def detrend_star(self,lc=None):
+		if lc is None:
+			lc = self.lc
+		if lc.shape[0] > lc.shape[1]:
+			lc = lc.T
+		# clip outliers with grads 
+		raw_flux = lc[1]
+		rad = grads_rad(raw_flux)
+		ind = (rad > np.nanmedian(rad)+5*np.nanstd(rad))
+		flux = deepcopy(raw_flux)
+		flux[ind] = np.nan
+		smooth = self.bin_interp(lc = np.array([lc[0],flux]))
+		
+		sub = flux - smooth
+		
+		rad = grad_flux_rad(sub)
+		ind = rad > np.nanmedian(rad)+2*np.nanstd(rad)
+		
+		mask = ind * 1
+		mask = convolve(mask,np.ones((3))) > 0
+		
+		temp = deepcopy(lc)
+		temp[1,mask] = np.nan
+
+		size = int(lc.shape[1] * 0.05)
+		if size % 2 == 0: size += 1
+		finite = np.isfinite(temp[1])
+		smooth = savgol_filter(temp[1,finite],size,2)
+		f1 = interp1d(temp[0,finite], smooth, kind='linear',fill_value='extrapolate')
+		smooth = f1(temp[0])
+		
+		detrended = deepcopy(lc)
+		detrended[1] -= smooth
+		return detrended
 
 
 	### serious calibration 
