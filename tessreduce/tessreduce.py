@@ -641,7 +641,7 @@ class tessreduce():
 			self.wcs  = self.tpf.wcs
 			self.ra   = self.tpf.ra
 			self.dec  = self.tpf.dec
-			self.size = tpf.flux.shape[1]
+			self.size = self.tpf.flux.shape[1]
 
 		elif self.check_coord():
 			if self.verbose>0:
