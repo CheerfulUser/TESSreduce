@@ -597,8 +597,6 @@ class tessreduce():
 		self.corr_correction = corr_correction
 		self.diff = diff
 		self.tpf = tpf
-		if tpf is not None:
-			self.size = tpf.flux.shape[1]
 
 		# Plotting
 		self.plot = plot
@@ -643,6 +641,7 @@ class tessreduce():
 			self.wcs  = self.tpf.wcs
 			self.ra   = self.tpf.ra
 			self.dec  = self.tpf.dec
+			self.size = tpf.flux.shape[1]
 
 		elif self.check_coord():
 			if self.verbose>0:
@@ -1739,7 +1738,7 @@ class tessreduce():
 			lc[1,:] = -2.5*np.log10(lc[1,:]) + zeropoint
 		self.lc = lc
 
-	def lc_events(self,err=None,duration=10,sig=5):
+	def lc_events(self,lc = None,err=None,duration=10,sig=5):
 		"""
 		Use clustering to detect individual high SNR events in a light curve.
 		Clustering isn't incredibly robust, so it could be better.
@@ -1759,9 +1758,11 @@ class tessreduce():
 		self.events : list
 			list of light curves for all identified events 
 		"""
-		lc = deepcopy(self.lc)
+		if lc is None:
+			lc = deepcopy(self.lc)
+		if lc.shape[0] > lc.shape[1]:
+			lc = lc.T
 		ind = np.isfinite(lc[1])
-		print
 		lc = lc[:,ind]
 		mask = Cluster_cut(lc,err=err,sig=sig)
 		outliers = Identify_masks(mask)
