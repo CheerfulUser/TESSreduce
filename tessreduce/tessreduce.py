@@ -1316,7 +1316,7 @@ class tessreduce():
 
 		return
 
-	def plotter(self,lc=None,ax = None,ground=False,time_bin=6/24,xlim=None):
+	def plotter(self,lc=None,ax = None,ground=False,time_bin=6/24,xlims=None):
 		"""
 		Simple plotter for light curves. 
 
@@ -1388,9 +1388,9 @@ class tessreduce():
 				ax.errorbar(ztfg.mjd, ztfg.flux,yerr = ztfg.flux_e,ms=4, c='C2', fmt='o', label='ZTF g')
 				ax.errorbar(ztfr.mjd, ztfr.flux,yerr = ztfr.flux_e, ms=4, c='r', fmt='o', label='ZTF r')
 
-		if xlim is not None:
+		if xlims is not None:
 			try:
-				xmin, xmax = xlim
+				xmin, xmax = xlims
 			except:
 				m = 'xlim must have have shape 2 which are MJD times'
 				raise ValueError(m)
