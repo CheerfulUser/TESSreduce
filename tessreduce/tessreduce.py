@@ -1408,14 +1408,31 @@ class tessreduce():
 		ax.legend()
 		return
 
-	def save_lc(self,filename):
+	def save_lc(self,filename,time_bin=None):
 		"""
-		Saves the current lightcurve out to csv format, doesn't include the units.
+		Saves the current lightcurve out to csv format, doesn't include flux units.
+		
+		------
+		Inputs
+		------
+		filename : str
+			output name of the file
+		time_bin : float
+			Duration in days for binning the lightcurve. If none, no binning is done.
+
+
+
 		
 		"""
 
-		lc = self.to_lightkurve()
+		if time_bin is not None:
+			l = self.bin_data(time_bin=time_bin)
+		else:
+			l = self.lc
+
+		lc = self.to_lightkurve(lc = l)
 		format='csv'
+		filename = filename.split('.csv')[0]
 		if format == 'csv':
 			lc.to_csv(filename)
 		
