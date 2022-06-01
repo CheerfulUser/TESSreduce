@@ -25,7 +25,7 @@ from scipy.interpolate import griddata
 from scipy.interpolate import UnivariateSpline
 from scipy.stats import pearsonr
 
-from photutils import centroid_com
+from photutils.centroids import centroid_com
 from photutils import DAOStarFinder
 
 from astropy.stats import sigma_clipped_stats
@@ -396,7 +396,7 @@ def smooth_zp(zp,time):
 
 def cor_minimizer(coeff,pix_lc,bkg_lc):
 	lc = pix_lc - coeff * bkg_lc
-	ind = np.isfinite(lc)
+	ind = np.isfinite(lc) & np.isfinite(bkg_lc)
 	#bkgnorm = bkg_lc/np.nanmax(bkg_lc)
 	#pixnorm= (lc - np.nanmedian(lc))
 	#pixnorm = pixnorm / np.nanmax(abs(pixnorm))
@@ -1517,7 +1517,7 @@ class tessreduce():
 		flux = deepcopy(self.flux)
 		bkg = deepcopy(self.bkg)
 		for i in range(len(x)):
-			nonan = np.isfinite(flux[:,x[i],y[i]])
+			nonan = np.isfinite(flux[:,x[i],y[i]]) & np.isfinite(bkg[:,x[i],y[i]])
 			corr = pearsonr(flux[nonan,x[i],y[i]],bkg[nonan,x[i],y[i]])[0]
 			if abs(corr) > limit:
 				ind += [i]
