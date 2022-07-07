@@ -57,7 +57,7 @@ tess.plotter()
 ![plot](./figs/fub_cal.png)
 
 
-There are a lot of other functions burried in TESSreduce which currently aren't well documented, so for more information contact me at: rridden@stsci.edu
+There are a lot of other functions burried in TESSreduce which currently aren't well documented, so for more information contact me at: ryan.ridden@canterbiry.ac.nz
 
 # Citing TESSreduce
 
