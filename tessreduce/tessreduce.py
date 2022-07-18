@@ -2425,6 +2425,13 @@ class tessreduce():
 		"""
 		Convert the TESS lc into magnitude space.
 		This is non reversible, since negative values will be lost.
+
+		Inputs:
+			zp: zeropoint to use for conversion. If None, use the default zp from the object.
+			zp_e: error on the zeropoint to use for conversion. If None, use the default zp_e from the object.
+		
+		Outputs:
+			lc: lightcurve in magnitude space.
 		"""
 		if (zp is None) & (self.zp is not None):
 			zp = self.zp
@@ -2437,10 +2444,14 @@ class tessreduce():
 		mag = -2.5*np.log10(self.lc[1]) + zp
 		mag_e = ((2.5/np.log(10) * self.lc[2]/self.lc[1])**2 + zp_e**2)
 
-		self.lc[1] = mag
-		self.lc[2] = mag_e
-		self.lc_units = 'AB mag'
-		return
+		lc = deepcopy(self.lc)
+		lc[1] = mag
+		lc[2] = mag_e
+
+		#self.lc[1] = mag
+		#self.lc[2] = mag_e
+		#self.lc_units = 'AB mag'
+		return lc
 
 	def to_flux(self,zp=None,zp_e=0,flux_type='mjy',plot=False):
 		"""
