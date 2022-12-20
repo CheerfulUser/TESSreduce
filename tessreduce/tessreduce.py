@@ -249,7 +249,11 @@ def Calculate_shifts(data,mx,my,daofind):
 	shifts = np.zeros((2,len(mx))) * np.nan
 	if np.nansum(data) > 0:
 		mean, med, std = sigma_clipped_stats(data, sigma=3.0)
-		s = daofind(data - med)
+		try:
+			s = daofind(data - med)
+		except:
+			s = None
+			print('bad frame')
 		if type(s) != type(None):
 			x = s['xcentroid']
 			y = s['ycentroid']
@@ -726,8 +730,16 @@ class tessreduce():
 		mm[np.isnan(mm)] = 0
 		mm = mm.astype(int)
 		mm = abs(mm-1)
+		#block out center 
+		c1 = data.shape[1] // 2
+		c2 = data.shape[2] // 2
+		cmask = np.zeros_like(mm)
+		cmask[c1,c2] = 1
+		kern = np.ones((5,5))
+		cmask = convolve(cmask,kern)
+		mm = (mm*1) | cmask
 
-		fullmask = mask | (mm*1)
+		fullmask = mask | mm
 		self.mask = fullmask
 
 	def background(self,calc_qe=True, strap_iso=True):
@@ -1687,7 +1699,7 @@ class tessreduce():
 				self.make_mask(maglim=15,strapsize=4,scale=0.5)
 			# assuming that the target is in the centre, so masking it out 
 			m_tar = np.zeros_like(self.mask,dtype=int)
-			m_tar[self.size//2,self.size//2]= 1
+			m_tar[self.ref.shape[0]//2,self.ref.shape[1]//2]= 1
 			m_tar = convolve(m_tar,np.ones((5,5)))
 			self.mask = self.mask | m_tar
 			if moving_mask is not None:
