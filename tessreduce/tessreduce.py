@@ -137,7 +137,7 @@ def Source_mask(Data, grid=0):
 		else:
 			thing = data
 		ind = np.isfinite(thing)
-		mask = ((thing <= np.percentile(thing[ind],95,axis=0)) |
+		mask = ((thing <= np.percentile(thing[ind],95,axis=0)) &
 			   (thing <= np.percentile(thing[ind],10))) * 1.
 	else:
 		mask = np.zeros_like(data)
@@ -735,7 +735,7 @@ class tessreduce():
 		c2 = data.shape[2] // 2
 		cmask = np.zeros_like(mm)
 		cmask[c1,c2] = 1
-		kern = np.ones((5,5))
+		kern = np.ones((9,9))
 		cmask = convolve(cmask,kern)
 		mm = (mm*1) | cmask
 
@@ -1703,6 +1703,7 @@ class tessreduce():
 			m_tar = convolve(m_tar,np.ones((5,5)))
 			self.mask = self.mask | m_tar
 			if moving_mask is not None:
+				moving_mask = moving_mask > 0
 				temp = np.zeros_like(self.flux,dtype=int)
 				temp[:,:,:] = self.mask
 				self.mask = temp | moving_mask
