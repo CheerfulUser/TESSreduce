@@ -2282,7 +2282,7 @@ class tessreduce():
 		x,y = self.wcs.all_world2pix(d.RAJ2000.values,d.DEJ2000.values,0)
 		d['col'] = x
 		d['row'] = y
-		pos_ind = (1 < x) & (x < self.ref.shape[0]-2) & (1 < y) & (y < self.ref.shape[0]-2)
+		pos_ind = (1 < x) & (x < self.ref.shape[1]-2) & (1 < y) & (y < self.ref.shape[0]-2)
 		d = d.iloc[pos_ind]
 
 		# account for crowding 
