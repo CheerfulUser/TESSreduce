@@ -1548,7 +1548,7 @@ class tessreduce():
 
 
 	def reduce(self, aper = None, align = None, parallel = None, calibrate=None,
-				bin_size = 0, plot = None, mask_scale = 1,
+				bin_size = 0, plot = None, mask_scale = 1, ref_start=None, ref_stop=None,
 				diff_lc = None,diff=None,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
 				moving_mask=None,mask=None,double_shift=False,corr_correction=None):
 		"""
@@ -1609,7 +1609,7 @@ class tessreduce():
 			print('Unlikely to get good shifts from a small tpf, so shift has been set to False')
 			self.align = False
 
-		self.get_ref()
+		self.get_ref(ref_start,ref_stop)
 		if self.verbose > 0:
 			print('made reference')
 		# make source mask
