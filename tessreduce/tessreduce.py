@@ -820,28 +820,28 @@ class tessreduce():
 		'''
 		data = strip_units(self.flux)
 		if (start is None) & (stop is None):
-			ind = self.tpf.quality==0
-			d = deepcopy(data)[ind]
-			summed = np.nansum(d,axis=(1,2))
-			lim = np.percentile(summed[np.isfinite(summed)],5)
-			summed[summed>lim] = 0
-			inds = np.where(ind)[0]
-			ref_ind = inds[np.argmax(summed)]
-			reference = data[ref_ind]
-			if len(reference.shape) > 2:
-				reference = reference[0]
+			start = 0
+			stop = len(self.flux)
 		elif (start is not None) & (stop is None):
-			start = int(start)
-			reference = np.nanmedian(data[start:],axis=(0))
+			stop = len(self.flux)
 
 		elif (start is None) & (stop is not None):
-			stop = int(stop)
-			reference = np.nanmedian(data[:stop],axis=(0))
+			start = 0
 
-		else:
-			start = int(start)
-			stop = int(stop)
-			reference = np.nanmedian(data[start:stop],axis=(0))
+		start = int(start)
+		stop = int(stop)
+
+		ind = self.tpf.quality[start:stop] == 0
+		d = deepcopy(data[start:stop])[ind]
+		summed = np.nansum(d,axis=(1,2))
+		lim = np.percentile(summed[np.isfinite(summed)],5)
+		summed[summed>lim] = 0
+		inds = np.where(ind)[0]
+		ref_ind = start + inds[np.argmax(summed)]
+		reference = data[ref_ind]
+		if len(reference.shape) > 2:
+			reference = reference[0]
+		
 		self.ref = reference
 		self.ref_ind = ref_ind
 
