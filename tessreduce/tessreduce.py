@@ -173,7 +173,7 @@ def unknown_mask(image):
 	return mask
 
 
-def Smooth_bkg(data, extrapolate = True,gauss_smooth=1):
+def Smooth_bkg(data, extrapolate = True,gauss_smooth=2):
 	"""
 	Interpolate over the masked objects to derive a background estimate. 
 
@@ -712,11 +712,11 @@ class tessreduce():
 		self.flux = strip_units(tpf.flux)
 		self.wcs  = tpf.wcs
 
-	def make_mask(self,maglim=19,scale=1,strapsize=4):
+	def make_mask(self,maglim=19,scale=1,strapsize=5):
 		# make a diagnostic plot for mask
 		data = strip_units(self.flux)
 
-		mask = Cat_mask(self.tpf,maglim,scale,strapsize)
+		mask, cat = Cat_mask(self.tpf,maglim,scale,strapsize)
 		sources = ((mask & 1)+1 ==1) * 1.
 		sources[sources==0] = np.nan
 		tmp = np.nansum(data*sources,axis=(1,2))
@@ -726,21 +726,22 @@ class tessreduce():
 			qe = correct_straps(ref,mask,parallel=True)
 		except:
 			qe = correct_straps(ref,mask,parallel=False)
-		mm = Source_mask(ref * qe * sources)
-		mm[np.isnan(mm)] = 0
-		mm = mm.astype(int)
-		mm = abs(mm-1)
+		#mm = Source_mask(ref * qe * sources)
+		#mm[np.isnan(mm)] = 0
+		#mm = mm.astype(int)
+		#mm = abs(mm-1)
 		#block out center 
 		c1 = data.shape[1] // 2
 		c2 = data.shape[2] // 2
-		cmask = np.zeros_like(mm)
+		cmask = np.zeros_like(data[0],dtype=int)
 		cmask[c1,c2] = 1
-		kern = np.ones((9,9))
+		kern = np.ones((5,5))
 		cmask = convolve(cmask,kern)
-		mm = (mm*1) | cmask
+		#mm = (mm*1) | cmask
 
-		fullmask = mask | mm
+		fullmask = mask | cmask
 		self.mask = fullmask
+		self._mask_cat = cat
 
 	def background(self,calc_qe=True, strap_iso=True):
 		"""
@@ -841,6 +842,7 @@ class tessreduce():
 		reference = data[ref_ind]
 		if len(reference.shape) > 2:
 			reference = reference[0]
+			ref_ind = ref_ind[0]
 		
 		self.ref = reference
 		self.ref_ind = ref_ind
@@ -1223,10 +1225,10 @@ class tessreduce():
 		ap_sky = np.zeros_like(data[0])
 		ap_tar[y,x]= 1
 		ap_sky[y,x]= 1
-		ap_tar = convolve(ap_tar,np.ones((tar_ap,tar_ap)))
+		ap_tar = convolve(ap_tar,np.ones((tar_ap,tar_ap))) 
 		ap_sky = convolve(ap_sky,np.ones((sky_out,sky_out))) - convolve(ap_sky,np.ones((sky_in,sky_in)))
 		ap_sky[ap_sky == 0] = np.nan
-		m = sigma_clip((self.ref)*ap_sky,sigma=2).mask
+		m = sigma_clip((self.ref)*ap_sky,sigma=1).mask
 		ap_sky[m] = np.nan
 		
 		temp = np.nansum(data*ap_tar,axis=(1,2))
@@ -1522,15 +1524,18 @@ class tessreduce():
 		that is present in some pixels. 
 
 		"""
-		x,y = np.where(self.mask > 0)
+		y,x = np.where(self.mask > 0)
 		coeff = np.zeros_like(self.flux[0])
 		ind = []
 		# find the pixels where there is significant correlation
 		flux = deepcopy(self.flux)
 		bkg = deepcopy(self.bkg)
 		for i in range(len(x)):
-			nonan = np.isfinite(flux[:,x[i],y[i]]) & np.isfinite(bkg[:,x[i],y[i]])
-			corr = pearsonr(flux[nonan,x[i],y[i]],bkg[nonan,x[i],y[i]])[0]
+			f = flux[:,y[i],x[i]]
+			b = bkg[:,y[i],x[i]]
+			indo = b > np.percentile(b,90)
+			nonan = np.isfinite(f[indo]) & np.isfinite(b[indo])
+			corr = pearsonr(f[indo][nonan],b[indo][nonan])[0]
 			if abs(corr) > limit:
 				ind += [i]
 		if len(ind) < 2:
@@ -1540,11 +1545,17 @@ class tessreduce():
 
 		# minimize correlation in selected pixels
 		for i in range(len(x)):
+			f = flux[:,y[i],x[i]]
+			b = bkg[:,y[i],x[i]]
+			ind = b > np.percentile(b,90)
+			nonan = np.isfinite(f[ind]) & np.isfinite(b[ind])
+
 			x0 =[1e-3]
-			fit = minimize(cor_minimizer,x0,(flux[:,x[i],y[i]],bkg[:,x[i],y[i]]))
-			coeff[x[i],y[i]] = fit.x
+			fit = minimize(cor_minimizer,x0,(f[ind][nonan],b[ind][nonan]))
+			coeff[y[i],x[i]] = fit.x
 		self.corr_coeff = coeff
 		self.flux -= coeff[np.newaxis,:,:] * self.bkg
+		self.bkg += coeff[np.newaxis,:,:] * self.bkg
 
 
 	def reduce(self, aper = None, align = None, parallel = None, calibrate=None,
@@ -1614,12 +1625,12 @@ class tessreduce():
 			print('made reference')
 		# make source mask
 		if mask is None:
-			self.make_mask(maglim=18,strapsize=4,scale=mask_scale)#Source_mask(ref,grid=0)
+			self.make_mask(maglim=18,strapsize=7,scale=mask_scale)#Source_mask(ref,grid=0)
 			frac = np.nansum((self.mask == 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 			#print('mask frac ',frac)
 			if frac < 0.05:
 				print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-				self.make_mask(maglim=15,strapsize=4,scale=0.5)
+				self.make_mask(maglim=15,strapsize=7,scale=0.5)
 			if self.verbose > 0:
 				print('made source mask')
 		else:
@@ -1689,14 +1700,14 @@ class tessreduce():
 			self.ref = deepcopy(self.flux[self.ref_ind])
 			self.flux -= self.ref
 
-			self.ref -= self.bkg[self.ref_ind]
+			#self.ref -= self.bkg[self.ref_ind]
 			# remake mask
-			self.make_mask(maglim=18,strapsize=4,scale=mask_scale*.5)#Source_mask(ref,grid=0)
+			self.make_mask(maglim=18,strapsize=7,scale=mask_scale*.8)#Source_mask(ref,grid=0)
 			frac = np.nansum((self.mask== 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 			#print('mask frac ',frac)
 			if frac < 0.05:
 				print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-				self.make_mask(maglim=15,strapsize=4,scale=0.5)
+				self.make_mask(maglim=15,strapsize=7,scale=0.5)
 			# assuming that the target is in the centre, so masking it out 
 			m_tar = np.zeros_like(self.mask,dtype=int)
 			m_tar[self.ref.shape[0]//2,self.ref.shape[1]//2]= 1
@@ -2002,6 +2013,7 @@ class tessreduce():
 
 		trends = np.zeros(lc.shape[1])
 		break_inds = Multiple_day_breaks(lc)
+		self._midsector_break = break_inds
 		#lc[Mask] = np.nan
 		
 		if variable:
@@ -2667,7 +2679,7 @@ def Multiple_day_breaks(lc):
 
 ### Serious source mask
 
-def Cat_mask(tpf,maglim=19,scale=1,strapsize=4,badpix=None):
+def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None):
 	"""
 	Make a source mask from the PS1 and Gaia catalogs.
 
@@ -2702,20 +2714,21 @@ def Cat_mask(tpf,maglim=19,scale=1,strapsize=4,badpix=None):
 	image = strip_units(image)
 	gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
 	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
-	if tpf.dec > -30:
-		pp,pm = Get_PS1(tpf,magnitude_limit=maglim)
-		ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
-		mp  = ps1_auto_mask(ps1,image,scale)
-	else:
-		mp = {}
-		mp['all'] = np.zeros_like(image)
+	#if tpf.dec > -30:
+	#	pp,pm = Get_PS1(tpf,magnitude_limit=maglim)
+	#	ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
+	#	mp  = ps1_auto_mask(ps1,image,scale)
+	#else:
+	#	mp = {}
+	#	mp['all'] = np.zeros_like(image)
 	
 	sat = Big_sat(gaia,image,scale)
 	mg  = gaia_auto_mask(gaia,image,scale)
 	
 
 	sat = (np.nansum(sat,axis=0) > 0).astype(int) * 2 # assign 2 bit 
-	mask = ((mg['all']+mp['all']) > 0).astype(int) * 1 # assign 1 bit
+	#mask = ((mg['all']+mp['all']) > 0).astype(int) * 1 # assign 1 bit
+	mask = (mg['all'] > 0).astype(int) * 1 # assign 1 bit
 	if strapsize > 0: 
 		strap = Strap_mask(image,tpf.column,strapsize).astype(int) * 4 # assign 4 bit 
 	else:
@@ -2726,7 +2739,7 @@ def Cat_mask(tpf,maglim=19,scale=1,strapsize=4,badpix=None):
 	else:
 		totalmask = mask | sat | strap
 	
-	return totalmask
+	return totalmask, gaia
 
 	
 
