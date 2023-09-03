@@ -95,7 +95,9 @@ def calc_strap_factor(i,breaks,size,av_size,normals,data):
         ind =  normals[b]+1+j
         if (ind > 0) & (ind < data.shape[1]):
             s1 = fit_strap(data[:,ind])
-            factor = np.nanmedian(norm/s1)
+            ratio = norm/s1
+            m = ~sigma_clip(ratio,sigma=2).mask
+            factor = np.nanmedian(ratio[m])
             qe[:,normals[b]+1+j] = factor
     return qe
 

@@ -147,9 +147,9 @@ def Big_sat(table,Image,scale=1):
     satmasks = np.array(satmasks)
     return satmasks
 
-def Strap_mask(Image,col,size=3):
+def Strap_mask(Image,col,size=4):
+    print(size)
     strap_mask = np.zeros_like(Image)
-    path = '/user/rridden/feet/'
     straps = pd.read_csv(package_directory + 'tess_straps.csv')['Column'].values - col + 44
     strap_in_tpf = straps[((straps > 0) & (straps < Image.shape[1]))]
     strap_mask[:,strap_in_tpf] = 1

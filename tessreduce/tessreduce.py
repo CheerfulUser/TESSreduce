@@ -2272,15 +2272,22 @@ class tessreduce():
 				print('Target is above -30 dec, calibrating to PS1 photometry.')
 			table = Get_Catalogue(self.tpf,Catalog='ps1')
 			system = 'ps1'
-
+		self.cat = table
+		ref = deepcopy(self.ref)
+		m = ((self.mask & 1 == 0) & (self.mask & 2 == 0) ) * 1.
+		m[m==0] = np.nan
+		ref_bkg = np.nanmedian(ref * m)
+		
+		ref -= ref_bkg
 		if self.diff:
-			tflux = self.flux + self.ref
+			tflux = self.flux + ref
 		else:
 			tflux = self.flux
 			
 
 		ind = (table.imag.values < 19) & (table.imag.values > 14)
 		tab = table.iloc[ind]
+		
 		x,y = self.wcs.all_world2pix(tab.RAJ2000.values,tab.DEJ2000.values,0)
 		tab['col'] = x
 		tab['row'] = y
@@ -2291,11 +2298,13 @@ class tessreduce():
 		gr = (dat.gmag - dat.rmag).values
 		ind = (gr < 1) & (dat.imag.values < 17)
 		d = dat.iloc[ind]
+		
 		x,y = self.wcs.all_world2pix(d.RAJ2000.values,d.DEJ2000.values,0)
 		d['col'] = x
 		d['row'] = y
 		pos_ind = (1 < x) & (x < self.ref.shape[1]-2) & (1 < y) & (y < self.ref.shape[0]-2)
 		d = d.iloc[pos_ind]
+		
 
 		# account for crowding 
 		for i in range(len(d)):
@@ -2340,11 +2349,12 @@ class tessreduce():
 			m2[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
 			m2 = convolve(m2,np.ones((7,7))) - convolve(m2,np.ones((5,5)))
 			eflux += [np.nansum(tflux*m2,axis=(1,2))]
-			mag = -2.5*np.log10(np.nansum((self.ref*m2))) + 20.44
+			mag = -2.5*np.log10(np.nansum((ref*m2))) + 20.44
 			
 			if (mag <= d.tmag.values[i]+1):# | (mag <= 17):
 				eind[i] = 1
 		eind = eind == 0
+
 		flux = np.array(flux)
 		eflux = np.array(eflux)
 		#eind = abs(eflux) > 20
@@ -2372,7 +2382,7 @@ class tessreduce():
 		if plot:
 			plt.figure()
 			nonan = np.isfinite(self.ref)
-			plt.imshow(self.ref,origin='lower',vmax = np.percentile(self.ref[nonan],80),vmin=0)
+			plt.imshow(ref,origin='lower',vmax = np.percentile(ref[nonan],80),vmin=np.percentile(ref[nonan],10))
 			plt.scatter(d.col.iloc[eind],d.row.iloc[eind],color='r')
 			plt.title('Calibration sources')
 			plt.ylabel('Row',fontsize=15)

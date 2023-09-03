@@ -202,9 +202,9 @@ def Get_PS1(tpf, magnitude_limit = 18, Offset = 10):
 
 
 def Skymapper_df(sm):
-    a = np.zeros(len(sm['ObjectId']),dtype=np.object)
+    a = np.zeros(len(sm['ObjectId']),dtype=object)
     a[:] = 's'
-    b = sm['ObjectId'].values.astype(str).astype(np.object)
+    b = sm['ObjectId'].values.astype(str).astype(object)
     obj = a+b
     
     keep = ['objID','RAJ2000', 'DEJ2000','e_RAJ2000','e_DEJ2000','gmag', 'e_gmag', 'gKmag',
