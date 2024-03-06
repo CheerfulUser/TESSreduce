@@ -32,7 +32,8 @@ REQUIRED = ['lightkurve>=2.0.0',
             'scikit-learn>=0.24.1',
             'alerce',
             'tess-point',
-            'tabulate']
+            'tabulate',
+            'TESS_PRF']
 
 # What packages are optional?
 EXTRAS = {
