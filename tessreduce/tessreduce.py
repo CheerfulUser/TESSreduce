@@ -934,6 +934,7 @@ class tessreduce():
 				bkg_3 = Parallel(n_jobs=self.num_cores)(delayed(_parallel_bkg3)(self.bkg[i],dist_mask[i]) 
 														   for i in np.arange(len(dist_mask)))
 			else:
+				bkg_3 = []
 				bkg_smth = np.zeros_like(dist_mask)
 				for i in range(len(dist_mask)):
 					bkg_3[i] = _parallel_bkg3(self.bkg[i],dist_mask[i])
