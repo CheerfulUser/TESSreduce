@@ -34,7 +34,7 @@ class TestTESSreduce(unittest.TestCase):
         self.tess.diff_lc()
 
     def test_full(self):
-        tess.reduce()
+        self.tess.reduce()
 
 if __name__ == '__main__':
     unittest.main()
