@@ -590,10 +590,10 @@ def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True):
 				dif = ds
 			covers += [cover]
 			differences += [dif]
-			tab += [[secs.Sector.values[i], cover, dif]]
-			tr_list += [[ra, dec, secs.Sector.values[i], cover]]
+			tab += [[secs.Sector.values[i], outCam[i], outCcd[i], cover, dif]]
+			tr_list += [[ra, dec, secs.Sector.values[i],outCam[i], outCcd[i], cover]]
 		if print_table: 
-			print(tabulate(tab, headers=['Sector', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
+			print(tabulate(tab, headers=['Sector', 'Camera', 'CCD', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
 		return tr_list
 	else:
 		print('No TESS coverage')
