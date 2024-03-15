@@ -8,9 +8,10 @@ class TestTESSreduce(unittest.TestCase):
         """ Initial setup run only once before all the tests
         """
 
-        ra = 189.1385817
-        dec = 11.2316535
-        tess = tr.tessreduce(ra=ra, dec=dec)
+        ra = 10.127#189.1385817
+        dec = -50.687#11.2316535
+        sector = 2
+        tess = tr.tessreduce(ra=ra, dec=dec, sector=sector, reduce=False)
         tess.get_ref()
         cls.tess = tess
 
@@ -20,8 +21,8 @@ class TestTESSreduce(unittest.TestCase):
     def test_background(self):
         self.tess.background()
 
-    def test_Centroids_DAO(self):
-        self.tess.centroids_DAO()
+    def test_align(self):
+        self.tess.fit_shift()
 
     def test_Shift_images(self):
         self.tess.shift_images()
@@ -31,6 +32,9 @@ class TestTESSreduce(unittest.TestCase):
 
     def test_Diff_lc(self):
         self.tess.diff_lc()
+
+    def test_full(self):
+        tess.reduce()
 
 if __name__ == '__main__':
     unittest.main()
