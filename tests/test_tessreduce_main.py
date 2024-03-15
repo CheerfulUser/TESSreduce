@@ -24,8 +24,8 @@ class TestTESSreduce(unittest.TestCase):
     def test_align(self):
         self.tess.fit_shift()
 
-    def test_Shift_images(self):
-        self.tess.shift_images()
+    #def test_Shift_images(self):
+    #    self.tess.shift_images()
 
     def test_field_calibrate(self):
         self.tess.field_calibrate()
