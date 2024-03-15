@@ -17,7 +17,7 @@ DESCRIPTION = 'Reduce TESS target pixel files.'
 URL = 'https://github.com/CheerfulUser/TESSreduce'
 EMAIL = 'ryanridden@gmail.com'
 AUTHOR ='Ryan Ridden-Harper'
-REQUIRES_PYTHON = '>=3.6.0'
+REQUIRES_PYTHON = '>=3.9.0'
 VERSION = '1.0.0'
 
 # What packages are required for this module to be executed?
