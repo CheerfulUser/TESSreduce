@@ -66,6 +66,100 @@ def Get_Catalogue(tpf, Catalog = 'gaia'):
 	
 	return result 
 
+def Get_Catalogue_External(ra,dec,size,Catalog = 'gaia'):
+	"""
+	Get the coordinates and mag of all sources in the field of view from a specified catalogue.
+
+
+	I/347/gaia2dis   Distances to 1.33 billion stars in Gaia DR2 (Bailer-Jones+, 2018)
+
+	-------
+	Inputs-
+	-------
+		tpf 				class 	target pixel file lightkurve class
+		Catalogue 			str 	Permitted options: 'gaia', 'dist', 'ps1'
+	
+	--------
+	Outputs-
+	--------
+		coords 	array	coordinates of sources
+		Gmag 	array 	Gmags of sources
+	"""
+	c1 = SkyCoord(ra, dec, frame='icrs', unit='deg')
+	# Use pixel scale for query size
+	pix_scale = 21.0
+	# We are querying with a diameter as the radius, overfilling by 2x.
+	from astroquery.vizier import Vizier
+	Vizier.ROW_LIMIT = -1
+	if Catalog == 'gaia':
+		catalog = "I/345/gaia2"
+	elif Catalog == 'dist':
+		catalog = "I/350/gaiaedr3"
+	elif Catalog == 'ps1':
+		catalog = "II/349/ps1"
+	elif Catalog == 'skymapper':
+		catalog = 'II/358/smss'
+	else:
+		raise ValueError("{} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
+	if Catalog == 'gaia':
+		result = Vizier.query_region(c1, catalog=[catalog],
+                             		 radius=Angle(size * pix_scale, "arcsec"),column_filters={'Gmag':'<19'})
+	else:
+		result = Vizier.query_region(c1, catalog=[catalog],
+									 radius=Angle(np.max(tpf.shape[1:]) * pix_scale, "arcsec"))
+
+	no_targets_found_message = ValueError('Either no sources were found in the query region '
+										  'or Vizier is unavailable')
+	#too_few_found_message = ValueError('No sources found brighter than {:0.1f}'.format(magnitude_limit))
+	if result is None:
+		raise no_targets_found_message
+	elif len(result) == 0:
+		raise no_targets_found_message
+	result = result[catalog].to_pandas()
+	
+	return result 
+
+def Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit = 18, Offset = 10):
+	"""
+	Get the coordinates and mag of all gaia sources in the field of view.
+
+	-------
+	Inputs-
+	-------
+		tpf 				class 	target pixel file lightkurve class
+		magnitude_limit 	float 	cutoff for Gaia sources
+		Offset 				int 	offset for the boundary 
+	
+	--------
+	Outputs-
+	--------
+		coords 	array	coordinates of sources
+		Gmag 	array 	Gmags of sources 
+	"""
+	keys = ['objID','RAJ2000','DEJ2000','e_RAJ2000','e_DEJ2000','gmag','e_gmag','gKmag','e_gKmag','rmag',
+			'e_rmag','rKmag','e_rKmag','imag','e_imag','iKmag','e_iKmag','zmag','e_zmag','zKmag','e_zKmag',
+			'ymag','e_ymag','yKmag','e_yKmag','tmag','gaiaid','gaiamag','gaiadist','gaiadist_u','gaiadist_l',
+			'row','col']
+
+	result =  Get_Catalogue_External(ra,dec,size,Catalog = 'gaia')
+
+	result = result[result.Gmag < magnitude_limit]
+	if len(result) == 0:
+		raise no_targets_found_message
+	radecs = np.vstack([result['RA_ICRS'], result['DE_ICRS']]).T
+	coords = wcsItem.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
+	coords[:,0] -= cutCornerPx[0]
+	coords[:,1] -= cutCornerPx[1]
+	Gmag = result['Gmag'].values
+	#Jmag = result['Jmag']
+	ind = (((coords[:,0] >= -20) & (coords[:,1] >= -20)) & 
+		   ((coords[:,0] < (size + 20)) & (coords[:,1] < (size + 20))))
+	coords = coords[ind]
+	radecs = radecs[ind]
+	Gmag = Gmag[ind]
+	Tmag = Gmag - 0.5
+	#Jmag = Jmag[ind]
+	return radecs, Tmag
 
 def Get_Gaia(tpf, magnitude_limit = 18, Offset = 10):
 	"""
@@ -82,7 +176,7 @@ def Get_Gaia(tpf, magnitude_limit = 18, Offset = 10):
 	Outputs-
 	--------
 		coords 	array	coordinates of sources
-		Gmag 	array 	Gmags of sources
+		Gmag 	array 	Gmags of sources 
 	"""
 	keys = ['objID','RAJ2000','DEJ2000','e_RAJ2000','e_DEJ2000','gmag','e_gmag','gKmag','e_gKmag','rmag',
 			'e_rmag','rKmag','e_rKmag','imag','e_imag','iKmag','e_iKmag','zmag','e_zmag','zKmag','e_zKmag',

@@ -36,6 +36,9 @@ from photutils import DAOStarFinder
 
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import sigma_clip
+from astropy.io import fits
+from astropy import wcs
+
 
 import multiprocessing
 from joblib import Parallel, delayed
@@ -85,6 +88,16 @@ def strip_units(data):
 		data = data.value
 	return data
 
+def _Extract_fits(pixelfile):
+    """
+    Quickly extract fits
+    """
+    try:
+        hdu = fits.open(pixelfile)
+        return hdu
+    except OSError:
+        print('OSError ',pixelfile)
+        return
 
 def sigma_mask(data,sigma=3):
 	"""
@@ -182,8 +195,9 @@ def unknown_mask(image):
 
 
 def _parallel_bkg3(data,mask):
-	data[mask] = np.nan
-	estimate = inpaint.inpaint_biharmonic(data,mask)
+	d = deepcopy(data)
+	d[mask] = np.nan
+	estimate = inpaint.inpaint_biharmonic(d,mask)
 	return estimate
 
 def Smooth_bkg(data, gauss_smooth=2, interpolate=False, extrapolate=True):
@@ -566,9 +580,21 @@ def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True):
 	outRowPix, scinfo = focal_plane(0, ra, dec)
 	
 	sec_times = pd.read_csv(package_directory + 'sector_mjd.csv')
+	print(len(sec_times))
+
 	if len(outSecs) > 0:
 		ind = outSecs - 1 
-		secs = sec_times.iloc[ind]
+		found = False
+		while not found: 
+			try:
+				secs = sec_times.iloc[ind]
+				found = True
+			except:
+				ind = ind[:-1]
+				if len(ind) < 1:
+					print('Failed.')
+					return
+
 		disc_start = secs['mjd_start'].values - time
 		disc_end = secs['mjd_end'].values - time
 
@@ -623,13 +649,40 @@ def _par_psf_flux(image,prf,shift=[0,0]):
 	return prf.flux
 
 
+def external_save_TESS(ra,dec,sector,size=90,quality_bitmask='default',cache_dir=None):
+
+	c = SkyCoord(ra=float(ra)*u.degree, dec=float(dec) * u.degree, frame='icrs')
+	tess = lk.search_tesscut(c,sector=sector)
+	tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=size,download_dir=cache_dir)
+
+	if tpf is None:
+		m = 'Failure in TESScut api, not sure why.'
+		raise ValueError(m)
+	
+	else:
+		os.system(f'mv {tpf.path} {os.getcwd()}')
+
+def external_get_TESS():
+
+	found = False
+	target = None
+	l = os.listdir()
+	for thing in l:
+		if 'astrocut.fits' in thing:
+			if not found:
+				target = thing
+			else:
+				print('Too Many tpfs here!')
+	tpf = lk.TessTargetPixelFile(target)
+	return tpf
+
 
 class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,reduce=True,
 				 align=True,parallel=True,diff=True,plot=False,corr_correction=True,phot_method='aperture',savename=None,
 				 quality_bitmask='default',verbose=1,cache_dir=None,calibrate=True,harshmask_counts=None,
-				 sourcehunt=True,num_cores='max'):
+				 sourcehunt=True,num_cores='max',catalogue_path=None):
 		"""
 		Class to reduce tess data.
 		"""
@@ -648,6 +701,9 @@ class tessreduce():
 		self._assign_phot_method(phot_method)
 		self._harshmask_counts = harshmask_counts
 		self._sourcehunt = sourcehunt
+		if catalogue_path is None:
+			catalogue_path = os.getcwd()
+		self._catalogue_path = catalogue_path
 		if type(num_cores) == str:
 			self.num_cores = multiprocessing.cpu_count()
 		else:
@@ -702,7 +758,10 @@ class tessreduce():
 		elif self.check_coord():
 			if self.verbose>0:
 				print('getting TPF from TESScut')
-			self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
+			#self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
+			self.tpf = external_get_TESS()
+			self.flux = strip_units(self.tpf.flux)
+			self.wcs  = self.tpf.wcs
 
 		self.ground = ground(ra = self.ra, dec = self.dec)
 
@@ -781,13 +840,13 @@ class tessreduce():
 			ind = self.ref > self._harshmask_counts
 			self.ref[ind]
 
-	def make_mask(self,maglim=19,scale=1,strapsize=6,useref=False):
+	def make_mask(self,catalogue_path,maglim=19,scale=1,strapsize=6,useref=False):
 		# make a diagnostic plot for mask
 		data = strip_units(self.flux)
 		if useref:
-			mask, cat = Cat_mask(self.tpf,maglim,scale,strapsize,ref=self.ref)
+			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize,ref=self.ref)
 		else:
-			mask, cat = Cat_mask(self.tpf,maglim,scale,strapsize)
+			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize)
 		sky = ((mask & 1)+1 ==1) * 1.
 		sky[sky==0] = np.nan
 		tmp = np.nansum(data*sky,axis=(1,2))
@@ -824,8 +883,16 @@ class tessreduce():
 
 	def psf_source_mask(self,mask,sigma=5):
 		
-		prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
-				   	   self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
+		package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
+
+		if self.sector < 4:
+			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+							self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
+							localdatadir=f'{package_directory}/PRF_directory/Sectors1_2_3')
+		else:
+			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+							self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
+							localdatadir=f'{package_directory}/PRF_directory/Sectors4+')
 		self.prf =  prf.locate(5,5,(11,11))
 
 		
@@ -1859,12 +1926,12 @@ class tessreduce():
 				print('made reference')
 			# make source mask
 			if mask is None:
-				self.make_mask(maglim=18,strapsize=7,scale=mask_scale)#Source_mask(ref,grid=0)
+				self.make_mask(catalogue_path=self._catalogue_path,maglim=18,strapsize=7,scale=mask_scale)#Source_mask(ref,grid=0)
 				frac = np.nansum((self.mask == 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 				#print('mask frac ',frac)
 				if frac < 0.05:
 					print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-					self.make_mask(maglim=15,strapsize=7,scale=0.5)
+					self.make_mask(catalogue_path=self._catalogue_path,maglim=15,strapsize=7,scale=0.5)
 				if self.verbose > 0:
 					print('made source mask')
 			else:
@@ -1939,12 +2006,12 @@ class tessreduce():
 
 				self.ref -= self.bkg[self.ref_ind]
 				# remake mask
-				self.make_mask(maglim=18,strapsize=7,scale=mask_scale*.8,useref=True)#Source_mask(ref,grid=0)
+				self.make_mask(catalogue_path=self._catalogue_path,maglim=18,strapsize=7,scale=mask_scale*.8,useref=True)#Source_mask(ref,grid=0)
 				frac = np.nansum((self.mask== 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 				#print('mask frac ',frac)
 				if frac < 0.05:
 					print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-					self.make_mask(maglim=15,strapsize=7,scale=0.5)
+					self.make_mask(catalogue_path=self._catalogue_path,maglim=15,strapsize=7,scale=0.5)
 				# assuming that the target is in the centre, so masking it out 
 				#m_tar = np.zeros_like(self.mask,dtype=int)
 				#m_tar[self.ref.shape[0]//2,self.ref.shape[1]//2]= 1
@@ -2936,11 +3003,30 @@ def Multiple_day_breaks(lc):
 	breaks = np.append(breaks,len(lc[0]))
 	return breaks
 
+def external_save_cat(radec,size,cutCornerPx,image_path,save_path,maglim):
+	
+	file = _Extract_fits(image_path)
+	wcsItem = wcs.WCS(file[1].header)
+	file.close()
+	
+	ra = radec[0]
+	dec = radec[1]
 
+	gp,gm = Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit=maglim)
+	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['ra','dec','mag'])
+
+	gaia.to_csv(f'{save_path}/local_gaia_cat.csv')
+
+def _load_external_cat(path,maglim):
+
+	gaia = pd.read_csv(f'{path}/local_gaia_cat.csv')
+	gaia = gaia[gaia['mag']<(maglim-0.5)]
+	gaia = gaia[['ra','dec','mag']]
+	return gaia
 
 ### Serious source mask
 
-def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
+def Cat_mask(tpf,cataloge_path,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
 	"""
 	Make a source mask from the PS1 and Gaia catalogs.
 
@@ -2970,11 +3056,11 @@ def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
 		8 - bad pixel (not used)
 	"""
 	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
-	wcs = tpf.wcs
-	image = tpf.flux[100]
-	image = strip_units(image)
-	gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
-	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
+	gaia  = _load_external_cat(cataloge_path,maglim)
+	coords = tpf.wcs.all_world2pix(gaia['ra'],gaia['dec'], 0)
+	gaia['x'] = coords[0]
+	gaia['y'] = coords[1]
+
 	#if tpf.dec > -30:
 	#	pp,pm = Get_PS1(tpf,magnitude_limit=maglim)
 	#	ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
@@ -2982,7 +3068,8 @@ def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
 	#else:
 	#	mp = {}
 	#	mp['all'] = np.zeros_like(image)
-	
+	image = tpf.flux[10]
+	image = strip_units(image)
 	sat = Big_sat(gaia,image,scale)
 	if ref is None:
 		mg  = gaia_auto_mask(gaia,image,scale)
