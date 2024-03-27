@@ -258,7 +258,7 @@ def Smooth_bkg(data, gauss_smooth=2, interpolate=False, extrapolate=True):
 
 	return estimate
 
-def Calculate_shifts(data,mx,my,daofind):
+def Calculate_shifts(data,mx,my,finder):
 	"""
 	Calculate the offsets of sources identified by photutils from a reference
 
@@ -286,7 +286,8 @@ def Calculate_shifts(data,mx,my,daofind):
 	if np.nansum(data) > 0:
 		mean, med, std = sigma_clipped_stats(data, sigma=3.0)
 		try:
-			s = daofind(data - med)
+			#s = daofind(data - med)
+			s = finder.find_stars(deepcopy(data)-med)
 		except:
 			s = None
 			print('bad frame')
@@ -311,7 +312,7 @@ def image_sub(theta, image, ref):
 	s = shift(image,([dx,dy]),order=5)
 	#translation = np.float64([[1,0,dx],[0,1, dy]])
 	#s = cv2.warpAffine(image, translation, image.shape[::-1], flags=cv2.INTER_CUBIC,borderValue=0)
-	diff = abs(ref-s)
+	diff = (ref-s)**2
 	return np.nansum(diff[20:-20,20:-20])
 
 def difference_shifts(image,ref):
@@ -340,7 +341,8 @@ def difference_shifts(image,ref):
 	"""
 	if np.nansum(abs(image)) > 0:
 		x0= [0,0]
-		res = minimize(image_sub,x0,args=(image,ref),method = 'Nelder-Mead')
+		#bds = [(-2,2),(-2,2)]
+		res = minimize(image_sub,x0,args=(image,ref),method = 'Powell')#,bounds= bds)
 		s = res.x
 	else:
 		s = np.zeros((2)) * np.nan
@@ -1083,28 +1085,35 @@ class tessreduce():
 		m = self.ref.copy()
 
 		mean, med, std = sigma_clipped_stats(m, sigma=3.0)
+
+		prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+				   	   self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
+		self.prf =  prf.locate(5,5,(11,11))
 		
-		daofind = DAOStarFinder(fwhm=2.0, threshold=10.*std,exclude_border=True)
-		s = daofind(m - med)
+		finder = StarFinder(2*std,kernel=self.prf,exclude_border=True)
+		s = finder.find_stars(m-med)
+		#daofind = DAOStarFinder(fwhm=2.0, threshold=10.*std,exclude_border=True)
+		#s = daofind(m - med)
 		mx = s['xcentroid']
 		my = s['ycentroid']
 		x_mid = self.flux.shape[2] / 2
 		y_mid = self.flux.shape[1] / 2
 		#ind = #((abs(mx - x_mid) <= 30) & (abs(my - y_mid) <= 30) & 
-		ind = (abs(mx - x_mid) >= 5) & (abs(my - y_mid) >= 5)
-		self._dat_sources = s[ind].to_pandas()
-		mx = mx[ind]
-		my = my[ind]
+		#ind = (abs(mx - x_mid) >= 5) & (abs(my - y_mid) >= 5)
+		#self._dat_sources = s[ind].to_pandas()
+		self._dat_sources = s.to_pandas()
+		#mx = mx[ind]
+		#my = my[ind]
 		if self.parallel:
 			
 			
 			shifts = Parallel(n_jobs=self.num_cores)(
-				delayed(Calculate_shifts)(frame,mx,my,daofind) for frame in f)
+				delayed(Calculate_shifts)(frame,mx,my,finder) for frame in f)
 			shifts = np.array(shifts)
 		else:
 			shifts = np.zeros((len(f),2,len(mx))) * np.nan
 			for i in range(len(f)):
-				shifts[i,:,:] = Calculate_shifts(f[i],mx,my,daofind)
+				shifts[i,:,:] = Calculate_shifts(f[i],mx,my,finder)
 
 		self.raw_shifts = shifts
 		meds = np.nanmedian(shifts,axis = 2)
@@ -1113,7 +1122,7 @@ class tessreduce():
 		smooth = Smooth_motion(meds,self.tpf)
 		nans = np.nansum(f,axis=(1,2)) ==0
 		smooth[nans] = np.nan
-		self.shift = smooth
+		self.shift = meds#smooth
 		if plot:
 			#meds[meds==0] = np.nan
 			t = self.tpf.time.mjd
@@ -1161,8 +1170,8 @@ class tessreduce():
 		if savename is None:
 			savename = self.savename
 		
-		sources = ((self.mask & 1) ==1) * 1.
-		sources[sources==0] = 0.
+		sources = ((self.mask & 1) ==1) * 1.0 - (self.mask & 2)
+		sources[sources<=0] = 0
 
 		f = self.flux * sources[np.newaxis,:,:]
 		m = self.ref.copy() * sources
@@ -1861,7 +1870,7 @@ class tessreduce():
 	def reduce(self, aper = None, align = None, parallel = None, calibrate=None,
 				bin_size = 0, plot = None, mask_scale = 1, ref_start=None, ref_stop=None,
 				diff_lc = None,diff=None,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
-				moving_mask=None,mask=None,double_shift=False,corr_correction=None):
+				moving_mask=None,mask=None,double_shift=False,corr_correction=None,test_seed=None):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
@@ -1963,13 +1972,13 @@ class tessreduce():
 			if self.align:
 				if self.verbose > 0:
 					print('Aligning images')
-				self.fit_shift()
+				
 				try:
 					#self.centroids_DAO()
 					#if double_shift:
 					#self.shift_images()
-					self.ref = deepcopy(self.flux[self.ref_ind])
-					#self.fit_shift()
+					#self.ref = deepcopy(self.flux[self.ref_ind])
+					self.fit_shift()
 					#self.shift_images()
 					
 				except:
@@ -1977,7 +1986,7 @@ class tessreduce():
 					self.parallel = False
 					self.centroids_DAO()
 					#self.fit_shift()
-			
+				#self.fit_shift()
 			
 			if not self.diff:
 				if self.align:
@@ -1999,6 +2008,9 @@ class tessreduce():
 
 					if self.verbose > 0:
 						print('shifting images')
+
+				if test_seed is not None:
+					self.flux += test_seed
 				self.flux[np.nansum(self.tpf.flux.value,axis=(1,2))==0] = np.nan
 				# subtract reference
 				self.ref = deepcopy(self.flux[self.ref_ind])
