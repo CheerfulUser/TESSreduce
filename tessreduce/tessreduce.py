@@ -885,16 +885,16 @@ class tessreduce():
 
 	def psf_source_mask(self,mask,sigma=5):
 		
-		package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
+		prf_directory = '/fred/oz100/_local_TESS_PRFs'
 
 		if self.sector < 4:
 			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
 							self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
-							localdatadir=f'{package_directory}/PRF_directory/Sectors1_2_3')
+							localdatadir=f'{prf_directory}/Sectors1_2_3')
 		else:
 			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
 							self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
-							localdatadir=f'{package_directory}/PRF_directory/Sectors4+')
+							localdatadir=f'{prf_directory}/Sectors4+')
 		self.prf =  prf.locate(5,5,(11,11))
 
 		

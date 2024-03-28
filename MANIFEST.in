@@ -4,4 +4,3 @@ include tessreduce/calspec_mags.npy
 include tessreduce/Tonry_splines.txt
 include tessreduce/SMspline.txt
 include tessreduce/sector_mjd.csv
-include tessreduce/PRF_directory/*
