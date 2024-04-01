@@ -157,7 +157,9 @@ def Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit = 18, Offs
 				good_coords.append(i)
 			except:
 				pass
+		radecs = radecs[good_coords]
 		coords = wcsItem.all_world2pix(radecs[good_coords], 0) ## TODO, is origin supposed to be zero or one?
+	
 	coords[:,0] -= cutCornerPx[0]
 	coords[:,1] -= cutCornerPx[1]
 	Gmag = result['Gmag'].values
