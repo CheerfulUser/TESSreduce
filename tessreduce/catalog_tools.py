@@ -147,7 +147,17 @@ def Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit = 18, Offs
 	if len(result) == 0:
 		raise no_targets_found_message
 	radecs = np.vstack([result['RA_ICRS'], result['DE_ICRS']]).T
-	coords = wcsItem.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
+	try:
+		coords = wcsItem.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
+	except:
+		good_coords = []
+		for i,radec in enumerate(radecs):
+			try:
+				c = wcsItem.all_world2pix(radec[0],radec[1], 0)
+				good_coords.append(i)
+			except:
+				pass
+		coords = wcsItem.all_world2pix(radecs[good_coords], 0) ## TODO, is origin supposed to be zero or one?
 	coords[:,0] -= cutCornerPx[0]
 	coords[:,1] -= cutCornerPx[1]
 	Gmag = result['Gmag'].values
