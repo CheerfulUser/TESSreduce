@@ -3009,7 +3009,7 @@ def Multiple_day_breaks(lc):
 	-------
 	removed_flux - 3d array
 	"""
-	ind = np.where(~np.isnan(lc[1]))[0]
+	ind = np.where(~np.isnan(lc[1]))[0] 
 	breaks = np.array([np.where(np.diff(lc[0][ind]) > .5)[0] +1])
 	breaks = np.insert(breaks,0,0)
 	breaks = np.append(breaks,len(lc[0]))
