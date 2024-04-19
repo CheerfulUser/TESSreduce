@@ -171,6 +171,7 @@ def Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit = 18, Offs
 	coords = coords[ind]
 	radecs = radecs[ind]
 	Gmag = Gmag[ind]
+	source = source[ind]
 	Tmag = Gmag - 0.5
 	#Jmag = Jmag[ind]
 	return radecs, Tmag, source
