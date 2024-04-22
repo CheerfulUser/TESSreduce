@@ -483,14 +483,16 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True):
 	c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
 	ra = c.ra.deg
 	dec = c.dec.deg
-	
 	outID, outEclipLong, outEclipLat, outSecs, outCam, outCcd, outColPix, \
 	outRowPix, scinfo = focal_plane(0, ra, dec)
 	
 	sec_times = pd.read_csv(package_directory + 'sector_mjd.csv')
 	if len(outSecs) > 0:
 		ind = outSecs - 1 
-		secs = sec_times.iloc[ind]
+
+		new_ind = [i for i in ind if i < len(sec_times)]
+
+		secs = sec_times.iloc[new_ind]
 		if (time.lower() == 'disc') | (time.lower() == 'discovery'):
 			disc_start = secs['mjd_start'].values - disc_t.mjd
 			disc_end = secs['mjd_end'].values - disc_t.mjd
