@@ -436,7 +436,7 @@ def grad_flux_rad(flux):
 	rad = np.sqrt(flux**2+np.gradient(flux)**2)
 	return rad
 
-def sn_lookup(name,time='disc',buffer=0,print_table=True):
+def sn_lookup(name,time='disc',buffer=0,print_table=True, df = False):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
 	discovery/max times and coordinates.
@@ -523,12 +523,15 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True):
 
 		if print_table: 
 			print(tabulate(tab, headers=['Sector', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
-		return tr_list
+		if df:
+			return pd.DataFrame(tr_list, columns = ['RA', 'DEC','Sector','Covers'])
+		else:
+			return tr_list
 	else:
 		print('No TESS coverage')
 		return None
 
-def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True):
+def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True, df = False):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
 	discovery/max times and coordinates.
@@ -687,12 +690,17 @@ class tessreduce():
 
 
 		if obs_list is not None:
-			obs_list = np.array(obs_list,dtype=object)
-			if len(obs_list.shape) > 1:
-				obs_list = obs_list[obs_list[:,3].astype('bool')][0]
-			self.ra = obs_list[0]
-			self.dec = obs_list[1]
-			self.sector = obs_list[2]
+			if isinstance(obs_list,list):
+				obs_list = np.array(obs_list,dtype=object)
+				if len(obs_list.shape) > 1:
+					obs_list = obs_list[obs_list[:,3].astype('bool')][0]
+				self.ra = obs_list[0]
+				self.dec = obs_list[1]
+				self.sector = obs_list[2]
+			elif isinstance(obs_list, pd.DataFrame):
+				self.ra = obs_list['RA'].to_numpy()[0]
+				self.dec = obs_list['DEC'].to_numpy()[0]
+				self.sector = obs_list['Sector'].to_numpy()
 
 		if tpf is not None:
 			if type(tpf) == str:
