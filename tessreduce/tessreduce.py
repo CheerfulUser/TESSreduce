@@ -272,18 +272,18 @@ class tessreduce():
 		data = (self._flux_aligned - self.ref) #* mask
 		if self.parallel:
 			try:
-				m = Parallel(n_jobs=self.num_cores)(delayed(_par_psf_source_mask)(frame,self.prf,sigma) for frame in data)
+				m = Parallel(n_jobs=self.num_cores)(delayed(par_psf_source_mask)(frame,self.prf,sigma) for frame in data)
 				m = np.array(m)
 			except:
 				m = np.ones_like(data)
 				for i in range(data.shape[0]):
 					#m[i] = _par_psf_source_mask(data[i],self.prf,sigma)
-					eh = _par_psf_source_mask(data[i],self.prf,sigma)
+					eh = par_psf_source_mask(data[i],self.prf,sigma)
 					m[i] = eh
 		else:
 			m = np.ones_like(data)
 			for i in range(data.shape[0]):
-				m[i] = _par_psf_source_mask(data[i],self.prf,sigma)
+				m[i] = par_psf_source_mask(data[i],self.prf,sigma)
 		return m * 1.0
 
 	def background(self,calc_qe=True, strap_iso=True,source_hunt=False,gauss_smooth=2,interpolate=True):
@@ -371,13 +371,13 @@ class tessreduce():
 			kern = np.ones((1,3,3))
 			dist_mask = convolve(dist_mask,kern) > 0
 			if self.parallel:
-				bkg_3 = Parallel(n_jobs=self.num_cores)(delayed(_parallel_bkg3)(self.bkg[i],dist_mask[i]) 
+				bkg_3 = Parallel(n_jobs=self.num_cores)(delayed(parallel_bkg3)(self.bkg[i],dist_mask[i]) 
 														   for i in np.arange(len(dist_mask)))
 			else:
 				bkg_3 = []
 				bkg_smth = np.zeros_like(dist_mask)
 				for i in range(len(dist_mask)):
-					bkg_3[i] = _parallel_bkg3(self.bkg[i],dist_mask[i])
+					bkg_3[i] = parallel_bkg3(self.bkg[i],dist_mask[i])
 			self.bkg = np.array(bkg_3)
 
 	def get_ref(self,start = None, stop = None):
@@ -1209,10 +1209,10 @@ class tessreduce():
 					_, cutouts = self._psf_initialise(size,(xPix,yPix),ref=False)
 			if self.parallel:
 				inds = np.arange(len(cutouts))
-				flux = Parallel(n_jobs=self.num_cores)(delayed(_par_psf_flux)(cutouts[i],base,self.shift[i]) for i in inds)
+				flux = Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i]) for i in inds)
 			else:
 				for i in range(len(cutouts)):
-					flux += [_par_psf_flux(cutouts[i],base,self.shift[i])]
+					flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
 			if plot:
 				plt.figure()
 				plt.plot(flux)
@@ -1355,7 +1355,8 @@ class tessreduce():
 				except:
 					print('Something went wrong, switching to serial')
 					self.parallel = False
-					self.centroids_DAO()
+					#self.centroids_DAO()
+					self.fit_shift()
 					#self.fit_shift()
 				#self.fit_shift()
 			

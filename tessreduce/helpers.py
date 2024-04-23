@@ -11,10 +11,9 @@ from scipy.ndimage import gaussian_filter
 from skimage.restoration import inpaint
 
 from scipy.signal import savgol_filter
-
-
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
+from scipy.optimize import minimize
 
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import sigma_clip
@@ -27,6 +26,7 @@ package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
+
 
 import requests
 import json
@@ -131,7 +131,7 @@ def unknown_mask(image):
 	return mask
 
 
-def _parallel_bkg3(data,mask):
+def parallel_bkg3(data,mask):
 	data[mask] = np.nan
 	estimate = inpaint.inpaint_biharmonic(data,mask)
 	return estimate
@@ -387,89 +387,6 @@ def grad_flux_rad(flux):
 	return rad
 
 
-def __sn_lookup_tns(name,buffer=10,print_table=True):
-	"""
-	Check for overlapping TESS ovservations for a transient. Uses TNS for 
-	discovery time and coordinates.
-
-	------
-	Inputs
-	------
-	name : str
-		catalog name
-	time : str
-		reference time to use, can be either disc, or max
-	buffer : float
-		overlap buffer time in days 
-	
-	-------
-	Options
-	-------
-	print_table : bool 
-		if true then the lookup table is printed
-
-	-------
-	Returns
-	-------
-	tr_list : list
-		list of ra, dec, and sector that can be put into tessreduce.
-	"""
-	name = name[name.index('2'):]
-	url = f'https://www.wis-tns.org/object/{name}' # hard coding in that the event is in the 2000s
-	headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36'}
-	result = requests.get(url, headers=headers)
-	if result.ok:
-		ra, dec = result.text.split('<div class="alter-value">')[-1].split('<')[0].split(' ')
-		ra = float(ra); dec = float(dec)
-		disc_t = Time(result.text.split('<span class="name">Discovery Date</span><div class="value"><b>')[-1].split('<')[0])
-
-		c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
-		ra = c.ra.deg
-		dec = c.dec.deg
-		
-		outID, outEclipLong, outEclipLat, outSecs, outCam, outCcd, outColPix, \
-		outRowPix, scinfo = focal_plane(0, ra, dec)
-		
-		sec_times = pd.read_csv(package_directory + 'sector_mjd.csv')
-		if len(outSecs) > 0:
-			ind = outSecs - 1 
-			secs = sec_times.iloc[ind]
-			disc_start = secs['mjd_start'].values - disc_t.mjd
-			disc_end = secs['mjd_end'].values - disc_t.mjd
-
-			covers = []
-			differences = []
-			tr_list = []
-			tab = []
-			for i in range(len(disc_start)):
-				ds = disc_start[i]
-				de = disc_end[i]
-				if (ds-buffer <= 0) & (de + buffer >= 0):
-					cover = True
-					dif = 0
-				elif (de+buffer < 0):
-					cover = False
-					dif = de
-				elif (ds-buffer > 0):
-					cover = False
-					dif = ds
-				else:
-					print(disc_t.mjd)
-				print(disc_t.mjd)
-				covers += [cover]
-				differences += [dif]
-				tab += [[secs.Sector.values[i], cover, dif]]
-				tr_list += [[ra, dec, secs.Sector.values[i], cover]]
-
-			if print_table: 
-				print(tabulate(tab, headers=['Sector', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
-			return tr_list
-		else:
-			print('No TESS coverage')
-			return None
-	else:
-		print(f'{name} not found on TNS')
-
 def sn_lookup(name,time='disc',buffer=0,print_table=True):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
@@ -653,7 +570,7 @@ def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True):
 		return None
 
 
-def _par_psf_source_mask(data,prf,sigma=5):
+def par_psf_source_mask(data,prf,sigma=5):
 
 	mean, med, std = sigma_clipped_stats(data, sigma=3.0)
 
@@ -669,7 +586,7 @@ def _par_psf_source_mask(data,prf,sigma=5):
 			m[y[i]-fwhm[i]//2:y[i]+fwhm[i]//2,x[i]-fwhm[i]//2:x[i]+fwhm[i]//2] = 0
 	return m
 
-def _par_psf_flux(image,prf,shift=[0,0]):
+def par_psf_flux(image,prf,shift=[0,0]):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
 	prf.psf_flux(image,ext_shift=shift)
