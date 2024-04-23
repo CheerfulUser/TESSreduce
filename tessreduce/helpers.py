@@ -387,7 +387,7 @@ def grad_flux_rad(flux):
 	return rad
 
 
-def sn_lookup(name,buffer=10,print_table=True):
+def __sn_lookup_tns(name,buffer=10,print_table=True):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses TNS for 
 	discovery time and coordinates.
@@ -414,13 +414,14 @@ def sn_lookup(name,buffer=10,print_table=True):
 	tr_list : list
 		list of ra, dec, and sector that can be put into tessreduce.
 	"""
-	url = f'https://www.wis-tns.org/object/{name[name.index('2'):]}' # hard coding in that the event is in the 2000s
+	name = name[name.index('2'):]
+	url = f'https://www.wis-tns.org/object/{name}' # hard coding in that the event is in the 2000s
 	headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36'}
 	result = requests.get(url, headers=headers)
 	if result.ok:
 		ra, dec = result.text.split('<div class="alter-value">')[-1].split('<')[0].split(' ')
 		ra = float(ra); dec = float(dec)
-		disc_t = result.text.split('<span class="name">Discovery Date</span><div class="value"><b>')[-1].split('<')[0]
+		disc_t = Time(result.text.split('<span class="name">Discovery Date</span><div class="value"><b>')[-1].split('<')[0])
 
 		c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
 		ra = c.ra.deg
@@ -443,7 +444,7 @@ def sn_lookup(name,buffer=10,print_table=True):
 			for i in range(len(disc_start)):
 				ds = disc_start[i]
 				de = disc_end[i]
-				if (ds-buffer < 0) & (de + buffer> 0):
+				if (ds-buffer <= 0) & (de + buffer >= 0):
 					cover = True
 					dif = 0
 				elif (de+buffer < 0):
@@ -452,6 +453,9 @@ def sn_lookup(name,buffer=10,print_table=True):
 				elif (ds-buffer > 0):
 					cover = False
 					dif = ds
+				else:
+					print(disc_t.mjd)
+				print(disc_t.mjd)
 				covers += [cover]
 				differences += [dif]
 				tab += [[secs.Sector.values[i], cover, dif]]
@@ -466,7 +470,7 @@ def sn_lookup(name,buffer=10,print_table=True):
 	else:
 		print(f'{name} not found on TNS')
 
-def __sn_lookup_old(name,time='disc',buffer=0,print_table=True):
+def sn_lookup(name,time='disc',buffer=0,print_table=True):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
 	discovery/max times and coordinates.
@@ -493,20 +497,37 @@ def __sn_lookup_old(name,time='disc',buffer=0,print_table=True):
 	tr_list : list
 		list of ra, dec, and sector that can be put into tessreduce.
 	"""
-	url = 'https://api.astrocats.space/{}'.format(name)
-	response = requests.get(url)
-	json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
-	d = json.loads(json_acceptable_string)
-	if list(d.keys())[0] == 'message':
-		print(d['message'])
-		return None
-	else:
-		disc_t = d[name]['discoverdate'][0]['value']
-		disc_t = Time(disc_t.replace('/','-'))
-		
+	try:
+		url = 'https://api.astrocats.space/{}'.format(name)
+		response = requests.get(url)
+		json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
+		d = json.loads(json_acceptable_string)
+		if list(d.keys())[0] == 'message':
+			print(d['message'])
+			return None
+		else:
+			disc_t = d[name]['discoverdate'][0]['value']
+			disc_t = Time(disc_t.replace('/','-'))
+			
 
-	max_t = d[name]['maxdate'][0]['value']
-	max_t = Time(max_t.replace('/','-'))
+		max_t = d[name]['maxdate'][0]['value']
+		max_t = Time(max_t.replace('/','-'))
+	except:
+		print('!! Open SNe Catalog down, using TNS !!')
+		name = name[name.index('2'):]
+		url = f'https://www.wis-tns.org/object/{name}' # hard coding in that the event is in the 2000s
+		headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36'}
+		result = requests.get(url, headers=headers)
+		if result.ok:
+			ra, dec = result.text.split('<div class="alter-value">')[-1].split('<')[0].split(' ')
+			ra = float(ra); dec = float(dec)
+			disc_t = Time(result.text.split('<span class="name">Discovery Date</span><div class="value"><b>')[-1].split('<')[0])
+			max_t = deepcopy(disc_t)
+
+			c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
+			ra = c.ra.deg
+			dec = c.dec.deg
+
 
 	ra = d[name]['ra'][-1]['value']
 	dec = d[name]['dec'][-1]['value']
@@ -535,7 +556,7 @@ def __sn_lookup_old(name,time='disc',buffer=0,print_table=True):
 		for i in range(len(disc_start)):
 			ds = disc_start[i]
 			de = disc_end[i]
-			if (ds-buffer < 0) & (de + buffer> 0):
+			if (ds-buffer <= 0) & (de + buffer >= 0):
 				cover = True
 				dif = 0
 			elif (de+buffer < 0):
