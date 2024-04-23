@@ -16,23 +16,15 @@ from copy import deepcopy
 from scipy.ndimage.filters import convolve
 from scipy.ndimage import shift
 from scipy.ndimage import gaussian_filter
-from scipy.ndimage import median_filter
 from skimage.restoration import inpaint
-from scipy import signal
-import cv2
 
-from sklearn.cluster import OPTICS, cluster_optics_dbscan
+from sklearn.cluster import OPTICS
 
 from scipy.signal import savgol_filter
 
 
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
-from scipy.interpolate import UnivariateSpline
-from scipy.stats import pearsonr
-
-from photutils.centroids import centroid_com
-from photutils import DAOStarFinder
 
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import sigma_clip
@@ -327,7 +319,7 @@ def difference_shifts(image,ref):
 	"""
 	if np.nansum(abs(image)) > 0:
 		x0= [0,0]
-		#bds = [(-2,2),(-2,2)]
+		bds = [(-2,2),(-2,2)]
 		res = minimize(image_sub,x0,args=(image,ref),method = 'Powell')#,bounds= bds)
 		s = res.x
 	else:
@@ -1757,7 +1749,7 @@ class tessreduce():
 
 		elif type(snap) == str:
 			if snap == 'brightest': # each cutout has position snapped to brightest frame fit position
-				prf, cutouts = self._psf_initialise(size,(xPix,yPix),(not diff))   # gather base PRF and the array of cutouts data
+				prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
 				ind = np.where(cutouts==np.nanmax(cutouts))[0][0]
 				ref = cutouts[ind]
 				base = create_psf(prf,size,repFact=repFact)
@@ -1988,7 +1980,7 @@ class tessreduce():
 				self.field_calibrate()
 
 			
-			self.lc, self.sky = self.diff_lc(plot=True,diff=self.diff_lc,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
+			self.lc, self.sky = self.diff_lc(plot=True,diff=self.diff,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
 		except Exception:
 			print(traceback.format_exc())
 
