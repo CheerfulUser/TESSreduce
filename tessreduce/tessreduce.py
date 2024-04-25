@@ -3027,7 +3027,7 @@ def external_save_cat(radec,size,cutCornerPx,image_path,save_path,maglim):
 	gp,gm, source = Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit=maglim)
 	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm,source]).T,columns=['ra','dec','mag','Source'])
 
-	gaia.to_csv(f'{save_path}/local_gaia_cat.csv')
+	gaia.to_csv(f'{save_path}/local_gaia_cat.csv',index=False)
 
 def _load_external_cat(path,maglim):
 
