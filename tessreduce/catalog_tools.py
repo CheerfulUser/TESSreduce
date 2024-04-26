@@ -31,10 +31,8 @@ def Get_Catalogue(tpf, Catalog = 'gaia'):
 		Gmag 	array 	Gmags of sources
 	"""
 	c1 = SkyCoord(tpf.ra, tpf.dec, frame='icrs', unit='deg')
-	# Use pixel scale for query size
-	pix_scale = 4.0  # arcseconds / pixel for Kepler, default
-	if tpf.mission == 'TESS':
-		pix_scale = 21.0
+	# Use pixel scale for query size	
+	pix_scale = 21.0
 	# We are querying with a diameter as the radius, overfilling by 2x.
 	from astroquery.vizier import Vizier
 	Vizier.ROW_LIMIT = -1
@@ -50,10 +48,10 @@ def Get_Catalogue(tpf, Catalog = 'gaia'):
 		raise ValueError("{} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
 	if Catalog == 'gaia':
 		result = Vizier.query_region(c1, catalog=[catalog],
-                             		 radius=Angle(1890, "arcsec"),column_filters={'Gmag':'<19'})
+                             		 radius=Angle(np.max(tpf.shape[1:]) * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
 	else:
 		result = Vizier.query_region(c1, catalog=[catalog],
-									 radius=Angle(np.max(tpf.shape[1:]) * pix_scale, "arcsec"))
+									 radius=Angle(np.max(tpf.shape[1:]) * pix_scale + 60, "arcsec"))
 
 	no_targets_found_message = ValueError('Either no sources were found in the query region '
 										  'or Vizier is unavailable')
@@ -163,6 +161,7 @@ def Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit = 18, Offs
 
 	coords[:,0] -= cutCornerPx[0]
 	coords[:,1] -= cutCornerPx[1]
+	source = result['Source'].values
 	Gmag = result['Gmag'].values
 	#Jmag = result['Jmag']
 	ind = (((coords[:,0] >= -20) & (coords[:,1] >= -20)) & 
@@ -170,9 +169,10 @@ def Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit = 18, Offs
 	coords = coords[ind]
 	radecs = radecs[ind]
 	Gmag = Gmag[ind]
+	source = source[ind]
 	Tmag = Gmag - 0.5
 	#Jmag = Jmag[ind]
-	return radecs, Tmag
+	return radecs, Tmag, source
 
 def Get_Gaia(tpf, magnitude_limit = 18, Offset = 10):
 	"""
