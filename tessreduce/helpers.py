@@ -593,3 +593,31 @@ def par_psf_flux(image,prf,shift=[0,0]):
 		shift = np.array([0,0])
 	prf.psf_flux(image,ext_shift=shift)
 	return prf.flux
+
+
+def external_save_TESS(ra,dec,sector,size=90,quality_bitmask='default',cache_dir=None):
+
+	c = SkyCoord(ra=float(ra)*u.degree, dec=float(dec) * u.degree, frame='icrs')
+	tess = lk.search_tesscut(c,sector=sector)
+	tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=size,download_dir=cache_dir)
+
+	if tpf is None:
+		m = 'Failure in TESScut api, not sure why.'
+		raise ValueError(m)
+	
+	else:
+		os.system(f'mv {tpf.path} {os.getcwd()}')
+
+def external_get_TESS():
+
+	found = False
+	target = None
+	l = os.listdir()
+	for thing in l:
+		if 'astrocut.fits' in thing:
+			if not found:
+				target = thing
+			else:
+				print('Too Many tpfs here!')
+	tpf = lk.TessTargetPixelFile(target)
+	return tpf
