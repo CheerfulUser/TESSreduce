@@ -885,7 +885,7 @@ class tessreduce():
 
 	def psf_source_mask(self,mask,sigma=5):
 		
-		prf_directory = '/fred/oz100/_local_TESS_PRFs'
+		prf_directory = '/fred/oz335/_local_TESS_PRFs'
 
 		if self.sector < 4:
 			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
