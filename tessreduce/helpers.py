@@ -132,8 +132,9 @@ def unknown_mask(image):
 
 
 def parallel_bkg3(data,mask):
-	data[mask] = np.nan
-	estimate = inpaint.inpaint_biharmonic(data,mask)
+	new_data = deepcopy(data)
+	new_data[mask] = np.nan
+	estimate = inpaint.inpaint_biharmonic(new_data,mask)
 	return estimate
 
 def Smooth_bkg(data, gauss_smooth=2, interpolate=False, extrapolate=True):
