@@ -8,12 +8,14 @@ from photutils.detection import StarFinder
 from copy import deepcopy
 from scipy.ndimage import shift
 from scipy.ndimage import gaussian_filter
+from scipy.ndimage.filters import convolve
 from skimage.restoration import inpaint
 
 from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.optimize import minimize
+
 
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import sigma_clip
@@ -26,7 +28,7 @@ package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
-
+import lightkurve as lk
 
 import requests
 import json
@@ -621,3 +623,226 @@ def external_get_TESS():
 				print('Too Many tpfs here!')
 	tpf = lk.TessTargetPixelFile(target)
 	return tpf
+
+
+
+
+def sig_err(data,err=None,sig=5,maxiter=10):
+	if sig is None:
+		sig = 5
+	clipped = data.copy()
+	ind = np.arange(0,len(data))
+	breaker = 0
+	if err is not None:
+		for i in range(maxiter):
+			nonan = np.isfinite(clipped)
+			med = np.average(clipped[nonan],weights=1/err[nonan])
+			#med = np.nanmedian(clipped)
+			std = np.nanstd(clipped)
+			mask = (clipped-1*err > med + 3*std) #| (clipped+1*err < med - 3*std)
+			clipped[mask] = np.nan
+			if ~mask.any():
+				break
+
+		mask = np.isnan(clipped)
+	else:
+		mask = sigma_clip(data,sigma_upper=sig,sigma_lower=10).mask
+	return mask
+
+
+def Identify_masks(Obj):
+	"""
+	Uses an iterrative process to find spacially seperated masks in the object mask.
+	"""
+	objsub = np.copy(Obj*1)
+	Objmasks = []
+
+	mask1 = np.zeros((Obj.shape))
+	if np.nansum(objsub) > 0:
+		mask1[np.where(objsub==1)[0][0]] = 1
+		
+		while np.nansum(objsub) > 0:
+			conv = ((convolve(mask1*1,np.ones(3),mode='constant', cval=0.0)) > 0)*1.0
+			objsub = objsub - mask1
+			objsub[objsub < 0] = 0
+			if np.nansum(conv*objsub) > 0:
+
+				mask1 = mask1 + (conv * objsub)
+				mask1 = (mask1 > 0)*1
+			else:
+
+				Objmasks.append(mask1 > 0)
+				mask1 = np.zeros((Obj.shape))
+				if np.nansum(objsub) > 0:
+					mask1[np.where(objsub==1)[0][0]] = 1
+	return np.array(Objmasks)
+
+def auto_tail(lc,mask,err = None):
+	if err is not None:
+		higherr = sigma_clip(err,sigma=2).mask
+	else:
+		higherr = False
+	masks = Identify_masks(mask*1)
+	med = np.nanmedian(lc[1][~mask & ~higherr])
+	std = np.nanstd(lc[1][~mask & ~higherr])
+
+	if lc.shape[1] > 4000:
+		tail_length = 50
+		start_length = 10
+
+	else:
+		tail_length = 5
+		start_length = 1
+			
+	for i in range(len(masks)):
+		m = np.argmax(lc[1]*masks[i])
+		sig = (lc[1][m] - med) / std
+		median = np.nanmedian(sig[sig>0])
+		if median > 50:
+			sig = sig / 100
+			#sig[(sig < 1) & (sig > 0)] = 1
+		if sig > 20:
+			sig = 20
+		if sig < 0:
+			sig = 0
+		masks[i][int(m-sig*start_length):int(m+tail_length*sig)] = 1
+		masks[i] = masks[i] > 0
+	summed = np.nansum(masks*1,axis=0)
+	mask = summed > 0 
+	return ~mask
+		
+def Multiple_day_breaks(lc):
+	"""
+	If the TESS data has a section of data isolated by at least a day either side,
+	it is likely poor data. Such regions are identified and removed.
+	
+	Inputs:
+	-------
+	Flux - 3d array
+	Time - 1d array
+	
+	Output:
+	-------
+	removed_flux - 3d array
+	"""
+	ind = np.where(~np.isnan(lc[1]))[0]
+	breaks = np.array([np.where(np.diff(lc[0][ind]) > .5)[0] +1])
+	breaks = np.insert(breaks,0,0)
+	breaks = np.append(breaks,len(lc[0]))
+	return breaks
+
+
+
+### Serious source mask
+from .catalog_tools import *
+from sklearn.cluster import OPTICS
+def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
+	"""
+	Make a source mask from the PS1 and Gaia catalogs.
+
+	------
+	Inputs
+	------
+	tpf : lightkurve target pixel file
+		tpf of the desired region
+	maglim : float
+		magnitude limit in PS1 i band  and Gaia G band for sources.
+	scale : float
+		scale factor for default mask size 
+	strapsize : int
+		size of the mask for TESS straps 
+	badpix : str
+		not implemented correctly, so just ignore! 
+
+	-------
+	Returns
+	-------
+	total mask : bitmask
+		a bitwise mask for the given tpf. Bits are as follows:
+		0 - background
+		1 - catalogue source
+		2 - saturated source
+		4 - strap mask
+		8 - bad pixel (not used)
+	"""
+	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
+	wcs = tpf.wcs
+	image = tpf.flux[100]
+	image = strip_units(image)
+	gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
+	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
+	#if tpf.dec > -30:
+	#	pp,pm = Get_PS1(tpf,magnitude_limit=maglim)
+	#	ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
+	#	mp  = ps1_auto_mask(ps1,image,scale)
+	#else:
+	#	mp = {}
+	#	mp['all'] = np.zeros_like(image)
+	
+	sat = Big_sat(gaia,image,scale)
+	if ref is None:
+		mg  = gaia_auto_mask(gaia,image,scale)
+		mask = (mg['all'] > 0).astype(int) * 1 # assign 1 bit
+	else:
+		mg = np.zeros_like(ref,dtype=int)
+		mean, med, std = sigma_clipped_stats(ref)
+		lim = med + sigma * std
+		ind = ref > lim
+		mg[ind] = 1
+		mask = (mg > 0).astype(int) * 1 # assign 1 bit
+	
+
+	sat = (np.nansum(sat,axis=0) > 0).astype(int) * 2 # assign 2 bit 
+	#mask = ((mg['all']+mp['all']) > 0).astype(int) * 1 # assign 1 bit
+	
+	if strapsize > 0: 
+		strap = Strap_mask(image,tpf.column,strapsize).astype(int) * 4 # assign 4 bit 
+	else:
+		strap = np.zeros_like(image,dtype=int)
+	if badpix is not None:
+		bp = cat_mask.Make_bad_pixel_mask(badpix, file)
+		totalmask = mask | sat | strap | bp
+	else:
+		totalmask = mask | sat | strap
+	
+	return totalmask, gaia
+
+
+#### CLUSTERING 
+
+def Cluster_lc(lc):
+	arr = np.array([np.gradient(lc[1]),lc[1]])
+	clust = OPTICS(min_samples=12, xi=.05, min_cluster_size=.05)
+	opt = clust.fit(arr.T)
+	lab = opt.labels_
+	keys = np.unique(opt.labels_)
+	
+	m = np.zeros(len(keys))
+	for i in range(len(keys)):
+		m[i] = np.nanmedian(lc[1,keys[i]==lab])
+	bkg_ind = lab == keys[np.nanargmin(m)]
+	other_ind = ~bkg_ind
+	
+	return bkg_ind, other_ind
+
+def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=48*2):
+	bkg_ind, other_ind = Cluster_lc(lc)
+	leng = 5
+	if smoothing:
+		for i in range(leng-2):
+			kern = np.zeros((leng))
+			kern[[0, -1]] = 1
+			other_ind[convolve(other_ind*1, kern) > 1] = True
+			leng -= 1
+	segments = Identify_masks(other_ind)
+	clipped = lc[1].copy()
+	med = np.nanmedian(clipped[bkg_ind])
+	std = np.nanstd(clipped[bkg_ind])
+	if err is not None:
+		mask = (clipped-1*err > med + sig*std)
+	else:
+		mask = (clipped > med + sig*std)
+	overlap = np.nansum(mask * segments,axis=1) > 0
+	mask = np.nansum(segments[overlap],axis=0)>0 
+	mask = convolve(mask,np.ones(buffer)) > 0
+	return mask
