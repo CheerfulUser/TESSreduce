@@ -149,8 +149,8 @@ class tessreduce():
 		elif self.check_coord():
 			if self.verbose>0:
 				print('getting TPF from TESScut')
-			#self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
-			self.tpf = external_get_TESS()
+			self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
+			#self.tpf = external_get_TESS()
 			self.flux = strip_units(self.tpf.flux)
 			self.wcs  = self.tpf.wcs
 
