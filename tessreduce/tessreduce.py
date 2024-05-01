@@ -231,7 +231,7 @@ class tessreduce():
 			ind = self.ref > self._harshmask_counts
 			self.ref[ind]
 
-	def make_mask(self,catalogue_path,maglim=19,scale=1,strapsize=6,useref=False):
+	def make_mask(self,catalogue_path=None,maglim=19,scale=1,strapsize=6,useref=False):
 		# make a diagnostic plot for mask
 		data = strip_units(self.flux)
 		if useref:
@@ -274,16 +274,18 @@ class tessreduce():
 
 	def psf_source_mask(self,mask,sigma=5):
 		
-		prf_directory = '/fred/oz100/_local_TESS_PRFs'
-
-		if self.sector < 4:
-			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
-							self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
-							localdatadir=f'{prf_directory}/Sectors1_2_3')
-		else:
-			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
-							self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
-							localdatadir=f'{prf_directory}/Sectors4+')
+		
+		prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+				   	   self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
+		#prf_directory = '/fred/oz100/_local_TESS_PRFs'
+		#if self.sector < 4:
+		#	prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+		#					self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
+		#					localdatadir=f'{prf_directory}/Sectors1_2_3')
+		#else:
+		#	prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+		#					self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
+		#					localdatadir=f'{prf_directory}/Sectors4+')
 		self.prf =  prf.locate(5,5,(11,11))
 
 		
@@ -2428,7 +2430,7 @@ def _load_external_cat(path,maglim):
 
 ### Serious source mask
 
-def Cat_mask(tpf,cataloge_path,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
+def Cat_mask(tpf,cataloge_path=None,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
 	"""
 	Make a source mask from the PS1 and Gaia catalogs.
 
@@ -2458,10 +2460,15 @@ def Cat_mask(tpf,cataloge_path,maglim=19,scale=1,strapsize=3,badpix=None,ref=Non
 		8 - bad pixel (not used)
 	"""
 	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
-	gaia  = _load_external_cat(cataloge_path,maglim)
-	coords = tpf.wcs.all_world2pix(gaia['ra'],gaia['dec'], 0)
-	gaia['x'] = coords[0]
-	gaia['y'] = coords[1]
+	wcs = tpf.wcs
+	image = tpf.flux[100]
+	image = strip_units(image)
+	gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
+	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
+	#gaia  = _load_external_cat(cataloge_path,maglim)
+	#coords = tpf.wcs.all_world2pix(gaia['ra'],gaia['dec'], 0)
+	#gaia['x'] = coords[0]
+	#gaia['y'] = coords[1]
 
 	#if tpf.dec > -30:
 	#	pp,pm = Get_PS1(tpf,magnitude_limit=maglim)
