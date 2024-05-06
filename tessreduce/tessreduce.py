@@ -850,8 +850,9 @@ class tessreduce():
 		if mask is not None:
 			ap_sky = mask
 			ap_sky[ap_sky==0] = np.nan
-		sky_med = np.nanmedian(ap_sky*data,axis=(1,2))
-		sky_std = np.nanstd(ap_sky*data,axis=(1,2))
+		mean_sky, sky_med, sky_std = sigma_clipped_stats(ap_sky*data,axis=(1,2))
+		#sky_med = np.nanmedian(ap_sky*data,axis=(1,2))
+		#sky_std = np.nanstd(ap_sky*data,axis=(1,2))
 		if phot_method == 'aperture':
 			if self.diff:
 				tar = np.nansum(data*ap_tar,axis=(1,2))
