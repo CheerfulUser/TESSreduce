@@ -1,5 +1,4 @@
 import numpy as np
-import PRF
 from skimage.util.shape import view_as_windows
 from scipy.optimize import minimize
 from tqdm import tqdm
@@ -17,13 +16,12 @@ def downSample2d(arr,sf):
     return windows.sum(3).sum(2)*isf2
 
 class create_psf():
-    def __init__(self,prf,size,repFact=10):
+    def __init__(self,prf,size):
         
         self.prf = prf
         self.size = size
         self.source_x = 0         # offset of source from centre
         self.source_y = 0         # offset of source from centre
-        self.repFact=repFact     # supersample multiplication
 
         # -- Finds centre of kernel -- #
         self.cent=self.size/2.-0.5

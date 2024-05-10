@@ -31,6 +31,7 @@ from astropy import wcs
 
 import multiprocessing
 from joblib import Parallel, delayed
+from tqdm import tqdm
 
 from .catalog_tools import *
 from .calibration_tools import *
@@ -155,6 +156,7 @@ class tessreduce():
 			self.wcs  = self.tpf.wcs
 
 		self.ground = ground(ra = self.ra, dec = self.dec)
+		self._get_gaia()
 
 		if reduce:
 			self.reduce()
@@ -165,6 +167,22 @@ class tessreduce():
 			return False
 		else:
 			return True
+
+	def _get_gaia(self,maglim=21):
+		result = Get_Catalogue(self.tpf, Catalog = 'gaia')
+		result = result[result.Gmag < maglim]
+		result = result.rename(columns={'RA_ICRS': 'ra',
+                               'DE_ICRS': 'dec',
+                               'e_RA_ICRS': 'e_ra',
+                               'e_DE_ICRS': 'e_dec',})
+		x,y = self.wcs.all_world2pix(result['ra'].values,result['dec'].values,0)
+		result['x'] = x; result['y'] = y
+		ind = (((x > 0) & (y > 0)) & 
+		 	  ((x < (self.flux.shape[2])) & (y < (self.flux.shape[1]))))
+		result = result.iloc[ind]
+
+		self.gaia = result
+		
 
 	def _assign_phot_method(self,phot_method):
 		if type(phot_method) == str:
@@ -564,8 +582,9 @@ class tessreduce():
 		sources = ((self.mask & 1) ==1) * 1.0 - (self.mask & 2)
 		sources[sources<=0] = 0
 
-		f = self.flux * sources[np.newaxis,:,:]
+		f = self.flux #* sources[np.newaxis,:,:]
 		m = self.ref.copy() * sources
+		m[m==0] = np.nan
 		if self.parallel:
 
 			shifts = Parallel(n_jobs=self.num_cores)(
@@ -859,7 +878,7 @@ class tessreduce():
 			else:
 				tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
 			tar -= sky_med * tar_ap**2
-			tar_err = sky_std #* tar_ap**2
+			tar_err = sky_std * tar_ap**2
 		if phot_method == 'psf':
 			tar = self.psf_photometry(x,y,diff=diff)
 			tar_err = sky_std # still need to work this out
@@ -1148,9 +1167,9 @@ class tessreduce():
 		"""
 		For gathering the cutouts and PRF base.
 		"""
-		if type(loc[0]) == float:
+		if (type(loc[0]) == float) | (type(loc[0]) == np.float64) |  (type(loc[0]) == np.float32):
 			loc[0] = int(loc[0]+0.5)
-		if type(loc[1]) == float:
+		if (type(loc[1]) == float) | (type(loc[1]) == np.float64) |  (type(loc[1]) == np.float32):
 			loc[1] = int(loc[1]+0.5)
 		col = self.tpf.column - int(self.size/2-1) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
 		row = self.tpf.row - int(self.size/2-1) + loc[1] 
@@ -1162,7 +1181,7 @@ class tessreduce():
 			cutout = self.flux[:,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 		return prf, cutout
 
-	def psf_photometry(self,xPix,yPix,size=5,repFact=10,snap='brightest',ext_shift=True,plot=False,diff=None):
+	def psf_photometry(self,xPix,yPix,size=5,snap='brightest',ext_shift=True,plot=False,diff=None):
 		"""
 		Main Function! Just switch self to self inside tessreduce and all should follow.
 
@@ -1199,7 +1218,7 @@ class tessreduce():
 			xShifts = []
 			yShifts = []
 			for cutout in tqdm(cutouts):
-				PSF = create_psf(prf,size,repFact)
+				PSF = create_psf(prf,size)
 				PSF.psf_position(cutout)
 				PSF.psf_flux(cutout)
 				flux.append(PSF.flux)
@@ -1219,12 +1238,12 @@ class tessreduce():
 				prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
 				ind = np.where(cutouts==np.nanmax(cutouts))[0][0]
 				ref = cutouts[ind]
-				base = create_psf(prf,size,repFact=repFact)
+				base = create_psf(prf,size)
 				base.psf_position(ref,ext_shift=self.shift[ind])
 			elif snap == 'ref':
 				prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=True)   # gather base PRF and the array of cutouts data
 				ref = cutouts[self.ref_ind]
-				base = create_psf(prf,size,repFact=repFact)
+				base = create_psf(prf,size)
 				base.psf_position(ref)
 				if diff:
 					_, cutouts = self._psf_initialise(size,(xPix,yPix),ref=False)
@@ -1244,7 +1263,7 @@ class tessreduce():
 			base = create_psf(prf,size)
 			base.psf_position(cutouts[snap])
 			for cutout in cutouts:
-				PSF = create_psf(prf,size,repFact)
+				PSF = create_psf(prf,size)
 				PSF.source_x = base.source_x
 				PSF.source_y = base.source_y
 				PSF.psf_flux(cutout)
@@ -1380,6 +1399,8 @@ class tessreduce():
 					self.fit_shift()
 					#self.fit_shift()
 				#self.fit_shift()
+			else:
+				self.shift = np.zeros((len(self.flux),2))
 			
 			if not self.diff:
 				if self.align:
