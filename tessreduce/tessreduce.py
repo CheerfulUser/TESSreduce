@@ -572,8 +572,9 @@ class tessreduce():
 		sources = ((self.mask & 1) ==1) * 1.0 - (self.mask & 2)
 		sources[sources<=0] = 0
 
-		f = self.flux * sources[np.newaxis,:,:]
+		f = self.flux #* sources[np.newaxis,:,:]
 		m = self.ref.copy() * sources
+		m[m==0] = np.nan
 		if self.parallel:
 
 			shifts = Parallel(n_jobs=self.num_cores)(
