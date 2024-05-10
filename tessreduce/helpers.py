@@ -278,10 +278,12 @@ def difference_shifts(image,ref):
 	"""
 	if np.nansum(abs(image)) > 0:
 		x0= [0,0]
-		bds = [(-2,2),(-2,2)]
-		res = minimize(image_sub,x0,args=(image,ref),method = 'Powell')#,bounds= bds)
+		bds = [(-1,1),(-1,1)]
+		res = minimize(image_sub,x0,args=(image,ref),method = 'Powell',bounds= bds)
 		s = res.x
 	else:
+		s = np.zeros((2)) * np.nan
+	if (s == np.ones((2))).any():
 		s = np.zeros((2)) * np.nan
 	return s
 
