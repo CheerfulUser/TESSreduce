@@ -391,7 +391,7 @@ def grad_flux_rad(flux):
 	return rad
 
 
-def sn_lookup(name,time='disc',buffer=0,print_table=True):
+def sn_lookup(name,time='disc',buffer=0,print_table=True, df = False):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
 	discovery/max times and coordinates.
@@ -464,7 +464,10 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True):
 	sec_times = pd.read_csv(package_directory + 'sector_mjd.csv')
 	if len(outSecs) > 0:
 		ind = outSecs - 1 
-		secs = sec_times.iloc[ind]
+
+		new_ind = [i for i in ind if i < len(sec_times)]
+
+		secs = sec_times.iloc[new_ind]
 		if (time.lower() == 'disc') | (time.lower() == 'discovery'):
 			disc_start = secs['mjd_start'].values - disc_t.mjd
 			disc_end = secs['mjd_end'].values - disc_t.mjd
@@ -495,12 +498,15 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True):
 
 		if print_table: 
 			print(tabulate(tab, headers=['Sector', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
-		return tr_list
+		if df:
+			return pd.DataFrame(tr_list, columns = ['RA', 'DEC','Sector','Covers'])
+		else:
+			return tr_list
 	else:
 		print('No TESS coverage')
 		return None
 
-def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True):
+def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True, df = False, print_all=False):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
 	discovery/max times and coordinates.
@@ -544,7 +550,10 @@ def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True):
 	sec_times = pd.read_csv(package_directory + 'sector_mjd.csv')
 	if len(outSecs) > 0:
 		ind = outSecs - 1 
-		secs = sec_times.iloc[ind]
+
+		new_ind = [i for i in ind if i < len(sec_times)]
+
+		secs = sec_times.iloc[new_ind]
 		disc_start = secs['mjd_start'].values - time
 		disc_end = secs['mjd_end'].values - time
 
@@ -570,7 +579,10 @@ def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True):
 			tr_list += [[ra, dec, secs.Sector.values[i],outCam[i], outCcd[i], cover]]
 		if print_table: 
 			print(tabulate(tab, headers=['Sector', 'Camera', 'CCD', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
-		return tr_list
+		if df:
+			return pd.DataFrame(tr_list, columns = ['RA', 'DEC','Sector','Camera','CCD','Covers'])
+		else:
+			return tr_list
 	else:
 		print('No TESS coverage')
 		return None
