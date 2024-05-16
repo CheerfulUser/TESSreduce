@@ -604,6 +604,28 @@ def par_psf_source_mask(data,prf,sigma=5):
 			m[y[i]-fwhm[i]//2:y[i]+fwhm[i]//2,x[i]-fwhm[i]//2:x[i]+fwhm[i]//2] = 0
 	return m
 
+
+def par_psf_initialise(flux,camera,ccd,sector,column,row,cutoutSize,loc,time_ind=None,ref=False):
+	"""
+	For gathering the cutouts and PRF base.
+	"""
+	if time_ind is None:
+		time_ind = np.arange(0,len(flux))
+
+	if (type(loc[0]) == float) | (type(loc[0]) == np.float64) |  (type(loc[0]) == np.float32):
+		loc[0] = int(loc[0]+0.5)
+	if (type(loc[1]) == float) | (type(loc[1]) == np.float64) |  (type(loc[1]) == np.float32):
+		loc[1] = int(loc[1]+0.5)
+	col = column - int(flux.shape[2]/2-1) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
+	row = row - int(flux.shape[1]/2-1) + loc[1] 
+		
+	prf = TESS_PRF(camera,ccd,sector,col,row) # initialise psf kernel
+	if ref:
+		cutout = (flux+ref)[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+	else:
+		cutout = flux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+	return prf, cutout
+
 def par_psf_flux(image,prf,shift=[0,0]):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
@@ -846,6 +868,7 @@ def Cluster_lc(lc):
 	other_ind = ~bkg_ind
 	
 	return bkg_ind, other_ind
+
 
 def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=48*2):
 	bkg_ind, other_ind = Cluster_lc(lc)

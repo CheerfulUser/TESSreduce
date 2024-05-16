@@ -1164,7 +1164,7 @@ class tessreduce():
 		self.bkg = bkg
 
 
-	def _psf_initialise(self,cutoutSize,loc,ref=False,time_ind=None):
+	def _psf_initialise(self,cutoutSize,loc,time_ind=None,ref=False):
 		"""
 		For gathering the cutouts and PRF base.
 		"""
@@ -1192,16 +1192,24 @@ class tessreduce():
 				raise ValueError(m)
 			else:
 				time_ind = np.arange(0,len(flux))
-
-		prfs = []
-		cutouts = []
-		for i in range(len(xpos)):
-			prf, cutout = self._psf_initialise(size,[xpos[i],ypos[i]],time_ind=time_ind)
-			prfs += [prf]
-			cutouts += [cutout[i]]
-		cutouts = np.array(cutouts)
+			if (len(xpos) != len(time_ind)) | (len(ypos) != len(time_ind)):
+				m = 'xpos/ypos and time_ind must be the same length'
+				raise ValueError(m)
+		inds = np.arange(0,len(xpos))
 		if self.parallel:
-			inds = len(prfs)
+			prfs, cutouts = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_initialise)(self.flux,self.tpf.camera,self.tpf.ccd,
+																   						     self.tpf.sector,self.tpf.column,self.tpf.row,
+																						     cutoutSize,[xpos[i],ypos[i]],time_ind) for i in inds))
+		else:
+			prfs = []
+			cutouts = []
+			for i in range(len(time_ind)):
+				prf, cutout = self._psf_initialise(size,[xpos[i],ypos[i]],time_ind=time_ind[i])
+				prfs += [prf]
+				cutouts += [cutout]
+		cutouts = np.array(cutouts)
+		print('made cutouts')
+		if self.parallel:
 			flux, pos = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_full)(cutouts[i],prfs[i],self.shift[i]) for i in inds))
 		else:
 			flux = []
