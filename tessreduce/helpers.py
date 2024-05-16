@@ -610,6 +610,14 @@ def par_psf_flux(image,prf,shift=[0,0]):
 	prf.psf_flux(image,ext_shift=shift)
 	return prf.flux
 
+def par_psf_full(cutout,prf,shift=[0,0]):
+	if np.isnan(shift)[0]:
+		shift = np.array([0,0])
+	prf.psf_position(cutout,ext_shift=shift)
+	prf.psf_flux(cutout)
+	pos = [prf.source_x, prf.source_y]
+	return prf.flux, pos
+
 
 def external_save_TESS(ra,dec,sector,size=90,quality_bitmask='default',cache_dir=None):
 
