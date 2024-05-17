@@ -283,7 +283,7 @@ class tessreduce():
 		sky = ((fullmask & 1)+1 ==1) * 1.
 		sky[sky==0] = np.nan
 		masked = ref*sky
-		mean = np.nanmean(masked) # assume sources weight the mean above the bkg
+		mean,med,std = sigma_clipped_stats(masked)# assume sources weight the mean above the bkg
 		if useref is False:
 			m_second = (masked > mean).astype(int)
 			self.mask = fullmask | m_second
@@ -1185,7 +1185,7 @@ class tessreduce():
 			cutout = self.flux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 		return prf, cutout
 
-	def moving_psf_photometry(self,xpos,ypos,size=5,time_ind=None):
+	def moving_psf_photometry(self,xpos,ypos,size=5,time_ind=None,xlim=2,ylim=2):
 		if time_ind is None:
 			if len(xpos) != len(self.flux):
 				m = 'If "times" is not specified then xpos must have the same length as flux.'
@@ -1199,7 +1199,7 @@ class tessreduce():
 		if self.parallel:
 			prfs, cutouts = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_initialise)(self.flux,self.tpf.camera,self.tpf.ccd,
 																   						     self.tpf.sector,self.tpf.column,self.tpf.row,
-																						     cutoutSize,[xpos[i],ypos[i]],time_ind) for i in inds))
+																						     size,[xpos[i],ypos[i]],time_ind) for i in inds))
 		else:
 			prfs = []
 			cutouts = []
@@ -1210,7 +1210,7 @@ class tessreduce():
 		cutouts = np.array(cutouts)
 		print('made cutouts')
 		if self.parallel:
-			flux, pos = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_full)(cutouts[i],prfs[i],self.shift[i]) for i in inds))
+			flux, pos = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_full)(cutouts[i],prfs[i],self.shift[i],xlim,ylim) for i in inds))
 		else:
 			flux = []
 			pos = []

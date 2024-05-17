@@ -16,6 +16,7 @@ from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.optimize import minimize
 
+from PRF import TESS_PRF
 
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import sigma_clip
@@ -29,6 +30,8 @@ from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
 import lightkurve as lk
+
+from .psf_photom import create_psf
 
 import requests
 import json
@@ -624,6 +627,7 @@ def par_psf_initialise(flux,camera,ccd,sector,column,row,cutoutSize,loc,time_ind
 		cutout = (flux+ref)[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 	else:
 		cutout = flux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+	prf = create_psf(prf,cutoutSize)
 	return prf, cutout
 
 def par_psf_flux(image,prf,shift=[0,0]):
@@ -632,10 +636,10 @@ def par_psf_flux(image,prf,shift=[0,0]):
 	prf.psf_flux(image,ext_shift=shift)
 	return prf.flux
 
-def par_psf_full(cutout,prf,shift=[0,0]):
+def par_psf_full(cutout,prf,shift=[0,0],xlim=2,ylim=2):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
-	prf.psf_position(cutout,ext_shift=shift)
+	prf.psf_position(cutout,ext_shift=shift,limx=xlim,limy=ylim)
 	prf.psf_flux(cutout)
 	pos = [prf.source_x, prf.source_y]
 	return prf.flux, pos
