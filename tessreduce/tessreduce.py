@@ -67,16 +67,71 @@ inches_per_pt = 1.0/72.27			   # Convert pt to inches
 golden_mean = (np.sqrt(5)-1.0)/2.0		 # Aesthetic ratio
 fig_width = fig_width_pt*inches_per_pt  # width in inches
 
-
 class tessreduce():
 
-	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,reduce=True,
-				 align=True,parallel=True,diff=True,plot=False,corr_correction=True,phot_method='aperture',savename=None,
-				 quality_bitmask='default',verbose=1,cache_dir=None,calibrate=True,harshmask_counts=None,
-				 sourcehunt=True,num_cores='max',catalogue_path=None):
+	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,reduce=True, 
+					align=True, parallel=True,diff=True,plot=False,corr_correction=True,
+					phot_method='aperture',savename=None, quality_bitmask='default',verbose=1,
+					cache_dir=None,calibrate=True,harshmask_counts=None,sourcehunt=True,
+					num_cores='max',catalogue_path=None):
+		
 		"""
-		Class to reduce tess data.
+
+		Parameters
+		----------
+		ra : TYPE, optional
+			DESCRIPTION. The default is None.
+		dec : TYPE, optional
+			DESCRIPTION. The default is None.
+		name : TYPE, optional
+			DESCRIPTION. The default is None.
+		obs_list : TYPE, optional
+			DESCRIPTION. The default is None.
+		tpf : TYPE, optional
+			DESCRIPTION. The default is None.
+		size : TYPE, optional
+			DESCRIPTION. The default is 90.
+		sector : TYPE, optional
+			DESCRIPTION. The default is None.
+		reduce : TYPE, optional
+			DESCRIPTION. The default is True.
+		align : TYPE, optional
+			DESCRIPTION. The default is True.
+		parallel : TYPE, optional
+			DESCRIPTION. The default is True.
+		diff : TYPE, optional
+			DESCRIPTION. The default is True.
+		plot : TYPE, optional
+			DESCRIPTION. The default is False.
+		corr_correction : TYPE, optional
+			DESCRIPTION. The default is True.
+		phot_method : TYPE, optional
+			DESCRIPTION. The default is 'aperture'.
+		savename : TYPE, optional
+			DESCRIPTION. The default is None.
+		quality_bitmask : TYPE, optional
+			DESCRIPTION. The default is 'default'.
+		verbose : TYPE, optional
+			DESCRIPTION. The default is 1.
+		cache_dir : TYPE, optional
+			DESCRIPTION. The default is None.
+		calibrate : TYPE, optional
+			DESCRIPTION. The default is True.
+		harshmask_counts : TYPE, optional
+			DESCRIPTION. The default is None.
+		sourcehunt : TYPE, optional
+			DESCRIPTION. The default is True.
+		num_cores : TYPE, optional
+			DESCRIPTION. The default is 'max'.
+		catalogue_path : TYPE, optional
+			DESCRIPTION. The default is None.
+
+		Returns
+		-------
+		None.
+
 		"""
+
 		self.ra = ra
 		self.dec = dec 
 		self.name = name
@@ -112,7 +167,7 @@ class tessreduce():
 		self.flux = None
 		self.ref = None
 		self.ref_ind = None
-		self.wcs = None
+		self.wcs = None	
 		self.qe = None
 		self.lc = None
 		self.sky = None
@@ -167,6 +222,23 @@ class tessreduce():
 			return True
 
 	def _assign_phot_method(self,phot_method):
+		'''
+
+		Parameters
+		----------
+		# phot_method : TYPE
+		# 	DESCRIPTION.
+
+		Raises
+		------
+		# ValueError
+		# 	DESCRIPTION.
+
+		Returns
+		-------
+		None.
+
+		'''
 		if type(phot_method) == str:
 			method = phot_method.lower()
 			if (method == 'psf') | (method == 'aperture'):
@@ -179,45 +251,56 @@ class tessreduce():
 			raise ValueError(m)
 
 	def get_TESS(self,ra=None,dec=None,name=None,Size=None,Sector=None,quality_bitmask='default',cache_dir=None):
-		"""
+		'''
+		
 		Use the lightcurve interface with TESScut to get an FFI cutout 
 		of a region around the given coords.
 
 		Parameters
 		----------
-		RA : float 
-			RA of the centre point 
+		ra : float64, optional
+			RA of the centre point . The default is None.
+		dec : float64, optional
+			Dec of the centre point. The default is None.
+		name : TYPE, optional
+			DESCRIPTION. The default is None.
+		Size : int64, optional
+			Size of the cutout. The default is None.
+		Sector : int64, optional
+			Sector to download. The default is None.
+		# quality_bitmask : TYPE, optional
+		# 	DESCRIPTION. The default is 'default'.
+		# cache_dir : TYPE, optional
+		# 	DESCRIPTION. The default is None.
 
-		DEC : float
-			Dec of the centre point
-
-		Size : int
-			size of the cutout
-
-		Sector : int
-			sector to download 
+		Raises
+		------
+		ValueError
+			DESCRIPTION.
 
 		Returns
 		-------
 		tpf : lightkurve target pixel file
 			tess ffi cutout of the selected region
-		"""
+
+		'''
+		
 		if Sector is None:
 			Sector = self.sector
 
 		if (name is None) & (self.name is None):
 			if (ra is not None) & (dec is not None):
 				c = SkyCoord(ra=float(ra)*u.degree, dec=float(dec) *
-							 u.degree, frame='icrs')
+								u.degree, frame='icrs')
 			else:
 				c = SkyCoord(ra=float(self.ra)*u.degree, dec=float(self.dec) *
-							 u.degree, frame='icrs')
+								u.degree, frame='icrs')
 			tess = lk.search_tesscut(c,sector=Sector)
 		else:
 			tess = lk.search_tesscut(name,sector=Sector)
 		if Size is None:
 			Size = self.size
-		
+
 		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=Size,download_dir=cache_dir)
 		if tpf is None:
 			m = 'Failure in TESScut api, not sure why.'
@@ -232,6 +315,26 @@ class tessreduce():
 			self.ref[ind]
 
 	def make_mask(self,catalogue_path=None,maglim=19,scale=1,strapsize=6,useref=False):
+		'''
+
+	    Parameters
+	    ----------
+	    # catalogue_path : TYPE, optional
+	    #     DESCRIPTION. The default is None.
+	    # maglim : float64, optional
+	    #     DESCRIPTION. The default is 19.
+	    # scale : TYPE, optional
+	    #     DESCRIPTION. The default is 1.
+	    # strapsize : TYPE, optional
+	    #     DESCRIPTION. The default is 6.
+	    # useref : TYPE, optional
+	    #     DESCRIPTION. The default is False.
+
+	    Returns
+	    -------
+	    None.
+
+	    '''
 		# make a diagnostic plot for mask
 		data = strip_units(self.flux)
 		if useref:
@@ -273,7 +376,21 @@ class tessreduce():
 		self._mask_cat = cat
 
 	def psf_source_mask(self,mask,sigma=5):
-		
+		'''
+
+	    Parameters
+	    ----------
+	    # mask : TYPE
+	    #     DESCRIPTION.
+	    # sigma : TYPE, optional
+	    #     DESCRIPTION. The default is 5.
+
+	    Returns
+	    -------
+	    # TYPE
+	    #     DESCRIPTION.
+
+	    '''
 		
 		prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
 				   	   self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
@@ -307,9 +424,25 @@ class tessreduce():
 		return m * 1.0
 
 	def background(self,calc_qe=True, strap_iso=True,source_hunt=False,gauss_smooth=2,interpolate=True):
-		"""
-		Calculate the background for all frames in the TPF.
-		"""
+		'''
+
+	    Parameters
+	    ----------
+	    # calc_qe : TYPE, optional
+	    #     DESCRIPTION. The default is True.
+	    # strap_iso : TYPE, optional
+	    #     DESCRIPTION. The default is True.
+	    # source_hunt : TYPE, optional
+	    #     DESCRIPTION. The default is False.
+	    # gauss_smooth : TYPE, optional
+	    #     DESCRIPTION. The default is 2.
+	    # interpolate : TYPE, optional
+	    #     DESCRIPTION. The default is True.
+
+	    Returns
+	    -------
+	    None.
+	    '''
 		if strap_iso:
 			m = (self.mask == 0) * 1.
 		else:
@@ -407,14 +540,17 @@ class tessreduce():
 
 		Parameters
 		----------
-		data : array
-			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
+		start : TYPE, optional
+			DESCRIPTION. The default is None.
+		stop : TYPE, optional
+			DESCRIPTION. The default is None.
 
 		Returns
 		-------
-		reference : array
-			reference array from which the source mask is identified
+		None.
+
 		'''
+
 		data = strip_units(self.flux)
 		if (start is None) & (stop is None):
 			start = 0
