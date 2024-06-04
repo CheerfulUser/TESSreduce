@@ -16,9 +16,9 @@ def downSample2d(arr,SF):
         Inputs
         ----
 
-        arr: array
+        arr : array
             array to scale to 2d
-        SF: float
+        SF : float
             dimension of the scaled array
             
         ----
@@ -56,11 +56,11 @@ class create_psf():
         Inputs
         ----
 
-        shiftx: float
+        shiftx : float
             shift of source x-coordinate from centre of kernel
-        shifty: float
+        shifty : float
             shift of source y-coordinate from centre of kernel
-        ext_shift: array
+        ext_shift : array
             shift vector for psf array corresponding to offset from kernel centre to source centre
             
         ----
@@ -87,11 +87,11 @@ class create_psf():
         Inputs
         ----
 
-        coeff: array
+        coeff : array
             offset of source from centre
-        image: array
+        image : array
             actual flux array
-        ext_shift: array
+        ext_shift : array
             shift vector for psf array corresponding to offset from kernel centre to source centre
             
         ----
@@ -122,13 +122,13 @@ class create_psf():
         Inputs
         ----
 
-        image: array
+        image : array
             flux array to fit psf to
-        limx: float
+        limx : float
             bound to psf fit in (+ and -) x-direction
-        limy: float
+        limy : float
             bound to psf fit in (+ and -) Y-direction
-        ext_shift: array
+        ext_shift : array
             shift vector for psf array corresponding to offset from kernel centre to source centre
 
         ----
@@ -157,9 +157,9 @@ class create_psf():
         Inputs
         ----
 
-        coeff: array
+        coeff : array
             source mask for psf 
-        image: array
+        image : array
             image flux array
 
         ----
@@ -183,18 +183,18 @@ class create_psf():
         Inputs
         ----
 
-        image: array
+        image : array
             flux array to fit psf to
-        ext_shift: array
+        ext_shift : array
             shift vector for psf array corresponding to offset from kernel centre to source centre
 
         ----
         Outputs
         ----
         
-        flux: array
+        flux : array
             optimal fit of psf flux to image
-        image_residual: array
+        image_residual : array
             residual of optimal psf flux fit 
             
         """
