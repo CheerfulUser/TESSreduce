@@ -210,14 +210,13 @@ class tessreduce():
 
 			if self._catalogue_path is None:
 				self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
+				self._get_gaia()
 			else:
 				self.tpf = external_get_TESS()
-
-			self.flux = strip_units(self.tpf.flux)
-			self.wcs  = self.tpf.wcs
+				self.flux = strip_units(self.tpf.flux)
+				self.wcs  = self.tpf.wcs
 
 		self.ground = ground(ra = self.ra, dec = self.dec)
-		self._get_gaia()
 
 		if reduce:
 			self.reduce()
@@ -252,7 +251,6 @@ class tessreduce():
 		result = result.iloc[ind]
 
 		self.gaia = result
-		
 
 	def _assign_phot_method(self,phot_method):
 		'''

@@ -144,6 +144,7 @@ def unknown_mask(image):
 
 
 def parallel_bkg3(data,mask):
+	data = deepcopy(data)
 	data[mask] = np.nan
 	estimate = inpaint.inpaint_biharmonic(data,mask)
 	return estimate
