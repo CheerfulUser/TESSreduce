@@ -9,7 +9,7 @@ https://github.com/CheerfulUser/starkiller
 
 """
 
-def downSample2d(arr,SF):
+def downSample2d(arr,sf):
         """
 
         ----
@@ -18,7 +18,7 @@ def downSample2d(arr,SF):
 
         arr : array
             array to scale to 2d
-        SF : float
+        sf : float
             dimension of the scaled array
             
         ----
