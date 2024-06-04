@@ -72,7 +72,7 @@ class tessreduce():
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,reduce=True,
 				 align=True,parallel=True,diff=True,plot=False,corr_correction=True,phot_method='aperture',savename=None,
 				 quality_bitmask='default',verbose=1,cache_dir=None,calibrate=True,harshmask_counts=None,
-				 sourcehunt=True,num_cores='max',catalogue_path=False,imaging=False):
+				 sourcehunt=True,num_cores=-1,catalogue_path=False,imaging=False):
 
 		"""
 		DESCRIPTION
