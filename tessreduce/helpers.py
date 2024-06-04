@@ -1,40 +1,49 @@
 import os
+import requests
+import json
+from copy import deepcopy
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-from photutils.detection import StarFinder
+from PIL import Image
+from io import BytesIO
 
-from copy import deepcopy
 from scipy.ndimage import shift
 from scipy.ndimage import gaussian_filter
 from scipy.ndimage.filters import convolve
-from skimage.restoration import inpaint
-
 from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.optimize import minimize
+from sklearn.cluster import OPTICS
+from skimage.restoration import inpaint
 
-from PRF import TESS_PRF
-
+from astropy.table import Table
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import sigma_clip
+from astropy.coordinates import SkyCoord
+from astropy.io import fits
+from astropy import units as u
+from astropy.time import Time
+import lightkurve as lk
+from photutils.detection import StarFinder
 
+from PRF import TESS_PRF
 from tess_stars2px import tess_stars2px_function_entry as focal_plane
 from tabulate import tabulate
 
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
-from astropy.coordinates import SkyCoord
-from astropy import units as u
-from astropy.time import Time
-import lightkurve as lk
-
 from .psf_photom import create_psf
+from .catalog_tools import *
+from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
 
-import requests
-import json
+fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
+inches_per_pt = 1.0/72.27			   # Convert pt to inches
+golden_mean = (np.sqrt(5)-1.0)/2.0		 # Aesthetic ratio
+fig_width = fig_width_pt*inches_per_pt  # width in inches
 
 def strip_units(data):
 	if type(data) != np.ndarray:
@@ -668,12 +677,16 @@ def external_get_TESS():
 			if not found:
 				target = thing
 			else:
-				print('Too Many tpfs here!')
-	tpf = lk.TessTargetPixelFile(target)
+
+				e = 'Too Many tpfs here!'
+				raise FileNotFoundError(e)
+	if target is not None:
+		tpf = lk.TessTargetPixelFile(target)
+	else:
+		e = 'No available local TPF found!'
+		raise FileNotFoundError(e)
+	
 	return tpf
-
-
-
 
 def sig_err(data,err=None,sig=5,maxiter=10):
 	if sig is None:
@@ -695,7 +708,7 @@ def sig_err(data,err=None,sig=5,maxiter=10):
 		mask = np.isnan(clipped)
 	else:
 		mask = sigma_clip(data,sigma_upper=sig,sigma_lower=10).mask
-	return mask
+	return mask	
 
 
 def Identify_masks(Obj):
@@ -773,88 +786,11 @@ def Multiple_day_breaks(lc):
 	-------
 	removed_flux - 3d array
 	"""
-	ind = np.where(~np.isnan(lc[1]))[0]
+	ind = np.where(~np.isnan(lc[1]))[0] 
 	breaks = np.array([np.where(np.diff(lc[0][ind]) > .5)[0] +1])
 	breaks = np.insert(breaks,0,0)
 	breaks = np.append(breaks,len(lc[0]))
 	return breaks
-
-
-
-### Serious source mask
-from .catalog_tools import *
-from sklearn.cluster import OPTICS
-def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
-	"""
-	Make a source mask from the PS1 and Gaia catalogs.
-
-	------
-	Inputs
-	------
-	tpf : lightkurve target pixel file
-		tpf of the desired region
-	maglim : float
-		magnitude limit in PS1 i band  and Gaia G band for sources.
-	scale : float
-		scale factor for default mask size 
-	strapsize : int
-		size of the mask for TESS straps 
-	badpix : str
-		not implemented correctly, so just ignore! 
-
-	-------
-	Returns
-	-------
-	total mask : bitmask
-		a bitwise mask for the given tpf. Bits are as follows:
-		0 - background
-		1 - catalogue source
-		2 - saturated source
-		4 - strap mask
-		8 - bad pixel (not used)
-	"""
-	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
-	wcs = tpf.wcs
-	image = tpf.flux[100]
-	image = strip_units(image)
-	gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
-	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
-	#if tpf.dec > -30:
-	#	pp,pm = Get_PS1(tpf,magnitude_limit=maglim)
-	#	ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
-	#	mp  = ps1_auto_mask(ps1,image,scale)
-	#else:
-	#	mp = {}
-	#	mp['all'] = np.zeros_like(image)
-	
-	sat = Big_sat(gaia,image,scale)
-	if ref is None:
-		mg  = gaia_auto_mask(gaia,image,scale)
-		mask = (mg['all'] > 0).astype(int) * 1 # assign 1 bit
-	else:
-		mg = np.zeros_like(ref,dtype=int)
-		mean, med, std = sigma_clipped_stats(ref)
-		lim = med + sigma * std
-		ind = ref > lim
-		mg[ind] = 1
-		mask = (mg > 0).astype(int) * 1 # assign 1 bit
-	
-
-	sat = (np.nansum(sat,axis=0) > 0).astype(int) * 2 # assign 2 bit 
-	#mask = ((mg['all']+mp['all']) > 0).astype(int) * 1 # assign 1 bit
-	
-	if strapsize > 0: 
-		strap = Strap_mask(image,tpf.column,strapsize).astype(int) * 4 # assign 4 bit 
-	else:
-		strap = np.zeros_like(image,dtype=int)
-	if badpix is not None:
-		bp = cat_mask.Make_bad_pixel_mask(badpix, file)
-		totalmask = mask | sat | strap | bp
-	else:
-		totalmask = mask | sat | strap
-	
-	return totalmask, gaia
-
 
 #### CLUSTERING 
 
@@ -895,3 +831,142 @@ def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=48*2):
 	mask = np.nansum(segments[overlap],axis=0)>0 
 	mask = convolve(mask,np.ones(buffer)) > 0
 	return mask
+
+
+def _Get_images(ra,dec,filters):
+    
+    """Query ps1filenames.py service to get a list of images"""
+    
+    service = "https://ps1images.stsci.edu/cgi-bin/ps1filenames.py"
+    url = f"{service}?ra={ra}&dec={dec}&filters={filters}"
+    table = Table.read(url, format='ascii')
+    return table
+
+def _Get_url(ra, dec, size, filters, color=False):
+    
+    """Get URL for images in the table"""
+    
+    table = _Get_images(ra,dec,filters=filters)
+    url = (f"https://ps1images.stsci.edu/cgi-bin/fitscut.cgi?"
+           f"ra={ra}&dec={dec}&size={size}&format=jpg")
+   
+    # sort filters from red to blue
+    flist = ["yzirg".find(x) for x in table['filter']]
+    table = table[np.argsort(flist)]
+    if color:
+        if len(table) > 3:
+            # pick 3 filters
+            table = table[[0,len(table)//2,len(table)-1]]
+        for i, param in enumerate(["red","green","blue"]):
+            url = url + "&{}={}".format(param,table['filename'][i])
+    else:
+        urlbase = url + "&red="
+        url = []
+        for filename in table['filename']:
+            url.append(urlbase+filename)
+    return url
+
+def _Get_im(ra, dec, size,color):
+    
+    """Get color image at a sky position"""
+
+    if color:
+        url = _Get_url(ra,dec,size=size,filters='grz',color=True)
+        r = requests.get(url)
+    else:
+        url = _Get_url(ra,dec,size=size,filters='i')
+        r = requests.get(url[0])
+    im = Image.open(BytesIO(r.content))
+    return im
+
+def _Panstarrs_phot(ra,dec,size):
+
+    grey_im = _Get_im(ra,dec,size=size*4,color=False)
+    colour_im = _Get_im(ra,dec,size=size*4,color=True)
+
+    plt.rcParams.update({'font.size':12})
+    plt.figure(1,figsize=(3*fig_width,1*fig_width))
+    plt.subplot(121)
+    plt.imshow(grey_im,origin="lower",cmap="gray")
+    plt.title('PS1 i')
+    plt.xlabel('px (0.25")')
+    plt.ylabel('px (0.25")')
+    plt.subplot(122)
+    plt.title('PS1 grz')
+    plt.imshow(colour_im,origin="lower")
+    plt.xlabel('px (0.25")')
+    plt.ylabel('px (0.25")')
+
+
+def _Skymapper_phot(ra,dec,size):
+    """
+    Gets g,r,i from skymapper.
+    """
+
+    size /= 3600
+
+    url = f"https://api.skymapper.nci.org.au/public/siap/dr2/query?POS={ra},{dec}&SIZE={size}&BAND=g,r,i&FORMAT=GRAPHIC&VERB=3"
+    table = Table.read(url, format='ascii')
+
+    # sort filters from red to blue
+    flist = ["irg".find(x) for x in table['col3']]
+    table = table[np.argsort(flist)]
+
+    if len(table) > 3:
+        # pick 3 filters
+        table = table[[0,len(table)//2,len(table)-1]]
+
+    plt.rcParams.update({'font.size':12})
+    plt.figure(1,figsize=(3*fig_width,1*fig_width))
+
+    plt.subplot(131)
+    url = table[2][3]
+    r = requests.get(url)
+    im = Image.open(BytesIO(r.content))
+    plt.imshow(im,origin="upper",cmap="gray")
+    plt.title('SkyMapper g')
+    plt.xlabel('px (1.1")')
+
+    plt.subplot(132)
+    url = table[1][3]
+    r = requests.get(url)
+    im = Image.open(BytesIO(r.content))
+    plt.title('SkyMapper r')
+    plt.imshow(im,origin="upper",cmap="gray")
+    plt.xlabel('px (1.1")')
+
+    plt.subplot(133)
+    url = table[0][3]
+    r = requests.get(url)
+    im = Image.open(BytesIO(r.content))
+    plt.title('SkyMapper i')
+    plt.imshow(im,origin="upper",cmap="gray")
+    plt.xlabel('px (1.1")')
+
+def event_cutout(coords,size=50,phot=None):
+
+    if phot is None:
+        if coords[1] > -10:
+            phot = 'PS1'
+        else:
+            phot = 'SkyMapper'
+        
+    if phot == 'PS1':
+        _Panstarrs_phot(coords[0],coords[1],size)
+
+    elif phot.lower() == 'skymapper':
+        _Skymapper_phot(coords[0],coords[1],size)
+
+    else:
+        print('Photometry name invalid.')
+
+def Extract_fits(pixelfile):
+    """
+    Quickly extract fits
+    """
+    try:
+        hdu = fits.open(pixelfile)
+        return hdu
+    except OSError:
+        print('OSError ',pixelfile)
+        return
