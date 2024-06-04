@@ -420,7 +420,7 @@ class tessreduce():
 		self._mask_cat = cat
 
 	def psf_source_mask(self,mask,sigma=5):
-		'''
+		"""
 	    Parameters
 	    ----------
 	    # mask : TYPE
@@ -573,7 +573,7 @@ class tessreduce():
 
 	    Returns
 	    -------
-	    None.
+	    None
 
 	    '''
 		for i in range(iters):
