@@ -285,7 +285,7 @@ class tessreduce():
 		masked = ref*sky
 		mean,med,std = sigma_clipped_stats(masked)# assume sources weight the mean above the bkg
 		if useref is False:
-			m_second = (masked > mean).astype(int)
+			m_second = (masked > mean+2*std).astype(int)
 			self.mask = fullmask | m_second
 		else:
 			self.mask = fullmask
