@@ -39,6 +39,8 @@ from .rescale_straps import correct_straps
 from .lastpercent import *
 from .psf_photom import create_psf
 from .helpers import *
+from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
+
 #from .syndiff import PS1_scene
 
 # turn off runtime warnings (lots from logic on nans)
@@ -83,7 +85,7 @@ class tessreduce():
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,reduce=True,
 				 align=True,parallel=True,diff=True,plot=False,corr_correction=True,phot_method='aperture',savename=None,
 				 quality_bitmask='default',verbose=1,cache_dir=None,calibrate=True,harshmask_counts=None,
-				 sourcehunt=True,num_cores='max',catalogue_path=None):
+				 sourcehunt=True,num_cores='max',catalogue_path=False,imaging=False):
 		"""
 		Class to reduce tess data.
 		"""
@@ -104,12 +106,14 @@ class tessreduce():
 		self._sourcehunt = sourcehunt
 		if catalogue_path is None:
 			catalogue_path = os.getcwd()
+		elif catalogue_path is False:
+			catalogue_path = None
 		self._catalogue_path = catalogue_path
 		if type(num_cores) == str:
 			self.num_cores = multiprocessing.cpu_count()
 		else:
 			self.num_cores = num_cores
-
+		self.imaging = imaging
 
 		# Plotting
 		self.plot = plot
@@ -159,8 +163,10 @@ class tessreduce():
 		elif self.check_coord():
 			if self.verbose>0:
 				print('getting TPF from TESScut')
-			#self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
-			self.tpf = external_get_TESS()
+			if self._catalogue_path is None:
+				self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
+			else:
+				self.tpf = external_get_TESS()
 			self.flux = strip_units(self.tpf.flux)
 			self.wcs  = self.tpf.wcs
 
@@ -241,7 +247,7 @@ class tessreduce():
 			ind = self.ref > self._harshmask_counts
 			self.ref[ind]
 
-	def make_mask(self,catalogue_path,maglim=19,scale=1,strapsize=6,useref=False):
+	def make_mask(self,catalogue_path=None,maglim=19,scale=1,strapsize=6,useref=False):
 		# make a diagnostic plot for mask
 		data = strip_units(self.flux)
 		if useref:
@@ -284,16 +290,21 @@ class tessreduce():
 
 	def psf_source_mask(self,mask,sigma=5):
 		
-		prf_directory = '/fred/oz335/_local_TESS_PRFs'
+		if self._catalogue_path is not None:
+			prf_directory = '/fred/oz335/_local_TESS_PRFs'
 
-		if self.sector < 4:
-			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
-							self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
-							localdatadir=f'{prf_directory}/Sectors1_2_3')
+			if self.sector < 4:
+				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
+								localdatadir=f'{prf_directory}/Sectors1_2_3')
+			else:
+				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
+								localdatadir=f'{prf_directory}/Sectors4+')
 		else:
 			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
-							self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
-							localdatadir=f'{prf_directory}/Sectors4+')
+				   	   		self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
+		
 		self.prf =  prf.locate(5,5,(11,11))
 
 		
@@ -1117,7 +1128,7 @@ class tessreduce():
 		return light
 
 	def _update_reduction_params(self,align,parallel,calibrate,plot,diff_lc,diff,verbose,
-								 corr_correction):
+								 corr_correction,imaging):
 		"""
 		Updates relevant parameters for if reduction functions are called out of order.
 		"""
@@ -1133,6 +1144,8 @@ class tessreduce():
 			self.diff = diff
 		if corr_correction is not None:
 			self.corr_correction = corr_correction
+		if imaging is not None:
+			self.imaging = imaging
 
 
 	def correlation_corrector(self,limit=0.8):
@@ -1270,7 +1283,7 @@ class tessreduce():
 	def reduce(self, aper = None, align = None, parallel = None, calibrate=None,
 				bin_size = 0, plot = None, mask_scale = 1, ref_start=None, ref_stop=None,
 				diff_lc = None,diff=None,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
-				moving_mask=None,mask=None,double_shift=False,corr_correction=None,test_seed=None):
+				moving_mask=None,mask=None,double_shift=False,corr_correction=None,test_seed=None,imaging=None):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
@@ -1319,7 +1332,7 @@ class tessreduce():
 		"""
 		# make reference
 		try:
-			self._update_reduction_params(align, parallel, calibrate, plot, diff_lc, diff, verbose,corr_correction)
+			self._update_reduction_params(align, parallel, calibrate, plot, diff_lc, diff, verbose,corr_correction,imaging)
 
 			if (self.flux.shape[1] < 30) & (self.flux.shape[2] < 30):
 				small = True	
@@ -1457,11 +1470,21 @@ class tessreduce():
 
 			
 			self.lc, self.sky = self.diff_lc(plot=True,diff=self.diff,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
+
+			if self.imaging:
+				# if self.verbose > 0:
+				# 	print('Retrieving external photometry')
+				self.external_photometry()
+
+
 		except Exception:
 			print(traceback.format_exc())
 
 		
-		
+	def external_photometry(self,size=50,phot=None):
+
+		event_cutout((self.ra,self.dec),size,phot)
+
 
 	def make_lc(self,aperture = None,bin_size=0,zeropoint=None,scale='counts',clip = False):
 		"""
@@ -2439,7 +2462,7 @@ def _load_external_cat(path,maglim):
 
 ### Serious source mask
 
-def Cat_mask(tpf,cataloge_path,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
+def Cat_mask(tpf,catalogue_path=None,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
 	"""
 	Make a source mask from the PS1 and Gaia catalogs.
 
@@ -2468,19 +2491,16 @@ def Cat_mask(tpf,cataloge_path,maglim=19,scale=1,strapsize=3,badpix=None,ref=Non
 		4 - strap mask
 		8 - bad pixel (not used)
 	"""
-	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
-	gaia  = _load_external_cat(cataloge_path,maglim)
-	coords = tpf.wcs.all_world2pix(gaia['ra'],gaia['dec'], 0)
-	gaia['x'] = coords[0]
-	gaia['y'] = coords[1]
 
-	#if tpf.dec > -30:
-	#	pp,pm = Get_PS1(tpf,magnitude_limit=maglim)
-	#	ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
-	#	mp  = ps1_auto_mask(ps1,image,scale)
-	#else:
-	#	mp = {}
-	#	mp['all'] = np.zeros_like(image)
+	if catalogue_path is not None:
+		gaia  = _load_external_cat(catalogue_path,maglim)
+		coords = tpf.wcs.all_world2pix(gaia['ra'],gaia['dec'], 0)
+		gaia['x'] = coords[0]
+		gaia['y'] = coords[1]
+	else:
+		gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
+		gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
+
 	image = tpf.flux[10]
 	image = strip_units(image)
 	sat = Big_sat(gaia,image,scale)

@@ -206,7 +206,7 @@ def Get_Gaia(tpf, magnitude_limit = 18, Offset = 10):
 	Gmag = result['Gmag'].values
 	#Jmag = result['Jmag']
 	ind = (((coords[:,0] >= -10) & (coords[:,1] >= -10)) & 
-		   ((coords[:,0] < (tpf.shape[1] + 10)) & (coords[:,1] < (tpf.shape[2] + 10))))
+		   ((coords[:,0] < (tpf.shape[2] + 10)) & (coords[:,1] < (tpf.shape[1] + 10))))
 	coords = coords[ind]
 	Gmag = Gmag[ind]
 	Tmag = Gmag - 0.5

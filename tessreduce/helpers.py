@@ -3,17 +3,25 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
+from astropy.table import Table
+import requests
+from PIL import Image
+from io import BytesIO
+
 from photutils.detection import StarFinder
 
 from copy import deepcopy
 from scipy.ndimage import shift
 from scipy.ndimage import gaussian_filter
+from scipy.ndimage.filters import convolve
 from skimage.restoration import inpaint
 
 from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.optimize import minimize
+
+from PRF import TESS_PRF
 
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import sigma_clip
@@ -26,10 +34,18 @@ package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
+import lightkurve as lk
 
+from .psf_photom import create_psf
 
 import requests
 import json
+
+fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
+inches_per_pt = 1.0/72.27			   # Convert pt to inches
+golden_mean = (np.sqrt(5)-1.0)/2.0		 # Aesthetic ratio
+fig_width = fig_width_pt*inches_per_pt  # width in inches
+
 
 def strip_units(data):
 	if type(data) != np.ndarray:
@@ -132,9 +148,8 @@ def unknown_mask(image):
 
 
 def parallel_bkg3(data,mask):
-	new_data = deepcopy(data)
-	new_data[mask] = np.nan
-	estimate = inpaint.inpaint_biharmonic(new_data,mask)
+	data[mask] = np.nan
+	estimate = inpaint.inpaint_biharmonic(data,mask)
 	return estimate
 
 def Smooth_bkg(data, gauss_smooth=2, interpolate=False, extrapolate=True):
@@ -250,7 +265,7 @@ def image_sub(theta, image, ref):
 	#translation = np.float64([[1,0,dx],[0,1, dy]])
 	#s = cv2.warpAffine(image, translation, image.shape[::-1], flags=cv2.INTER_CUBIC,borderValue=0)
 	diff = (ref-s)**2
-	return np.nansum(diff[20:-20,20:-20])
+	return np.nansum(diff[5:-5,5:-5])
 
 def difference_shifts(image,ref):
 	"""
@@ -390,7 +405,7 @@ def grad_flux_rad(flux):
 	return rad
 
 
-def sn_lookup(name,time='disc',buffer=0,print_table=True):
+def sn_lookup(name,time='disc',buffer=0,print_table=True, df = False):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
 	discovery/max times and coordinates.
@@ -463,7 +478,10 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True):
 	sec_times = pd.read_csv(package_directory + 'sector_mjd.csv')
 	if len(outSecs) > 0:
 		ind = outSecs - 1 
-		secs = sec_times.iloc[ind]
+
+		new_ind = [i for i in ind if i < len(sec_times)]
+
+		secs = sec_times.iloc[new_ind]
 		if (time.lower() == 'disc') | (time.lower() == 'discovery'):
 			disc_start = secs['mjd_start'].values - disc_t.mjd
 			disc_end = secs['mjd_end'].values - disc_t.mjd
@@ -494,12 +512,15 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True):
 
 		if print_table: 
 			print(tabulate(tab, headers=['Sector', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
-		return tr_list
+		if df:
+			return pd.DataFrame(tr_list, columns = ['RA', 'DEC','Sector','Covers'])
+		else:
+			return tr_list
 	else:
 		print('No TESS coverage')
 		return None
 
-def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True):
+def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True, df = False, print_all=False):
 	"""
 	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
 	discovery/max times and coordinates.
@@ -543,7 +564,10 @@ def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True):
 	sec_times = pd.read_csv(package_directory + 'sector_mjd.csv')
 	if len(outSecs) > 0:
 		ind = outSecs - 1 
-		secs = sec_times.iloc[ind]
+
+		new_ind = [i for i in ind if i < len(sec_times)]
+
+		secs = sec_times.iloc[new_ind]
 		disc_start = secs['mjd_start'].values - time
 		disc_end = secs['mjd_end'].values - time
 
@@ -569,7 +593,10 @@ def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True):
 			tr_list += [[ra, dec, secs.Sector.values[i],outCam[i], outCcd[i], cover]]
 		if print_table: 
 			print(tabulate(tab, headers=['Sector', 'Camera', 'CCD', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
-		return tr_list
+		if df:
+			return pd.DataFrame(tr_list, columns = ['RA', 'DEC','Sector','Camera','CCD','Covers'])
+		else:
+			return tr_list
 	else:
 		print('No TESS coverage')
 		return None
@@ -591,8 +618,421 @@ def par_psf_source_mask(data,prf,sigma=5):
 			m[y[i]-fwhm[i]//2:y[i]+fwhm[i]//2,x[i]-fwhm[i]//2:x[i]+fwhm[i]//2] = 0
 	return m
 
+
+def par_psf_initialise(flux,camera,ccd,sector,column,row,cutoutSize,loc,time_ind=None,ref=False):
+	"""
+	For gathering the cutouts and PRF base.
+	"""
+	if time_ind is None:
+		time_ind = np.arange(0,len(flux))
+
+	if (type(loc[0]) == float) | (type(loc[0]) == np.float64) |  (type(loc[0]) == np.float32):
+		loc[0] = int(loc[0]+0.5)
+	if (type(loc[1]) == float) | (type(loc[1]) == np.float64) |  (type(loc[1]) == np.float32):
+		loc[1] = int(loc[1]+0.5)
+	col = column - int(flux.shape[2]/2-1) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
+	row = row - int(flux.shape[1]/2-1) + loc[1] 
+		
+	prf = TESS_PRF(camera,ccd,sector,col,row) # initialise psf kernel
+	if ref:
+		cutout = (flux+ref)[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+	else:
+		cutout = flux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+	prf = create_psf(prf,cutoutSize)
+	return prf, cutout
+
 def par_psf_flux(image,prf,shift=[0,0]):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
 	prf.psf_flux(image,ext_shift=shift)
 	return prf.flux
+
+def par_psf_full(cutout,prf,shift=[0,0],xlim=2,ylim=2):
+	if np.isnan(shift)[0]:
+		shift = np.array([0,0])
+	prf.psf_position(cutout,ext_shift=shift,limx=xlim,limy=ylim)
+	prf.psf_flux(cutout)
+	pos = [prf.source_x, prf.source_y]
+	return prf.flux, pos
+
+
+def external_save_TESS(ra,dec,sector,size=90,quality_bitmask='default',cache_dir=None):
+
+	c = SkyCoord(ra=float(ra)*u.degree, dec=float(dec) * u.degree, frame='icrs')
+	tess = lk.search_tesscut(c,sector=sector)
+	tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=size,download_dir=cache_dir)
+
+	if tpf is None:
+		m = 'Failure in TESScut api, not sure why.'
+		raise ValueError(m)
+	
+	else:
+		os.system(f'mv {tpf.path} {os.getcwd()}')
+
+def external_get_TESS():
+
+	found = False
+	target = None
+	l = os.listdir()
+	for thing in l:
+		if 'astrocut.fits' in thing:
+			if not found:
+				target = thing
+			else:
+				e = 'Too Many tpfs here!'
+				raise FileNotFoundError(e)
+	if target is not None:
+		tpf = lk.TessTargetPixelFile(target)
+	else:
+		e = 'No available local TPF found!'
+		raise FileNotFoundError(e)
+	
+	return tpf
+
+def sig_err(data,err=None,sig=5,maxiter=10):
+	if sig is None:
+		sig = 5
+	clipped = data.copy()
+	ind = np.arange(0,len(data))
+	breaker = 0
+	if err is not None:
+		for i in range(maxiter):
+			nonan = np.isfinite(clipped)
+			med = np.average(clipped[nonan],weights=1/err[nonan])
+			#med = np.nanmedian(clipped)
+			std = np.nanstd(clipped)
+			mask = (clipped-1*err > med + 3*std) #| (clipped+1*err < med - 3*std)
+			clipped[mask] = np.nan
+			if ~mask.any():
+				break
+
+		mask = np.isnan(clipped)
+	else:
+		mask = sigma_clip(data,sigma_upper=sig,sigma_lower=10).mask
+	return mask
+
+
+def Identify_masks(Obj):
+	"""
+	Uses an iterrative process to find spacially seperated masks in the object mask.
+	"""
+	objsub = np.copy(Obj*1)
+	Objmasks = []
+
+	mask1 = np.zeros((Obj.shape))
+	if np.nansum(objsub) > 0:
+		mask1[np.where(objsub==1)[0][0]] = 1
+		
+		while np.nansum(objsub) > 0:
+			conv = ((convolve(mask1*1,np.ones(3),mode='constant', cval=0.0)) > 0)*1.0
+			objsub = objsub - mask1
+			objsub[objsub < 0] = 0
+			if np.nansum(conv*objsub) > 0:
+
+				mask1 = mask1 + (conv * objsub)
+				mask1 = (mask1 > 0)*1
+			else:
+
+				Objmasks.append(mask1 > 0)
+				mask1 = np.zeros((Obj.shape))
+				if np.nansum(objsub) > 0:
+					mask1[np.where(objsub==1)[0][0]] = 1
+	return np.array(Objmasks)
+
+def auto_tail(lc,mask,err = None):
+	if err is not None:
+		higherr = sigma_clip(err,sigma=2).mask
+	else:
+		higherr = False
+	masks = Identify_masks(mask*1)
+	med = np.nanmedian(lc[1][~mask & ~higherr])
+	std = np.nanstd(lc[1][~mask & ~higherr])
+
+	if lc.shape[1] > 4000:
+		tail_length = 50
+		start_length = 10
+
+	else:
+		tail_length = 5
+		start_length = 1
+			
+	for i in range(len(masks)):
+		m = np.argmax(lc[1]*masks[i])
+		sig = (lc[1][m] - med) / std
+		median = np.nanmedian(sig[sig>0])
+		if median > 50:
+			sig = sig / 100
+			#sig[(sig < 1) & (sig > 0)] = 1
+		if sig > 20:
+			sig = 20
+		if sig < 0:
+			sig = 0
+		masks[i][int(m-sig*start_length):int(m+tail_length*sig)] = 1
+		masks[i] = masks[i] > 0
+	summed = np.nansum(masks*1,axis=0)
+	mask = summed > 0 
+	return ~mask
+		
+def Multiple_day_breaks(lc):
+	"""
+	If the TESS data has a section of data isolated by at least a day either side,
+	it is likely poor data. Such regions are identified and removed.
+	
+	Inputs:
+	-------
+	Flux - 3d array
+	Time - 1d array
+	
+	Output:
+	-------
+	removed_flux - 3d array
+	"""
+	ind = np.where(~np.isnan(lc[1]))[0]
+	breaks = np.array([np.where(np.diff(lc[0][ind]) > .5)[0] +1])
+	breaks = np.insert(breaks,0,0)
+	breaks = np.append(breaks,len(lc[0]))
+	return breaks
+
+
+
+### Serious source mask
+from .catalog_tools import *
+from sklearn.cluster import OPTICS
+def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
+	"""
+	Make a source mask from the PS1 and Gaia catalogs.
+
+	------
+	Inputs
+	------
+	tpf : lightkurve target pixel file
+		tpf of the desired region
+	maglim : float
+		magnitude limit in PS1 i band  and Gaia G band for sources.
+	scale : float
+		scale factor for default mask size 
+	strapsize : int
+		size of the mask for TESS straps 
+	badpix : str
+		not implemented correctly, so just ignore! 
+
+	-------
+	Returns
+	-------
+	total mask : bitmask
+		a bitwise mask for the given tpf. Bits are as follows:
+		0 - background
+		1 - catalogue source
+		2 - saturated source
+		4 - strap mask
+		8 - bad pixel (not used)
+	"""
+	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
+	wcs = tpf.wcs
+	image = tpf.flux[100]
+	image = strip_units(image)
+	gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
+	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
+	#if tpf.dec > -30:
+	#	pp,pm = Get_PS1(tpf,magnitude_limit=maglim)
+	#	ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
+	#	mp  = ps1_auto_mask(ps1,image,scale)
+	#else:
+	#	mp = {}
+	#	mp['all'] = np.zeros_like(image)
+	
+	sat = Big_sat(gaia,image,scale)
+	if ref is None:
+		mg  = gaia_auto_mask(gaia,image,scale)
+		mask = (mg['all'] > 0).astype(int) * 1 # assign 1 bit
+	else:
+		mg = np.zeros_like(ref,dtype=int)
+		mean, med, std = sigma_clipped_stats(ref)
+		lim = med + sigma * std
+		ind = ref > lim
+		mg[ind] = 1
+		mask = (mg > 0).astype(int) * 1 # assign 1 bit
+	
+
+	sat = (np.nansum(sat,axis=0) > 0).astype(int) * 2 # assign 2 bit 
+	#mask = ((mg['all']+mp['all']) > 0).astype(int) * 1 # assign 1 bit
+	
+	if strapsize > 0: 
+		strap = Strap_mask(image,tpf.column,strapsize).astype(int) * 4 # assign 4 bit 
+	else:
+		strap = np.zeros_like(image,dtype=int)
+	if badpix is not None:
+		bp = cat_mask.Make_bad_pixel_mask(badpix, file)
+		totalmask = mask | sat | strap | bp
+	else:
+		totalmask = mask | sat | strap
+	
+	return totalmask, gaia
+
+
+#### CLUSTERING 
+
+def Cluster_lc(lc):
+	arr = np.array([np.gradient(lc[1]),lc[1]])
+	clust = OPTICS(min_samples=12, xi=.05, min_cluster_size=.05)
+	opt = clust.fit(arr.T)
+	lab = opt.labels_
+	keys = np.unique(opt.labels_)
+	
+	m = np.zeros(len(keys))
+	for i in range(len(keys)):
+		m[i] = np.nanmedian(lc[1,keys[i]==lab])
+	bkg_ind = lab == keys[np.nanargmin(m)]
+	other_ind = ~bkg_ind
+	
+	return bkg_ind, other_ind
+
+
+def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=48*2):
+	bkg_ind, other_ind = Cluster_lc(lc)
+	leng = 5
+	if smoothing:
+		for i in range(leng-2):
+			kern = np.zeros((leng))
+			kern[[0, -1]] = 1
+			other_ind[convolve(other_ind*1, kern) > 1] = True
+			leng -= 1
+	segments = Identify_masks(other_ind)
+	clipped = lc[1].copy()
+	med = np.nanmedian(clipped[bkg_ind])
+	std = np.nanstd(clipped[bkg_ind])
+	if err is not None:
+		mask = (clipped-1*err > med + sig*std)
+	else:
+		mask = (clipped > med + sig*std)
+	overlap = np.nansum(mask * segments,axis=1) > 0
+	mask = np.nansum(segments[overlap],axis=0)>0 
+	mask = convolve(mask,np.ones(buffer)) > 0
+	return mask
+
+def _Get_images(ra,dec,filters):
+    
+    """Query ps1filenames.py service to get a list of images"""
+    
+    service = "https://ps1images.stsci.edu/cgi-bin/ps1filenames.py"
+    url = f"{service}?ra={ra}&dec={dec}&filters={filters}"
+    table = Table.read(url, format='ascii')
+    return table
+
+def _Get_url(ra, dec, size, filters, color=False):
+    
+    """Get URL for images in the table"""
+    
+    table = _Get_images(ra,dec,filters=filters)
+    url = (f"https://ps1images.stsci.edu/cgi-bin/fitscut.cgi?"
+           f"ra={ra}&dec={dec}&size={size}&format=jpg")
+   
+    # sort filters from red to blue
+    flist = ["yzirg".find(x) for x in table['filter']]
+    table = table[np.argsort(flist)]
+    if color:
+        if len(table) > 3:
+            # pick 3 filters
+            table = table[[0,len(table)//2,len(table)-1]]
+        for i, param in enumerate(["red","green","blue"]):
+            url = url + "&{}={}".format(param,table['filename'][i])
+    else:
+        urlbase = url + "&red="
+        url = []
+        for filename in table['filename']:
+            url.append(urlbase+filename)
+    return url
+
+def _Get_im(ra, dec, size,color):
+    
+    """Get color image at a sky position"""
+
+    if color:
+        url = _Get_url(ra,dec,size=size,filters='grz',color=True)
+        r = requests.get(url)
+    else:
+        url = _Get_url(ra,dec,size=size,filters='i')
+        r = requests.get(url[0])
+    im = Image.open(BytesIO(r.content))
+    return im
+
+def _Panstarrs_phot(ra,dec,size):
+
+    grey_im = _Get_im(ra,dec,size=size*4,color=False)
+    colour_im = _Get_im(ra,dec,size=size*4,color=True)
+
+    plt.rcParams.update({'font.size':12})
+    plt.figure(1,figsize=(3*fig_width,1*fig_width))
+    plt.subplot(121)
+    plt.imshow(grey_im,origin="lower",cmap="gray")
+    plt.title('PS1 i')
+    plt.xlabel('px (0.25")')
+    plt.ylabel('px (0.25")')
+    plt.subplot(122)
+    plt.title('PS1 grz')
+    plt.imshow(colour_im,origin="lower")
+    plt.xlabel('px (0.25")')
+    plt.ylabel('px (0.25")')
+
+
+def _Skymapper_phot(ra,dec,size):
+    """
+    Gets g,r,i from skymapper.
+    """
+
+    size /= 3600
+
+    url = f"https://api.skymapper.nci.org.au/public/siap/dr2/query?POS={ra},{dec}&SIZE={size}&BAND=g,r,i&FORMAT=GRAPHIC&VERB=3"
+    table = Table.read(url, format='ascii')
+
+    # sort filters from red to blue
+    flist = ["irg".find(x) for x in table['col3']]
+    table = table[np.argsort(flist)]
+
+    if len(table) > 3:
+        # pick 3 filters
+        table = table[[0,len(table)//2,len(table)-1]]
+
+    plt.rcParams.update({'font.size':12})
+    plt.figure(1,figsize=(3*fig_width,1*fig_width))
+
+    plt.subplot(131)
+    url = table[2][3]
+    r = requests.get(url)
+    im = Image.open(BytesIO(r.content))
+    plt.imshow(im,origin="upper",cmap="gray")
+    plt.title('SkyMapper g')
+    plt.xlabel('px (1.1")')
+
+    plt.subplot(132)
+    url = table[1][3]
+    r = requests.get(url)
+    im = Image.open(BytesIO(r.content))
+    plt.title('SkyMapper r')
+    plt.imshow(im,origin="upper",cmap="gray")
+    plt.xlabel('px (1.1")')
+
+    plt.subplot(133)
+    url = table[0][3]
+    r = requests.get(url)
+    im = Image.open(BytesIO(r.content))
+    plt.title('SkyMapper i')
+    plt.imshow(im,origin="upper",cmap="gray")
+    plt.xlabel('px (1.1")')
+
+def event_cutout(coords,size=50,phot=None):
+
+    if phot is None:
+        if coords[1] > -10:
+            phot = 'PS1'
+        else:
+            phot = 'SkyMapper'
+        
+    if phot == 'PS1':
+        _Panstarrs_phot(coords[0],coords[1],size)
+
+    elif phot.lower() == 'skymapper':
+        _Skymapper_phot(coords[0],coords[1],size)
+
+    else:
+        print('Photometry name invalid.')
