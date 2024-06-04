@@ -434,8 +434,6 @@ class tessreduce():
 	    #     DESCRIPTION.
 		"""
 
-
-		
 		if self._catalogue_path is not None:
 			prf_directory = '/fred/oz335/_local_TESS_PRFs'
 
