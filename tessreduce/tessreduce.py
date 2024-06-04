@@ -13,7 +13,7 @@ from PRF import TESS_PRF
 
 from copy import deepcopy
 
-from scipy.ndimage.filters import convolve
+from scipy.ndimage import convolve
 from scipy.ndimage import shift
 
 from sklearn.cluster import OPTICS
