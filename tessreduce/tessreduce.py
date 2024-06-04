@@ -76,6 +76,7 @@ class tessreduce():
 					num_cores='max',catalogue_path=None):
 		
 		"""
+		DESCRIPTION
 
 		Parameters
 		----------
@@ -216,6 +217,15 @@ class tessreduce():
 
 
 	def check_coord(self):
+		'''
+		DESCRIPTION
+
+	    Returns
+	    -------
+	    bool
+	        DESCRIPTION.
+
+	    '''
 		if ((self.ra is None) | (self.dec is None)) & (self.name is None):
 			return False
 		else:
@@ -223,6 +233,7 @@ class tessreduce():
 
 	def _assign_phot_method(self,phot_method):
 		'''
+		DESCRIPTION
 
 		Parameters
 		----------
@@ -252,7 +263,6 @@ class tessreduce():
 
 	def get_TESS(self,ra=None,dec=None,name=None,Size=None,Sector=None,quality_bitmask='default',cache_dir=None):
 		'''
-		
 		Use the lightcurve interface with TESScut to get an FFI cutout 
 		of a region around the given coords.
 
@@ -310,12 +320,22 @@ class tessreduce():
 		self.wcs  = tpf.wcs
 
 	def harsh_mask(self):
+		'''
+		DESCRIPTION
+
+		Returns
+		-------
+		None.
+
+		'''
+
 		if self._harshmask_counts is not None:
 			ind = self.ref > self._harshmask_counts
 			self.ref[ind]
 
 	def make_mask(self,catalogue_path=None,maglim=19,scale=1,strapsize=6,useref=False):
 		'''
+		DESCRIPTION
 
 	    Parameters
 	    ----------
@@ -377,6 +397,7 @@ class tessreduce():
 
 	def psf_source_mask(self,mask,sigma=5):
 		'''
+		DESCRIPTION
 
 	    Parameters
 	    ----------
@@ -425,6 +446,7 @@ class tessreduce():
 
 	def background(self,calc_qe=True, strap_iso=True,source_hunt=False,gauss_smooth=2,interpolate=True):
 		'''
+		DESCRIPTION
 
 	    Parameters
 	    ----------
@@ -496,6 +518,14 @@ class tessreduce():
 
 
 	def small_background(self):
+		'''
+	    DESCRIPTION
+
+	    Returns
+	    -------
+	    None.
+
+	    '''
 		bkg = np.zeros_like(self.flux)
 		flux = strip_units(self.flux)
 		lim = 2*np.nanmin(flux,axis=(1,2))#np.nanpercentile(flux,1,axis=(1,2))
@@ -506,6 +536,19 @@ class tessreduce():
 		self.bkg = bkg
 
 	def _bkg_round_3(self,iters=5):
+		'''
+	    DESCRIPTION
+
+	    Parameters
+	    ----------
+	    iters : TYPE, optional
+	        DESCRIPTION. The default is 5.
+
+	    Returns
+	    -------
+	    None.
+
+	    '''
 		for i in range(iters):
 			tb = self.bkg * self._bkgmask
 			m = np.nanmedian(tb,axis=(1,2))
@@ -535,7 +578,7 @@ class tessreduce():
 
 	def get_ref(self,start = None, stop = None):
 		'''
-		Get refernce image to use for subtraction and mask creation.
+		Get reference image to use for subtraction and mask creation.
 		The image is made from all images with low background light.
 
 		Parameters
@@ -581,28 +624,21 @@ class tessreduce():
 
 
 	def centroids_DAO(self,plot=None,savename=None):
-		"""
+		'''
 		Calculate the centroid shifts of time series images.
-		
+
 		Parameters
 		----------
-		Flux : array 
-			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
-
-		Median : array
-			median image used for the position reference
-
-		TPF : lightkurve targetpixelfile
-			tpf
-		
-		parallel : bool
-			if True then parallel processing will be used for shift calculations
+		plot : TYPE, optional
+			DESCRIPTION. The default is None.
+		savename : TYPE, optional
+			DESCRIPTION. The default is None.
 
 		Returns
 		-------
-		smooth : array
-			smoothed displacement of the centroids compared to the Median
-		"""
+		None.
+
+		'''
 		if plot is None:
 			plot = self.plot
 		if savename is None:
@@ -632,8 +668,6 @@ class tessreduce():
 		#mx = mx[ind]
 		#my = my[ind]
 		if self.parallel:
-			
-			
 			shifts = Parallel(n_jobs=self.num_cores)(
 				delayed(Calculate_shifts)(frame,mx,my,finder) for frame in f)
 			shifts = np.array(shifts)
@@ -670,28 +704,22 @@ class tessreduce():
 				plt.savefig(savename+'_disp.pdf', bbox_inches = "tight")
 		
 	def fit_shift(self,plot=None,savename=None):
-		"""
-		Calculate the centroid shifts of time series images.
+		'''
+	    Calculate the centroid shifts of time series images.
 
-		Parameters
-		----------
-		Flux : array 
-			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
+	    Parameters
+	    ----------
+	    plot : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    savename : TYPE, optional
+	        DESCRIPTION. The default is None.
 
-		Median : array
-			median image used for the position reference
+	    Returns
+	    -------
+	    None.
 
-		TPF : lightkurve targetpixelfile
-			tpf
+	    '''
 
-		parallel : bool
-			if True then parallel processing will be used for shift calculations
-
-		Returns
-		-------
-		smooth : array
-			smoothed displacement of the centroids compared to the Median
-		"""
 		if plot is None:
 			plot = self.plot
 		if savename is None:
@@ -740,21 +768,20 @@ class tessreduce():
 
 
 	def shift_images(self,median=False):
-		"""
+		'''
 		Shifts data by the values given in offset. Breaks horribly if data is all 0.
+
 		Parameters
 		----------
-		Offset : array 
-			centroid offsets relative to a reference image
-		Data : array
-			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
-		median : bool
-			if true then the shift direction will be reveresed to shift the reference
+		median : TYPE, optional
+			DESCRIPTION. The default is False.
+
 		Returns
 		-------
-		shifted : array
-			array shifted to match the offsets given
-		"""
+		None.
+
+		'''
+
 		shifted = self.flux.copy()
 		nans = ~np.isfinite(shifted)
 		shifted[nans] = 0.
@@ -782,27 +809,25 @@ class tessreduce():
 
 
 	def bin_data(self,lc=None,time_bin=6/24,frames = None):
-		"""
+		'''
 		Bin a light curve to the desired duration specified by bin_size
 
 		Parameters
 		----------
-		flux : array
-			light curve in counts 
-
-		t : array
-			time array
-
-		bin_size : int
-			number of bins to average over
+		lc : TYPE, optional
+			DESCRIPTION. The default is None.
+		time_bin : TYPE, optional
+			DESCRIPTION. The default is 6/24.
+		frames : TYPE, optional
+			DESCRIPTION. The default is None.
 
 		Returns
 		-------
-		lc : array
-			time averaged light curve
-		t[x] : array
-			time averaged time 
-		"""
+		binlc : TYPE
+			DESCRIPTION.
+
+		'''
+
 		if lc is None:
 			lc = self.lc
 		else:
@@ -843,26 +868,26 @@ class tessreduce():
 
 	def bin_flux(self,flux=None,time_bin=6/24,frames = None):
 		"""
-		Bin a light curve to the desired duration specified by bin_size
+	    Bin a light curve flux to the desired duration specified by bin_size
 
-		Parameters
-		----------
-		flux : array
-			light curve in counts 
+	    Parameters
+	    ----------
+	    flux : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    time_bin : TYPE, optional
+	        DESCRIPTION. The default is 6/24.
+	    frames : TYPE, optional
+	        DESCRIPTION. The default is None.
 
-		t : array
-			time array
+	    Returns
+	    -------
+	    binf : TYPE
+	        DESCRIPTION.
+	    bint : TYPE
+	        DESCRIPTION.
 
-		bin_size : int
-			number of bins to average over
+	    """
 
-		Returns
-		-------
-		lc : array
-			time averaged light curve
-		t[x] : array
-			time averaged time 
-		"""
 		if flux is None:
 			flux = self.flux
 
@@ -895,47 +920,48 @@ class tessreduce():
 	def diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
 				sky_in=5,sky_out=9,phot_method=None,plot=None,savename=None,mask=None,diff = True):
 		"""
-		Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
+	    Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
 		then it degaults to the centre. Sky flux is calculated with an annulus aperture surrounding 
 		the target aperture and subtracted from the source. The sky aperture undergoes sigma clipping
 		to remove pixels that are poorly subtracted and contain other sources.
 
-		------
-		Inputs
-		------
-			time : array
-				1d array of times 
-			x : int 
-				centre of target aperture in x dim 
-			y : int 
-				centre of target aperture in y dim
-			ra : float
-				centre of target aperture in ra
-			dec : float
-				centre of target aperture in dec
-			tar_ap : int (odd)
-				width of the aperture
-			sky_in : int (odd)
-				inner edge of the sky aperture 
-			sky_out : int (odd, larger than sky_in)
-				outter edge of the sky aperture 
-			plot : bool
-				option for plotting diagnostic plot
-			mask : array
-				optional sky mask 
+	    Parameters
+	    ----------
+	    time : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    x : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    y : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    ra : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    dec : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    tar_ap : TYPE, optional
+	        DESCRIPTION. The default is 3.
+	    sky_in : TYPE, optional
+	        DESCRIPTION. The default is 5.
+	    sky_out : TYPE, optional
+	        DESCRIPTION. The default is 9.
+	    phot_method : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    plot : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    savename : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    mask : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    diff : TYPE, optional
+	        DESCRIPTION. The default is True.
 
-		------
-		Output
-		------
-			lc : array (3xn)
-				difference imaged light curve of target. 
-				lc[0] = time, lc[1] = flux, lc[2] = flux error
+	    Returns
+	    -------
+	    lc : TYPE
+	        DESCRIPTION.
+	    sky : TYPE
+	        DESCRIPTION.
 
-			sky : array (3xn)
-				difference imaged light curve of sky. 
-				sky[0] = time, sky[1] = flux, sky[2] = flux error
-				
-		"""
+	    """
 		if plot is None:
 			plot = self.plot
 		if savename is None:
@@ -1014,24 +1040,28 @@ class tessreduce():
 
 	def dif_diag_plot(self,ap_tar,ap_sky,lc=None,sky=None,data=None):
 		"""
-		Makes a plot showing the target light curve, sky, and difference image at the brightest point
+	    Makes a plot showing the target light curve, sky, and difference image at the brightest point
 		in the target lc.
 
-		------
-		Inputs
-		------
-			ap_tar : array
-				aperture mask
-			ap_sky : array
-				sky mask
-			data : array (shape = 3)
-				sequence of images
+	    Parameters
+	    ----------
+	    ap_tar : TYPE
+	        DESCRIPTION.
+	    ap_sky : TYPE
+	        DESCRIPTION.
+	    lc : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    sky : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    data : TYPE, optional
+	        DESCRIPTION. The default is None.
 
-		------
-		Output
-		------
-			Figure
-		"""
+	    Returns
+	    -------
+	    Figure.
+
+	    """
+
 		if lc is None:
 			lc = self.lc
 		if sky is None:
@@ -1084,21 +1114,30 @@ class tessreduce():
 		"""
 		Simple plotter for light curves. 
 
+		Parameters
+		----------
+		lc : TYPE, optional
+			DESCRIPTION. The default is None.
+		ax : TYPE, optional
+			DESCRIPTION. The default is None.
+		ground : TYPE, optional
+			DESCRIPTION. The default is False.
+		time_bin : TYPE, optional
+			DESCRIPTION. The default is 6/24.
+		xlims : TYPE, optional
+			DESCRIPTION. The default is None.
+
+		Raises
 		------
-		Inputs (Optional)
-		------
-		lc : np.array
-			light curve with dimensions of at least [2,n]
-		ax : matplotlib axes
-			existing figure axes to add data to 
-		time_bin : float
-			time range to bin data to in days. ie 1 = 24 hours.
+		ValueError
+			DESCRIPTION.
+
+		Returns
 		-------
-		Options
-		-------
-			ground : bool
-				if True then ground based data is plotted alongside TESS
+		Figure.
+
 		"""
+
 		if ground:
 			if self.ground.ztf is None:
 				self.ground.get_ztf_data()
@@ -1175,18 +1214,18 @@ class tessreduce():
 	def save_lc(self,filename,time_bin=None):
 		"""
 		Saves the current lightcurve out to csv format, doesn't include flux units.
-		
-		------
-		Inputs
-		------
-		filename : str
-			output name of the file
-		time_bin : float
-			Duration in days for binning the lightcurve. If none, no binning is done.
 
+		Parameters
+		----------
+		filename : TYPE
+			DESCRIPTION.
+		time_bin : TYPE, optional
+			DESCRIPTION. The default is None.
 
+		Returns
+		-------
+		csv file.
 
-		
 		"""
 
 		if time_bin is not None:
@@ -1200,28 +1239,26 @@ class tessreduce():
 		if format == 'csv':
 			lc.to_csv(filename)
 		
-
-
 	def to_lightkurve(self,lc=None,flux_unit=None):
 		"""
 		Convert TESSreduce light curve into lighkurve.lightcurve object. Flux units are recorded
-		
-		-----------------
-		Inputs (optional)
-		-----------------
-		lc : array
-			light curve with 2xn or 3xn shape
-		flux_unit : str
-			units of the light curve flux 
+
+		Parameters
+		----------
+		lc : TYPE, optional
+			DESCRIPTION. The default is None.
+		flux_unit : TYPE, optional
+			DESCRIPTION. The default is None.
 			Valid options:
 				counts
 				mjy
 				cgs
-		-------
+
 		Returns
 		-------
-		light : lightcurve
-			lightkurve lightcurve object. All lk function will work on this!
+		light : TYPE
+			DESCRIPTION.
+
 		"""
 		if lc is None:
 			lc = self.lc
@@ -1247,6 +1284,30 @@ class tessreduce():
 								 corr_correction):
 		"""
 		Updates relevant parameters for if reduction functions are called out of order.
+
+		Parameters
+		----------
+		align : TYPE
+			DESCRIPTION.
+		parallel : TYPE
+			DESCRIPTION.
+		calibrate : TYPE
+			DESCRIPTION.
+		plot : TYPE
+			DESCRIPTION.
+		diff_lc : TYPE
+			DESCRIPTION.
+		diff : TYPE
+			DESCRIPTION.
+		verbose : TYPE
+			DESCRIPTION.
+		corr_correction : TYPE
+			DESCRIPTION.
+
+		Returns
+		-------
+		None.
+
 		"""
 		if align is not None:
 			self.align = align
@@ -1270,8 +1331,17 @@ class tessreduce():
 		background and subtracted from the flux minimises the correlation between the background and 
 		the pixel light curve. This function saves the correlation correction as corr_coeff, and 
 		applies the correction to the flux, for all pixels that aren't included as sky pixels. 
-			This process seems to do a good job at removing some of the residual background structure 
+		This process seems to do a good job at removing some of the residual background structure 
 		that is present in some pixels. 
+
+		Parameters
+		----------
+		limit : TYPE, optional
+			DESCRIPTION. The default is 0.8.
+
+		Returns
+		-------
+		None.
 
 		"""
 		flux, bkg = multi_correlation_cor(self,limit=limit,cores=self.num_cores)
@@ -1282,6 +1352,23 @@ class tessreduce():
 	def _psf_initialise(self,cutoutSize,loc,ref=False):
 		"""
 		For gathering the cutouts and PRF base.
+
+		Parameters
+		----------
+		cutoutSize : TYPE
+			DESCRIPTION.
+		loc : TYPE
+			DESCRIPTION.
+		ref : TYPE, optional
+			DESCRIPTION. The default is False.
+
+		Returns
+		-------
+		prf : TYPE
+			DESCRIPTION.
+		cutout : TYPE
+			DESCRIPTION.
+
 		"""
 		if type(loc[0]) == float:
 			loc[0] = int(loc[0]+0.5)
