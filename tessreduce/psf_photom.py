@@ -10,10 +10,29 @@ https://github.com/CheerfulUser/starkiller
 """
 
 def downSample2d(arr,sf):
+        """
 
-    isf2 = 1.0/(sf*sf)    # scalefactor
-    windows = view_as_windows(arr, (sf,sf), step = sf)  # automatically scale down
-    return windows.sum(3).sum(2)*isf2
+        ----
+        Inputs
+        ----
+
+        arr : array
+            array to scale to 2d
+        sf : float
+            dimension of the scaled array
+            
+        ----
+        Output
+        ----
+
+        array:
+            rescaled array in 2d
+
+        """
+        
+        isf2 = 1.0/(sf*sf)    # scalefactor
+        windows = view_as_windows(arr, (sf,sf), step = sf)  # automatically scale down
+        return windows.sum(3).sum(2)*isf2
 
 class create_psf():
     def __init__(self,prf,size):
@@ -29,6 +48,29 @@ class create_psf():
         self.psf = None
 
     def source(self,shiftx=0,shifty=0,ext_shift=[0,0]):
+
+        """
+        Creates the psf of a given source
+        
+        ----
+        Inputs
+        ----
+
+        shiftx : float
+            shift of source x-coordinate from centre of kernel
+        shifty : float
+            shift of source y-coordinate from centre of kernel
+        ext_shift : array
+            shift vector for psf array corresponding to offset from kernel centre to source centre
+            
+        ----
+        Output
+        ----
+        
+        psf: array
+            psf for source at the given coordinates relative to the kernel centre
+
+        """
         
         centx_s = self.cent + shiftx    # source centre
         centy_s = self.cent + shifty
@@ -38,7 +80,29 @@ class create_psf():
         self.psf = psf/np.nansum(psf)
 
     def minimize_position(self,coeff,image,ext_shift):
+        """
+        Applies an exponential function using psf residuals to optimise the psf fit.
+        
+        ----
+        Inputs
+        ----
 
+        coeff : array
+            offset of source from centre
+        image : array
+            actual flux array
+        ext_shift : array
+            shift vector for psf array corresponding to offset from kernel centre to source centre
+            
+        ----
+        Output
+        ----
+        
+        array:
+            optimization model used for psf fitting
+            
+        """
+        
         self.source_x = coeff[0]
         self.source_y = coeff[1]
         
@@ -52,7 +116,27 @@ class create_psf():
     
     def psf_position(self,image,limx=1,limy=1,ext_shift=[0,0]):
         """
-        Fit the PSF. Limx,y dictates bounds for position of the source
+        Finds the optimal psf fit
+        
+        ----
+        Inputs
+        ----
+
+        image : array
+            flux array to fit psf to
+        limx : float
+            bound to psf fit in (+ and -) x-direction
+        limy : float
+            bound to psf fit in (+ and -) Y-direction
+        ext_shift : array
+            shift vector for psf array corresponding to offset from kernel centre to source centre
+
+        ----
+        Outputs
+        ----
+        psf_fit: array
+            Optimal psf fit to input image
+            
         """
 
         normimage = image / np.nansum(image)    # normalise the image
@@ -64,10 +148,57 @@ class create_psf():
         self.psf_fit = res
 
     def minimize_psf_flux(self,coeff,image):
+
+        """
+        
+        Calculates residuals to optimise psf flux
+        
+        ----
+        Inputs
+        ----
+
+        coeff : array
+            source mask for psf 
+        image : array
+            image flux array
+
+        ----
+        Outputs
+        ----
+
+        res: float
+            flux residual of psf relative to image
+        
+        """
         res = np.nansum(abs(image - self.psf*coeff[0]))
         return res
 
     def psf_flux(self,image,ext_shift=None):
+
+        """
+        
+        Finds the optimal flux fit 
+
+        ----
+        Inputs
+        ----
+
+        image : array
+            flux array to fit psf to
+        ext_shift : array
+            shift vector for psf array corresponding to offset from kernel centre to source centre
+
+        ----
+        Outputs
+        ----
+        
+        flux : array
+            optimal fit of psf flux to image
+        image_residual : array
+            residual of optimal psf flux fit 
+            
+        """
+        
         if self.psf is None:
             self.source(shiftx=self.source_x,shifty=self.source_y)
         if ext_shift is not None:
