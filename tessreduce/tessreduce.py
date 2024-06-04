@@ -436,22 +436,21 @@ class tessreduce():
 	def psf_source_mask(self,mask,sigma=5):
 		'''
 		DESCRIPTION
-
-     '''
-
-
-	    Parameters
-	    ----------
-	    # mask : TYPE
-	    #     DESCRIPTION.
-	    # sigma : TYPE, optional
-	    #     DESCRIPTION. The default is 5.
-
-	    Returns
-	    -------
-	    # TYPE
-	    #     DESCRIPTION.
-      '''
+		
+		
+		
+		Parameters
+		    ----------
+		    # mask : TYPE
+		    #     DESCRIPTION.
+		    # sigma : TYPE, optional
+		    #     DESCRIPTION. The default is 5.
+		
+		    Returns
+		    -------
+		    # TYPE
+		    #     DESCRIPTION.
+		'''
 
 		
 		if self._catalogue_path is not None:
@@ -493,23 +492,23 @@ class tessreduce():
 		'''
 		DESCRIPTION
 
-	    Parameters
-	    ----------
-	    # calc_qe : TYPE, optional
-	    #     DESCRIPTION. The default is True.
-	    # strap_iso : TYPE, optional
-	    #     DESCRIPTION. The default is True.
-	    # source_hunt : TYPE, optional
-	    #     DESCRIPTION. The default is False.
-	    # gauss_smooth : TYPE, optional
-	    #     DESCRIPTION. The default is 2.
-	    # interpolate : TYPE, optional
-	    #     DESCRIPTION. The default is True.
-
-	    Returns
-	    -------
-	    None.
-	    '''
+		Parameters
+		----------
+		# calc_qe : TYPE, optional
+		#     DESCRIPTION. The default is True.
+		# strap_iso : TYPE, optional
+		#     DESCRIPTION. The default is True.
+		# source_hunt : TYPE, optional
+		#     DESCRIPTION. The default is False.
+		# gauss_smooth : TYPE, optional
+		#     DESCRIPTION. The default is 2.
+		# interpolate : TYPE, optional
+		#     DESCRIPTION. The default is True.
+		
+		Returns
+		-------
+		None.
+		'''
 		if strap_iso:
 			m = (self.mask == 0) * 1.
 		else:
