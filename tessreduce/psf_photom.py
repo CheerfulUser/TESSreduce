@@ -24,7 +24,9 @@ def downSample2d(arr,SF):
         ----
         Output
         ----
-            array
+
+        array:
+            rescaled array in 2d
 
         """
         
@@ -87,10 +89,8 @@ class create_psf():
 
         coeff: array
             offset of source from centre
-            
         image: array
             actual flux array
-            
         ext_shift: array
             shift vector for psf array corresponding to offset from kernel centre to source centre
             
@@ -124,7 +124,6 @@ class create_psf():
 
         image: array
             flux array to fit psf to
-
         limx: float
             bound to psf fit in (+ and -) x-direction
         limy: float
@@ -152,14 +151,14 @@ class create_psf():
 
         """
         
-        Calculates residuals to optimise psf flux.
+        Calculates residuals to optimise psf flux
+        
         ----
         Inputs
         ----
 
         coeff: array
-            
-
+            source mask for psf 
         image: array
             image flux array
 
@@ -186,16 +185,15 @@ class create_psf():
 
         image: array
             flux array to fit psf to
-            
         ext_shift: array
             shift vector for psf array corresponding to offset from kernel centre to source centre
 
         ----
         Outputs
         ----
+        
         flux: array
             optimal fit of psf flux to image
-
         image_residual: array
             residual of optimal psf flux fit 
             
