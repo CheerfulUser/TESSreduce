@@ -25,7 +25,7 @@ obs = tr.sn_lookup('sn2018fub')
 ```
 
 ```python
-tess = tr.tessreduce(obs_list=obs,plot=False,reduce=True)
+tess = tr.tessreduce(obs_list=obs,plot=False)
 ```
 ![plot](./figs/fub.png)
 
@@ -36,7 +36,6 @@ ra = 10.127
 dec = -50.687
 sector = 2
 tess = tr.tessreduce(ra=ra,dec=dec,sector=sector)
-tess.reduce()
 ```
 
 
