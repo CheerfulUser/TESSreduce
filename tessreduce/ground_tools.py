@@ -46,7 +46,8 @@ def get_ztf(oid):
     sn = sn.rename(columns={'diffmaglim':'maglim'})
     sn['magpsf'] = np.nan
     sn['sigmapsf'] = np.nan
-    sd = sd.append(sn)
+    # sd = sd.append(sn)
+    sd = pd.concat([sd, sn], ignore_index=True)
     sd = sd.sort_values('mjd',ignore_index=True)
     sd = sd.rename(columns={'magpsf':'mag','sigmapsf':'mag_e'})
     sd['flux'] = np.nan
