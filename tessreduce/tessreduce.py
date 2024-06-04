@@ -31,6 +31,7 @@ from astropy import wcs
 
 import multiprocessing
 from joblib import Parallel, delayed
+from tqdm import tqdm
 
 from .catalog_tools import *
 from .calibration_tools import *
@@ -39,6 +40,7 @@ from .rescale_straps import correct_straps
 from .lastpercent import *
 from .psf_photom import create_psf
 from .helpers import *
+from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
 #from .syndiff import PS1_scene
 
 # turn off runtime warnings (lots from logic on nans)
@@ -211,6 +213,7 @@ class tessreduce():
 			self.wcs  = self.tpf.wcs
 
 		self.ground = ground(ra = self.ra, dec = self.dec)
+		self._get_gaia()
 
 		if reduce:
 			self.reduce()
@@ -230,6 +233,22 @@ class tessreduce():
 			return False
 		else:
 			return True
+
+	def _get_gaia(self,maglim=21):
+		result = Get_Catalogue(self.tpf, Catalog = 'gaia')
+		result = result[result.Gmag < maglim]
+		result = result.rename(columns={'RA_ICRS': 'ra',
+                               'DE_ICRS': 'dec',
+                               'e_RA_ICRS': 'e_ra',
+                               'e_DE_ICRS': 'e_dec',})
+		x,y = self.wcs.all_world2pix(result['ra'].values,result['dec'].values,0)
+		result['x'] = x; result['y'] = y
+		ind = (((x > 0) & (y > 0)) & 
+		 	  ((x < (self.flux.shape[2])) & (y < (self.flux.shape[1]))))
+		result = result.iloc[ind]
+
+		self.gaia = result
+		
 
 	def _assign_phot_method(self,phot_method):
 		'''
@@ -387,7 +406,7 @@ class tessreduce():
 		sky = ((fullmask & 1)+1 ==1) * 1.
 		sky[sky==0] = np.nan
 		masked = ref*sky
-		mean = np.nanmean(masked) # assume sources weight the mean above the bkg
+		mean,med,std = sigma_clipped_stats(masked)# assume sources weight the mean above the bkg
 		if useref is False:
 			m_second = (masked > mean).astype(int)
 			self.mask = fullmask | m_second
@@ -728,8 +747,9 @@ class tessreduce():
 		sources = ((self.mask & 1) ==1) * 1.0 - (self.mask & 2)
 		sources[sources<=0] = 0
 
-		f = self.flux * sources[np.newaxis,:,:]
+		f = self.flux #* sources[np.newaxis,:,:]
 		m = self.ref.copy() * sources
+		m[m==0] = np.nan
 		if self.parallel:
 
 			shifts = Parallel(n_jobs=self.num_cores)(
@@ -1012,15 +1032,16 @@ class tessreduce():
 		if mask is not None:
 			ap_sky = mask
 			ap_sky[ap_sky==0] = np.nan
-		sky_med = np.nanmedian(ap_sky*data,axis=(1,2))
-		sky_std = np.nanstd(ap_sky*data,axis=(1,2))
+		mean_sky, sky_med, sky_std = sigma_clipped_stats(ap_sky*data,axis=(1,2))
+		#sky_med = np.nanmedian(ap_sky*data,axis=(1,2))
+		#sky_std = np.nanstd(ap_sky*data,axis=(1,2))
 		if phot_method == 'aperture':
 			if self.diff:
 				tar = np.nansum(data*ap_tar,axis=(1,2))
 			else:
 				tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
 			tar -= sky_med * tar_ap**2
-			tar_err = sky_std #* tar_ap**2
+			tar_err = sky_std * tar_ap**2
 		if phot_method == 'psf':
 			tar = self.psf_photometry(x,y,diff=diff)
 			tar_err = sky_std # still need to work this out
@@ -1349,7 +1370,7 @@ class tessreduce():
 		self.bkg = bkg
 
 
-	def _psf_initialise(self,cutoutSize,loc,ref=False):
+	def _psf_initialise(self,cutoutSize,loc,time_ind=None,ref=False):
 		"""
 		For gathering the cutouts and PRF base.
 
@@ -1370,21 +1391,63 @@ class tessreduce():
 			DESCRIPTION.
 
 		"""
-		if type(loc[0]) == float:
+		if time_ind is None:
+			time_ind = np.arange(0,len(self.flux))
+
+		if (type(loc[0]) == float) | (type(loc[0]) == np.float64) |  (type(loc[0]) == np.float32):
 			loc[0] = int(loc[0]+0.5)
-		if type(loc[1]) == float:
+		if (type(loc[1]) == float) | (type(loc[1]) == np.float64) |  (type(loc[1]) == np.float32):
 			loc[1] = int(loc[1]+0.5)
 		col = self.tpf.column - int(self.size/2-1) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
 		row = self.tpf.row - int(self.size/2-1) + loc[1] 
 			
 		prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row) # initialise psf kernel
 		if ref:
-			cutout = (self.flux+self.ref)[:,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+			cutout = (self.flux+self.ref)[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 		else:
-			cutout = self.flux[:,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+			cutout = self.flux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 		return prf, cutout
 
-	def psf_photometry(self,xPix,yPix,size=5,repFact=10,snap='brightest',ext_shift=True,plot=False,diff=None):
+	def moving_psf_photometry(self,xpos,ypos,size=5,time_ind=None,xlim=2,ylim=2):
+		if time_ind is None:
+			if len(xpos) != len(self.flux):
+				m = 'If "times" is not specified then xpos must have the same length as flux.'
+				raise ValueError(m)
+			else:
+				time_ind = np.arange(0,len(flux))
+			if (len(xpos) != len(time_ind)) | (len(ypos) != len(time_ind)):
+				m = 'xpos/ypos and time_ind must be the same length'
+				raise ValueError(m)
+		inds = np.arange(0,len(xpos))
+		if self.parallel:
+			prfs, cutouts = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_initialise)(self.flux,self.tpf.camera,self.tpf.ccd,
+																   						     self.tpf.sector,self.tpf.column,self.tpf.row,
+																						     size,[xpos[i],ypos[i]],time_ind) for i in inds))
+		else:
+			prfs = []
+			cutouts = []
+			for i in range(len(time_ind)):
+				prf, cutout = self._psf_initialise(size,[xpos[i],ypos[i]],time_ind=time_ind[i])
+				prfs += [prf]
+				cutouts += [cutout]
+		cutouts = np.array(cutouts)
+		print('made cutouts')
+		if self.parallel:
+			flux, pos = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_full)(cutouts[i],prfs[i],self.shift[i],xlim,ylim) for i in inds))
+		else:
+			flux = []
+			pos = []
+			for i in range(len(xpos)):
+				f, p = par_psf_full(cutouts[i],prfs[i],self.shift[i])
+				flux += [f]
+				pos += [p]
+		flux = np.array(flux)
+		pos = np.array(pos)
+		pos[0,:] += xpos; pos[1,:] += ypos
+		return flux, pos
+
+
+	def psf_photometry(self,xPix,yPix,size=5,snap='brightest',ext_shift=True,plot=False,diff=None):
 		"""
 		Main Function! Just switch self to self inside tessreduce and all should follow.
 
@@ -1416,66 +1479,70 @@ class tessreduce():
 			diff = self.diff
 		flux = []
 
-		if snap == None:  # if no snap, each cutout has their position fitted and considered during flux fitting
-			prf, cutouts = self._psf_initialise(size,(xPix,yPix))   # gather base PRF and the array of cutouts data
-			xShifts = []
-			yShifts = []
-			for cutout in tqdm(cutouts):
-				PSF = create_psf(prf,size,repFact)
-				PSF.psf_position(cutout)
-				PSF.psf_flux(cutout)
-				flux.append(PSF.flux)
-				yShifts.append(PSF.source_y)
-				xShifts.append(PSF.source_x)
-			if plot:
-				fig,ax = plt.subplots(ncols=3,figsize=(12,4))
-				ax[0].plot(flux)
-				ax[0].set_ylabel('Flux')
-				ax[1].plot(xShifts,marker='.',linestyle=' ')
-				ax[1].set_ylabel('xShift')
-				ax[2].plot(yShifts,marker='.',linestyle=' ')
-				ax[2].set_ylabel('yShift')
+		if isinstance(xPix,(list,np.ndarray)):
+			self.moving_psf_phot()
 
-		elif type(snap) == str:
-			if snap == 'brightest': # each cutout has position snapped to brightest frame fit position
-				prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
-				ind = np.where(cutouts==np.nanmax(cutouts))[0][0]
-				ref = cutouts[ind]
-				base = create_psf(prf,size,repFact=repFact)
-				base.psf_position(ref,ext_shift=self.shift[ind])
-			elif snap == 'ref':
-				prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=True)   # gather base PRF and the array of cutouts data
-				ref = cutouts[self.ref_ind]
-				base = create_psf(prf,size,repFact=repFact)
-				base.psf_position(ref)
-				if diff:
-					_, cutouts = self._psf_initialise(size,(xPix,yPix),ref=False)
-			if self.parallel:
-				inds = np.arange(len(cutouts))
-				flux = Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i]) for i in inds)
-			else:
-				for i in range(len(cutouts)):
-					flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
-			if plot:
-				plt.figure()
-				plt.plot(flux)
-				plt.ylabel('Flux')
+		else:
+			if snap == None:  # if no snap, each cutout has their position fitted and considered during flux fitting
+				prf, cutouts = self._psf_initialise(size,(xPix,yPix))   # gather base PRF and the array of cutouts data
+				xShifts = []
+				yShifts = []
+				for cutout in tqdm(cutouts):
+					PSF = create_psf(prf,size)
+					PSF.psf_position(cutout)
+					PSF.psf_flux(cutout)
+					flux.append(PSF.flux)
+					yShifts.append(PSF.source_y)
+					xShifts.append(PSF.source_x)
+				if plot:
+					fig,ax = plt.subplots(ncols=3,figsize=(12,4))
+					ax[0].plot(flux)
+					ax[0].set_ylabel('Flux')
+					ax[1].plot(xShifts,marker='.',linestyle=' ')
+					ax[1].set_ylabel('xShift')
+					ax[2].plot(yShifts,marker='.',linestyle=' ')
+					ax[2].set_ylabel('yShift')
 
-		
-		elif type(snap) == int:	   # each cutout has position snapped to 'snap' frame fit position (snap is integer)
-			base = create_psf(prf,size)
-			base.psf_position(cutouts[snap])
-			for cutout in cutouts:
-				PSF = create_psf(prf,size,repFact)
-				PSF.source_x = base.source_x
-				PSF.source_y = base.source_y
-				PSF.psf_flux(cutout)
-				flux.append(PSF.flux)
-			if plot:
-				fig,ax = plt.subplots(ncols=1,figsize=(12,4))
-				ax.plot(flux)
-				ax.set_ylabel('Flux')
-		flux = np.array(flux)
+			elif type(snap) == str:
+				if snap == 'brightest': # each cutout has position snapped to brightest frame fit position
+					prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
+					ind = np.where(cutouts==np.nanmax(cutouts))[0][0]
+					ref = cutouts[ind]
+					base = create_psf(prf,size)
+					base.psf_position(ref,ext_shift=self.shift[ind])
+				elif snap == 'ref':
+					prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=True)   # gather base PRF and the array of cutouts data
+					ref = cutouts[self.ref_ind]
+					base = create_psf(prf,size)
+					base.psf_position(ref)
+					if diff:
+						_, cutouts = self._psf_initialise(size,(xPix,yPix),ref=False)
+				if self.parallel:
+					inds = np.arange(len(cutouts))
+					flux = Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i]) for i in inds)
+				else:
+					for i in range(len(cutouts)):
+						flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
+				if plot:
+					plt.figure()
+					plt.plot(flux)
+					plt.ylabel('Flux')
+
+			
+			elif type(snap) == int:	   # each cutout has position snapped to 'snap' frame fit position (snap is integer)
+				base = create_psf(prf,size)
+				base.psf_position(cutouts[snap])
+				for cutout in cutouts:
+					PSF = create_psf(prf,size)
+					PSF.source_x = base.source_x
+					PSF.source_y = base.source_y
+					PSF.psf_flux(cutout)
+					flux.append(PSF.flux)
+				if plot:
+					fig,ax = plt.subplots(ncols=1,figsize=(12,4))
+					ax.plot(flux)
+					ax.set_ylabel('Flux')
+			flux = np.array(flux)
 		return flux
 
 
@@ -1602,6 +1669,8 @@ class tessreduce():
 					self.fit_shift()
 					#self.fit_shift()
 				#self.fit_shift()
+			else:
+				self.shift = np.zeros((len(self.flux),2))
 			
 			if not self.diff:
 				if self.align:
@@ -2682,7 +2751,7 @@ def Cat_mask(tpf,cataloge_path=None,maglim=19,scale=1,strapsize=3,badpix=None,re
 		4 - strap mask
 		8 - bad pixel (not used)
 	"""
-	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
+	
 	wcs = tpf.wcs
 	image = tpf.flux[100]
 	image = strip_units(image)
@@ -2700,8 +2769,6 @@ def Cat_mask(tpf,cataloge_path=None,maglim=19,scale=1,strapsize=3,badpix=None,re
 	#else:
 	#	mp = {}
 	#	mp['all'] = np.zeros_like(image)
-	image = tpf.flux[10]
-	image = strip_units(image)
 	sat = Big_sat(gaia,image,scale)
 	if ref is None:
 		mg  = gaia_auto_mask(gaia,image,scale)

@@ -16,6 +16,7 @@ from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.optimize import minimize
 
+from PRF import TESS_PRF
 
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import sigma_clip
@@ -29,6 +30,8 @@ from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
 import lightkurve as lk
+
+from .psf_photom import create_psf
 
 import requests
 import json
@@ -251,7 +254,7 @@ def image_sub(theta, image, ref):
 	#translation = np.float64([[1,0,dx],[0,1, dy]])
 	#s = cv2.warpAffine(image, translation, image.shape[::-1], flags=cv2.INTER_CUBIC,borderValue=0)
 	diff = (ref-s)**2
-	return np.nansum(diff[20:-20,20:-20])
+	return np.nansum(diff[5:-5,5:-5])
 
 def difference_shifts(image,ref):
 	"""
@@ -279,10 +282,12 @@ def difference_shifts(image,ref):
 	"""
 	if np.nansum(abs(image)) > 0:
 		x0= [0,0]
-		bds = [(-2,2),(-2,2)]
-		res = minimize(image_sub,x0,args=(image,ref),method = 'Powell')#,bounds= bds)
+		bds = [(-1,1),(-1,1)]
+		res = minimize(image_sub,x0,args=(image,ref),method = 'Powell',bounds= bds)
 		s = res.x
 	else:
+		s = np.zeros((2)) * np.nan
+	if (s == np.ones((2))).any():
 		s = np.zeros((2)) * np.nan
 	return s
 
@@ -602,11 +607,42 @@ def par_psf_source_mask(data,prf,sigma=5):
 			m[y[i]-fwhm[i]//2:y[i]+fwhm[i]//2,x[i]-fwhm[i]//2:x[i]+fwhm[i]//2] = 0
 	return m
 
+
+def par_psf_initialise(flux,camera,ccd,sector,column,row,cutoutSize,loc,time_ind=None,ref=False):
+	"""
+	For gathering the cutouts and PRF base.
+	"""
+	if time_ind is None:
+		time_ind = np.arange(0,len(flux))
+
+	if (type(loc[0]) == float) | (type(loc[0]) == np.float64) |  (type(loc[0]) == np.float32):
+		loc[0] = int(loc[0]+0.5)
+	if (type(loc[1]) == float) | (type(loc[1]) == np.float64) |  (type(loc[1]) == np.float32):
+		loc[1] = int(loc[1]+0.5)
+	col = column - int(flux.shape[2]/2-1) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
+	row = row - int(flux.shape[1]/2-1) + loc[1] 
+		
+	prf = TESS_PRF(camera,ccd,sector,col,row) # initialise psf kernel
+	if ref:
+		cutout = (flux+ref)[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+	else:
+		cutout = flux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+	prf = create_psf(prf,cutoutSize)
+	return prf, cutout
+
 def par_psf_flux(image,prf,shift=[0,0]):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
 	prf.psf_flux(image,ext_shift=shift)
 	return prf.flux
+
+def par_psf_full(cutout,prf,shift=[0,0],xlim=2,ylim=2):
+	if np.isnan(shift)[0]:
+		shift = np.array([0,0])
+	prf.psf_position(cutout,ext_shift=shift,limx=xlim,limy=ylim)
+	prf.psf_flux(cutout)
+	pos = [prf.source_x, prf.source_y]
+	return prf.flux, pos
 
 
 def external_save_TESS(ra,dec,sector,size=90,quality_bitmask='default',cache_dir=None):
@@ -836,6 +872,7 @@ def Cluster_lc(lc):
 	other_ind = ~bkg_ind
 	
 	return bkg_ind, other_ind
+
 
 def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=48*2):
 	bkg_ind, other_ind = Cluster_lc(lc)
