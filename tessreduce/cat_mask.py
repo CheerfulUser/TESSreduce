@@ -9,9 +9,10 @@ from astropy.wcs import WCS
 from scipy.signal import fftconvolve
 import os
 
-package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
-from .catalog_tools import *
+from .catalog_tools import Get_Gaia, external_load_cat
 from .helpers import *
+
+package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
 # turn off runtime warnings (lots from logic on nans)
 import warnings

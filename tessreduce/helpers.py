@@ -37,8 +37,6 @@ from tabulate import tabulate
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
 from .psf_photom import create_psf
-from .catalog_tools import *
-from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
 
 fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
 inches_per_pt = 1.0/72.27			   # Convert pt to inches

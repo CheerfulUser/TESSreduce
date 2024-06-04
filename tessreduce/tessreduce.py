@@ -419,9 +419,7 @@ class tessreduce():
 		self._mask_cat = cat
 
 	def psf_source_mask(self,mask,sigma=5):
-		  """
-	 
-
+		"""
 	    Parameters
 	    ----------
 	    # mask : TYPE
@@ -435,8 +433,6 @@ class tessreduce():
 	    #     DESCRIPTION.
 		"""
 
-
-		
 		if self._catalogue_path is not None:
 			prf_directory = '/fred/oz335/_local_TESS_PRFs'
 
