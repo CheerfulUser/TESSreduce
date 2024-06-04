@@ -1,0 +1,77 @@
+from photutils.detection import StarFinder
+from photutils.detection import DAOStarFinder
+from astropy.stats import sigma_clipped_stats
+from copy import deepcopy
+import numpy as np
+from PRF import TESS_PRF
+
+def corr2_coeff(A, B):
+    # Rowwise mean of input arrays & subtract from input arrays themeselves
+    A_mA = A - A.mean(1)[:, None]
+    B_mB = B - B.mean(1)[:, None]
+
+    # Sum of squares across rows
+    ssA = (A_mA**2).sum(1)
+    ssB = (B_mB**2).sum(1)
+
+    # Finally get corr coeff
+    return np.dot(A_mA, B_mB.T) / np.sqrt(np.dot(ssA[:, None],ssB[None]))
+
+def psflike_check(res, data,prf,corlim=0.8):
+    cors = []
+    maxloc = []
+    diff = []
+    for i in range(len(res)):
+        x = res[i]['xcentroid']
+        y = res[i]['ycentroid']
+
+        cut = deepcopy(data)[int(y)-2:int(y)+3,int(x)-2:int(x)+3]
+        cut /= np.nansum(cut)
+
+        localpsf = prf.locate(x-int(x)+2,y-int(y)+2,(5,5))
+        localpsf /= np.nansum(localpsf)
+        if cut.shape == localpsf.shape:
+            c = corr2_coeff(cut,localpsf)
+            cors += [np.average(c,weights=localpsf)]#[np.nanmean(c)]
+            locpsf = np.where(np.nanmax(localpsf) == localpsf)
+            locdata = np.where(np.nanmax(cut) == cut)
+            maxloc += [locpsf == locdata]
+            diff += [np.nansum(abs(cut-localpsf))]
+        else:
+            cors += [0]
+            maxloc += [False]
+            diff += [2]
+    cors = np.array(cors)
+    cors = np.round(cors,2)
+    maxloc = np.array(maxloc)
+    diff = np.array(diff)
+    ind = (cors >= corlim) & (diff < 0.5)
+    return ind, cors,diff
+
+def source_detect(tess,corlimit=0.8):
+    
+    prf = TESS_PRF(tess.tpf.camera,tess.tpf.ccd,tess.tpf.sector,tess.tpf.column+45,tess.tpf.row+45)
+    psf = prf.locate(5,5,(11,11))
+    result = None
+    for i in range(len(tess.flux)):
+        data = tess.flux[i]
+        mean, med, std = sigma_clipped_stats(data, sigma=3.0)
+
+        finder = StarFinder(med + 5*std,kernel=psf)
+        res = finder.find_stars(deepcopy(data))
+        if res is not None:
+            res['frame'] = i
+            ind, cors,diff = psflike_check(res,data,prf)
+            res['psflike'] = cors
+            res['psfdiff'] = diff
+            res = res[ind]
+            res = res.to_pandas()
+            if result is not None:
+                result = result.append(res)
+            else:
+                result = res
+    result['xint'] = deepcopy(result['xcentroid'].values).astype(int)
+    result['yint'] = deepcopy(result['ycentroid'].values).astype(int)
+    ind = (result['xint'].values >3) & (result['xint'].values < data.shape[1]-3) & (result['yint'].values >3) & (result['yint'].values < data.shape[0]-3)
+    return result[ind]
+

@@ -15,33 +15,20 @@ from copy import deepcopy
 
 from scipy.ndimage.filters import convolve
 from scipy.ndimage import shift
-from scipy.ndimage import gaussian_filter
-from scipy.ndimage import median_filter
-from skimage.restoration import inpaint
-from scipy import signal
-import cv2
 
-from sklearn.cluster import OPTICS, cluster_optics_dbscan
+from sklearn.cluster import OPTICS
 
 from scipy.signal import savgol_filter
 
 
 from scipy.interpolate import interp1d
-from scipy.interpolate import griddata
-from scipy.interpolate import UnivariateSpline
-from scipy.stats import pearsonr
-
-from photutils.centroids import centroid_com
-from photutils import DAOStarFinder
 
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import sigma_clip
 
 import multiprocessing
 from joblib import Parallel, delayed
-
-from tess_stars2px import tess_stars2px_function_entry as focal_plane
-from tabulate import tabulate
+from tqdm import tqdm
 
 from .catalog_tools import *
 from .calibration_tools import *
@@ -49,6 +36,9 @@ from .ground_tools import ground
 from .rescale_straps import correct_straps
 from .lastpercent import *
 from .psf_photom import create_psf
+from .helpers import *
+from .cat_mask import Cat_mask
+
 #from .syndiff import PS1_scene
 
 # turn off runtime warnings (lots from logic on nans)
@@ -71,575 +61,81 @@ from astropy.coordinates import SkyCoord
 from astropy import units as u
 from astropy.time import Time
 
-import requests
-import json
-
 
 fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
 inches_per_pt = 1.0/72.27			   # Convert pt to inches
 golden_mean = (np.sqrt(5)-1.0)/2.0		 # Aesthetic ratio
 fig_width = fig_width_pt*inches_per_pt  # width in inches
 
-def strip_units(data):
-	if type(data) != np.ndarray:
-		data = data.value
-	return data
-
-
-def sigma_mask(data,sigma=3):
-	"""
-	Just does a sigma clip on an array.
-
-	Parameters
-	----------
-	data : array
-		A single image 
-
-	sigma : float
-		sigma used in the sigma clipping
-
-	Returns
-	-------
-	clipped : array
-		A boolean array to mask the original array
-	"""
-	clipped = ~sigma_clip(data,sigma=sigma).mask
-	return clipped 
-
-def Source_mask(Data, grid=0):
-	"""
-	Makes a mask of sources in the image using conditioning on percentiles.
-	The grid option breakes the image up into sections the size of grid to
-	do a basic median subtraction of the background. This is useful for 
-	large fovs where the background has a lot of structure.
-
-	Parameters
-	----------
-	data : array
-		A single image 
-	
-	grid : int
-		size of the averaging square used to do a median background subtraction 
-		before finding the sources.
-
-	Returns
-	-------
-	mask : array
-		Boolean mask array for the sources in the image
-	"""
-	data = deepcopy(Data)
-	# catch for if there are no pixels that escape the mask
-	if np.nansum(np.isfinite(data)) > 10:
-		if grid > 0:
-			data[data<0] = 0
-			data[data >= np.nanpercentile(data,95)] = np.nan
-			grid = np.zeros_like(data)
-			size = grid
-			for i in range(grid.shape[0]//size):
-				for j in range(grid.shape[1]//size):
-					section = data[i*size:(i+1)*size,j*size:(j+1)*size]
-					section = section[np.isfinite(section)]
-					lim = np.nanpercentile(section,1)
-					grid[i*size:(i+1)*size,j*size:(j+1)*size] = lim
-			thing = data - grid
-		else:
-			thing = data
-		ind = np.isfinite(thing)
-		mask = ((thing <= np.percentile(thing[ind],95,axis=0)) &
-			   (thing <= np.percentile(thing[ind],10))) * 1.
-	else:
-		mask = np.zeros_like(data)
-
-	return mask
-
-def unknown_mask(image):
-	mask = np.zeros_like(image)
-	for i in range(image.shape[1]):
-		d = image.copy()
-		m = np.array([])
-		masked = image.copy()
-		x = np.arange(image.shape[0])
-		y = d * 1.
-
-		y[y==0] = np.nan
-		g = np.gradient(y)
-
-		m = np.append(m,sigma_clip(g,sigma=3).mask)
-
-		masked[m>0] = np.nan
-		for k in range(5):
-			nonan = np.isfinite(masked)
-			filled = interp1d(x[nonan],masked[nonan],bounds_error=False,fill_value='extrapolate',kind='linear')
-			filled = filled(x)
-			
-			sav = savgol_filter(filled,image.shape[1]//2+1,2)
-			dif = masked-sav
-			m2 = sigma_clip(dif,sigma=3).mask
-			mm = np.zeros(len(masked))
-			mm[nonan] = 1
-			mask[:,i][m2] = 1
-	return mask
-
-
-def _parallel_bkg3(data,mask):
-	data[mask] = np.nan
-	estimate = inpaint.inpaint_biharmonic(data,mask)
-	return estimate
-
-def Smooth_bkg(data, gauss_smooth=2, interpolate=False, extrapolate=True):
-	"""
-	Interpolate over the masked objects to derive a background estimate. 
-
-	Parameters
-	----------
-	data : array
-		A single image 
-	
-	extrapolate: Bool
-		switch for using extrapolation in the background 
-
-	Returns
-	-------
-	estimate : array 
-		an estimate of the smooth background in the TESS image
-
-	bitmask : array
-		an array indicating where extrapolation was used
-
-	"""
-	#data[data == 0] = np.nan
-	if (~np.isnan(data)).any():
-		x = np.arange(0, data.shape[1])
-		y = np.arange(0, data.shape[0])
-		arr = np.ma.masked_invalid(deepcopy(data))
-		xx, yy = np.meshgrid(x, y)
-		#get only the valid values
-		x1 = xx[~arr.mask]
-		y1 = yy[~arr.mask]
-		newarr = arr[~arr.mask]
-		if (len(x1) > 10) & (len(y1) > 10):
-			if interpolate:
-				estimate = griddata((x1, y1), newarr.ravel(),
-										  (xx, yy),method='linear')
-				nearest = griddata((x1, y1), newarr.ravel(),
-										  (xx, yy),method='nearest')
-				if extrapolate:
-					estimate[np.isnan(estimate)] = nearest[np.isnan(estimate)]
-				
-				estimate = gaussian_filter(estimate,gauss_smooth)
-			
-			#estimate = median_filter(estimate,5)
-			else:
-				# try inpaint stuff 
-				mask = deepcopy(arr.mask)
-				mask = mask.astype(bool)
-				# end inpaint
-				estimate = inpaint.inpaint_biharmonic(data,mask)
-				#estimate = signal.fftconvolve(estimate,self.prf,mode='same')
-				estimate = gaussian_filter(estimate,gauss_smooth)
-		else:
-			estimate = np.zeros_like(data) * np.nan	
-	else:
-		estimate = np.zeros_like(data) #* np.nan	
-
-	return estimate
-
-def Calculate_shifts(data,mx,my,finder):
-	"""
-	Calculate the offsets of sources identified by photutils from a reference
-
-	Parameters
-	----------
-	data : array
-		a single frame from the tpf
-
-	mx : array
-		mean row positions for the centroids from the reference image
-
-	my : array
-		mean col positions for the centroids from the reference image
-
-	daofind : DAOStarFinder
-		module to find the centroid positions
-
-	Returns
-	-------
-	shifts : array
-		row and col shift to match the data centroids to the reference image
-
-	"""
-	shifts = np.zeros((2,len(mx))) * np.nan
-	if np.nansum(data) > 0:
-		mean, med, std = sigma_clipped_stats(data, sigma=3.0)
-		try:
-			#s = daofind(data - med)
-			s = finder.find_stars(deepcopy(data)-med)
-		except:
-			s = None
-			print('bad frame')
-		if type(s) != type(None):
-			x = s['xcentroid']
-			y = s['ycentroid']
-			dist = np.zeros((len(mx),len(x)))
-			dist = dist + np.sqrt((x[np.newaxis,:] - mx[:,np.newaxis])**2 + 
-								  (y[np.newaxis,:] - my[:,np.newaxis])**2)
-			ind = np.argmin(dist,axis=1)
-			indo = (np.nanmin(dist) < 1)
-			ind = ind[indo]
-			shifts[1,indo] = mx[indo] - x[ind]
-			shifts[0,indo] = my[indo] - y[ind]
-		else:
-			shifts[0,indo] = np.nan
-			shifts[1,indo] = np.nan
-	return shifts
-
-def image_sub(theta, image, ref):
-	dx, dy = theta
-	s = shift(image,([dx,dy]),order=5)
-	#translation = np.float64([[1,0,dx],[0,1, dy]])
-	#s = cv2.warpAffine(image, translation, image.shape[::-1], flags=cv2.INTER_CUBIC,borderValue=0)
-	diff = (ref-s)**2
-	return np.nansum(diff[20:-20,20:-20])
-
-def difference_shifts(image,ref):
-	"""
-	Calculate the offsets of sources identified by photutils from a reference
-
-	Parameters
-	----------
-	data : array
-		a single frame from the tpf
-
-	mx : array
-		mean row positions for the centroids from the reference image
-
-	my : array
-		mean col positions for the centroids from the reference image
-
-	daofind : DAOStarFinder
-		module to find the centroid positions
-
-	Returns
-	-------
-	shifts : array
-		row and col shift to match the data centroids to the reference image
-
-	"""
-	if np.nansum(abs(image)) > 0:
-		x0= [0,0]
-		#bds = [(-2,2),(-2,2)]
-		res = minimize(image_sub,x0,args=(image,ref),method = 'Powell')#,bounds= bds)
-		s = res.x
-	else:
-		s = np.zeros((2)) * np.nan
-	return s
-
-def Smooth_motion(Centroids,tpf):
-	"""
-	Calculate the smoothed centroid shift 
-
-	Parameters
-	----------
-	Centroids : array
-		centroid shifts from all frames
-
-
-	TPF : lightkurve targetpixelfile
-		tpf
-
-	Returns
-	-------
-	smoothed : array
-		smoothed displacement of the centroids
-
-	"""
-	smoothed = np.zeros_like(Centroids) * np.nan
-	try:
-		try:
-			split = np.where(np.diff(tpf.time.mjd) > 0.5)[0][0] + 1
-			# ugly, but who cares
-			ind1 = np.nansum(tpf.flux[:split],axis=(1,2))
-			ind1 = np.where(ind1 != 0)[0]
-			ind2 = np.nansum(tpf.flux[split:],axis=(1,2))
-			ind2 = np.where(ind2 != 0)[0] + split
-			smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],25,3)
-			smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],25,3)
-
-			smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],25,3)
-			smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],25,3)
-		except:
-			split = np.where(np.diff(tpf.time.mjd) > 0.5)[0][0] + 1
-			# ugly, but who cares
-			ind1 = np.nansum(tpf.flux[:split],axis=(1,2))
-			ind1 = np.where(ind1 != 0)[0]
-			ind2 = np.nansum(tpf.flux[split:],axis=(1,2))
-			ind2 = np.where(ind2 != 0)[0] + split
-			smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],11,3)
-			smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],11,3)
-
-			smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],11,3)
-			smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],11,3)
-
-	except IndexError:
-		smoothed[:,0] = savgol_filter(Centroids[:,0],25,3)		
-		smoothed[:,1] = savgol_filter(Centroids[:,1],25,3)
-	return smoothed
-
-
-def smooth_zp(zp,time):
-	"""
-	Calculate the smoothed centroid shift 
-
-	Parameters
-	----------
-	zp : array
-		centroid shifts from all frames
-
-
-	time : lightkurve targetpixelfile
-		tpf
-
-	Returns
-	-------
-	smoothed : array
-		smoothed displacement of the centroids
-
-	"""
-	smoothed = np.zeros_like(zp) * np.nan
-	plt.figure()
-	plt.plot(time,zp,'.')
-	try:
-		split = np.where(np.diff(time) > 0.5)[0][0] + 1
-		# ugly, but who cares
-		ind1 = np.isfinite(zp[:split])
-		ind2 = np.isfinite(zp[split:]) + split
-	
-		smoothed[ind1] = savgol_filter(zp[ind1],15,3)
-		smoothed[ind2] = savgol_filter(zp[ind2],15,3)
-
-		smoothed[ind1] = savgol_filter(zp[ind1],15,3)
-		smoothed[ind2] = savgol_filter(zp[ind2],15,3)
-	except IndexError:
-		smoothed[:] = savgol_filter(zp[:],15,3)
-		smoothed[:] = savgol_filter(zp[:],15,3)
-	err = np.nanstd(zp - smoothed)
-
-	return smoothed, err
-
-
-
-def grads_rad(flux):
-	rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
-	return rad
-
-def grad_flux_rad(flux):
-	rad = np.sqrt(flux**2+np.gradient(flux)**2)
-	return rad
-
-def sn_lookup(name,time='disc',buffer=0,print_table=True, df = False):
-	"""
-	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
-	discovery/max times and coordinates.
-
-	------
-	Inputs
-	------
-	name : str
-		catalog name
-	time : str
-		reference time to use, can be either disc, or max
-	buffer : float
-		overlap buffer time in days 
-	
-	-------
-	Options
-	-------
-	print_table : bool 
-		if true then the lookup table is printed
-
-	-------
-	Returns
-	-------
-	tr_list : list
-		list of ra, dec, and sector that can be put into tessreduce.
-	"""
-	url = 'https://api.astrocats.space/{}'.format(name)
-	response = requests.get(url)
-	json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
-	d = json.loads(json_acceptable_string)
-	if list(d.keys())[0] == 'message':
-		print(d['message'])
-		return None
-	else:
-		disc_t = d[name]['discoverdate'][0]['value']
-		disc_t = Time(disc_t.replace('/','-'))
-		
-
-	max_t = d[name]['maxdate'][0]['value']
-	max_t = Time(max_t.replace('/','-'))
-
-	ra = d[name]['ra'][-1]['value']
-	dec = d[name]['dec'][-1]['value']
-	c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
-	ra = c.ra.deg
-	dec = c.dec.deg
-	outID, outEclipLong, outEclipLat, outSecs, outCam, outCcd, outColPix, \
-	outRowPix, scinfo = focal_plane(0, ra, dec)
-	
-	sec_times = pd.read_csv(package_directory + 'sector_mjd.csv')
-	if len(outSecs) > 0:
-		ind = outSecs - 1 
-
-		new_ind = [i for i in ind if i < len(sec_times)]
-
-		secs = sec_times.iloc[new_ind]
-		if (time.lower() == 'disc') | (time.lower() == 'discovery'):
-			disc_start = secs['mjd_start'].values - disc_t.mjd
-			disc_end = secs['mjd_end'].values - disc_t.mjd
-		elif (time.lower() == 'max') | (time.lower() == 'peak'):
-			disc_start = secs['mjd_start'].values - max_t.mjd
-			disc_end = secs['mjd_end'].values - max_t.mjd
-
-		covers = []
-		differences = []
-		tr_list = []
-		tab = []
-		for i in range(len(disc_start)):
-			ds = disc_start[i]
-			de = disc_end[i]
-			if (ds-buffer < 0) & (de + buffer> 0):
-				cover = True
-				dif = 0
-			elif (de+buffer < 0):
-				cover = False
-				dif = de
-			elif (ds-buffer > 0):
-				cover = False
-				dif = ds
-			covers += [cover]
-			differences += [dif]
-			tab += [[secs.Sector.values[i], cover, dif]]
-			tr_list += [[ra, dec, secs.Sector.values[i], cover]]
-
-		if print_table: 
-			print(tabulate(tab, headers=['Sector', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
-		if df:
-			return pd.DataFrame(tr_list, columns = ['RA', 'DEC','Sector','Covers'])
-		else:
-			return tr_list
-	else:
-		print('No TESS coverage')
-		return None
-
-def spacetime_lookup(ra,dec,time=None,buffer=0,print_table=True, df = False):
-	"""
-	Check for overlapping TESS ovservations for a transient. Uses the Open SNe Catalog for 
-	discovery/max times and coordinates.
-
-	------
-	Inputs
-	------
-	ra : float or str
-		ra of object
-	dec : float or str
-		dec of object
-	time : float
-		reference time to use, must be in MJD
-	buffer : float
-		overlap buffer time in days 
-	
-	-------
-	Options
-	-------
-	print_table : bool 
-		if true then the lookup table is printed
-
-	-------
-	Returns
-	-------
-	tr_list : list
-		list of ra, dec, and sector that can be put into tessreduce.
-	"""
-	if time is None:
-		print('!!! WARNING no MJD time specified, using default of 59000')
-		time = 59000
-
-	if type(ra) == str:
-		c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
-		ra = c.ra.deg
-		dec = c.dec.deg
-
-	outID, outEclipLong, outEclipLat, outSecs, outCam, outCcd, outColPix, \
-	outRowPix, scinfo = focal_plane(0, ra, dec)
-	
-	sec_times = pd.read_csv(package_directory + 'sector_mjd.csv')
-	if len(outSecs) > 0:
-		ind = outSecs - 1 
-		secs = sec_times.iloc[ind]
-		disc_start = secs['mjd_start'].values - time
-		disc_end = secs['mjd_end'].values - time
-
-		covers = []
-		differences = []
-		tr_list = []
-		tab = []
-		for i in range(len(disc_start)):
-			ds = disc_start[i]
-			de = disc_end[i]
-			if (ds-buffer < 0) & (de + buffer> 0):
-				cover = True
-				dif = 0
-			elif (de+buffer < 0):
-				cover = False
-				dif = de
-			elif (ds-buffer > 0):
-				cover = False
-				dif = ds
-			covers += [cover]
-			differences += [dif]
-			tab += [[secs.Sector.values[i], outCam[i], outCcd[i], cover, dif]]
-			tr_list += [[ra, dec, secs.Sector.values[i],outCam[i], outCcd[i], cover]]
-		if print_table: 
-			print(tabulate(tab, headers=['Sector', 'Camera', 'CCD', 'Covers','Time difference \n(days)'], tablefmt='orgtbl'))
-		return tr_list
-	else:
-		print('No TESS coverage')
-		return None
-
-
-def _par_psf_source_mask(data,prf,sigma=5):
-
-	mean, med, std = sigma_clipped_stats(data, sigma=3.0)
-
-	finder = StarFinder(med + sigma*std,kernel=prf,exclude_border=False)
-	res = finder.find_stars(deepcopy(data))
-	m = np.ones_like(data)
-	if res is not None:
-		x = (res['xcentroid'].value + 0.5).astype(int)
-		y = (res['ycentroid'].value + 0.5).astype(int)
-		fwhm = (res['fwhm'].value*1.2 + 0.5).astype(int)
-		fwhm[fwhm < 6] = 6
-		for i in range(len(x)):
-			m[y[i]-fwhm[i]//2:y[i]+fwhm[i]//2,x[i]-fwhm[i]//2:x[i]+fwhm[i]//2] = 0
-	return m
-
-def _par_psf_flux(image,prf,shift=[0,0]):
-	if np.isnan(shift)[0]:
-		shift = np.array([0,0])
-	prf.psf_flux(image,ext_shift=shift)
-	return prf.flux
-
-
-
 class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,reduce=True,
 				 align=True,parallel=True,diff=True,plot=False,corr_correction=True,phot_method='aperture',savename=None,
 				 quality_bitmask='default',verbose=1,cache_dir=None,calibrate=True,harshmask_counts=None,
-				 sourcehunt=True,num_cores='max'):
+				 sourcehunt=True,num_cores=-1,catalogue_path=False,imaging=False):
+
 		"""
-		Class to reduce tess data.
+		DESCRIPTION
+
+		Parameters
+		----------
+		ra : float
+			Right ascension of the target object. The default is None.
+		dec : float
+			Declination of the target object. The default is None.
+		name : str
+			Name of the object, used in saving. The default is None.
+		obs_list : array, optional
+			Array generated by the sn_lookup and spacetime_lookup functions. The default is None.
+		tpf : target pixel file, optional
+			TESS target pixel file. The default is None.
+		size : int, optional
+			Size in pixels of the cutout, larger cutout sizes give better background subtractions. The default is 90.
+		sector : int, optional
+			Sector of observations. The default is None.
+		phot_method : str, optional
+			Select the photometry method used in the reduction. Choose between 'aperture' and 'PSF'. The default is 'aperture'.
+
+		Options
+		-------
+		reduce : bool, optional
+			DESCRIPTION. The default is True.
+		align : bool, optional
+			DESCRIPTION. The default is True.
+		parallel : TYPE, optional
+			DESCRIPTION. The default is True.
+		diff : bool, optional
+			DESCRIPTION. The default is True.
+		plot : bool, optional
+			DESCRIPTION. The default is False.
+		corr_correction : bool, optional
+			Final correction step that operates on pixels which have high correlation between their lightcurve and the background. The default is True.
+		
+		savename : str, optional
+			Save name for the outputs. The default is None.
+		quality_bitmask : str, optional
+			Change the . The default is 'default'.
+		verbose : int, optional
+			Controls the level of verbosity, 0 is none, 1 is verbose. The default is 1.
+		cache_dir : str, optional
+			Directory to cache files. The default is None.
+		calibrate : bool, optional
+			Performs photometric calibration on the datacube using PS1 or SkyMapper data. The default is True.
+		harshmask_counts : TYPE, optional
+			DESCRIPTION. The default is None.
+		sourcehunt : bool, optional
+			Searches for sources in the background and masks them. Prevents asteroids and other transients from being included in the background. The default is True.
+		num_cores : int, optional
+			Number of cores to run parallel process on. The default is -1 which is the max.
+		catalogue_path : str, optional
+			Path to required catalogs for when using TESSreduce in offline mode. The default is None.
+
+		Returns
+		-------
+		None.
+
 		"""
+
 		self.ra = ra
 		self.dec = dec 
 		self.name = name
@@ -655,10 +151,12 @@ class tessreduce():
 		self._assign_phot_method(phot_method)
 		self._harshmask_counts = harshmask_counts
 		self._sourcehunt = sourcehunt
-		if type(num_cores) == str:
-			self.num_cores = multiprocessing.cpu_count()
-		else:
-			self.num_cores = num_cores
+		if catalogue_path is None:
+			catalogue_path = os.getcwd()
+		elif catalogue_path is False:
+			catalogue_path = None
+		self._catalogue_path = catalogue_path
+		self.num_cores = num_cores
 
 
 		# Plotting
@@ -672,7 +170,7 @@ class tessreduce():
 		self.flux = None
 		self.ref = None
 		self.ref_ind = None
-		self.wcs = None
+		self.wcs = None	
 		self.qe = None
 		self.lc = None
 		self.sky = None
@@ -714,21 +212,72 @@ class tessreduce():
 		elif self.check_coord():
 			if self.verbose>0:
 				print('getting TPF from TESScut')
-			self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
+
+			if self._catalogue_path is None:
+				self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
+			else:
+				self.tpf = external_get_TESS()
+
+			self.flux = strip_units(self.tpf.flux)
+			self.wcs  = self.tpf.wcs
 
 		self.ground = ground(ra = self.ra, dec = self.dec)
+		self._get_gaia()
 
 		if reduce:
 			self.reduce()
 
 
 	def check_coord(self):
+		'''
+		DESCRIPTION
+
+	    Returns
+	    -------
+	    bool
+	        DESCRIPTION.
+
+	    '''
 		if ((self.ra is None) | (self.dec is None)) & (self.name is None):
 			return False
 		else:
 			return True
 
+	def _get_gaia(self,maglim=21):
+		result = Get_Catalogue(self.tpf, Catalog = 'gaia')
+		result = result[result.Gmag < maglim]
+		result = result.rename(columns={'RA_ICRS': 'ra',
+                               'DE_ICRS': 'dec',
+                               'e_RA_ICRS': 'e_ra',
+                               'e_DE_ICRS': 'e_dec',})
+		x,y = self.wcs.all_world2pix(result['ra'].values,result['dec'].values,0)
+		result['x'] = x; result['y'] = y
+		ind = (((x > 0) & (y > 0)) & 
+		 	  ((x < (self.flux.shape[2])) & (y < (self.flux.shape[1]))))
+		result = result.iloc[ind]
+
+		self.gaia = result
+		
+
 	def _assign_phot_method(self,phot_method):
+		'''
+		DESCRIPTION
+
+		Parameters
+		----------
+		# phot_method : TYPE
+		# 	DESCRIPTION.
+
+		Raises
+		------
+		# ValueError
+		# 	DESCRIPTION.
+
+		Returns
+		-------
+		None.
+
+		'''
 		if type(phot_method) == str:
 			method = phot_method.lower()
 			if (method == 'psf') | (method == 'aperture'):
@@ -741,45 +290,55 @@ class tessreduce():
 			raise ValueError(m)
 
 	def get_TESS(self,ra=None,dec=None,name=None,Size=None,Sector=None,quality_bitmask='default',cache_dir=None):
-		"""
+		'''
 		Use the lightcurve interface with TESScut to get an FFI cutout 
 		of a region around the given coords.
 
 		Parameters
 		----------
-		RA : float 
-			RA of the centre point 
+		ra : float64, optional
+			RA of the centre point . The default is None.
+		dec : float64, optional
+			Dec of the centre point. The default is None.
+		name : TYPE, optional
+			DESCRIPTION. The default is None.
+		Size : int64, optional
+			Size of the cutout. The default is None.
+		Sector : int64, optional
+			Sector to download. The default is None.
+		# quality_bitmask : TYPE, optional
+		# 	DESCRIPTION. The default is 'default'.
+		# cache_dir : TYPE, optional
+		# 	DESCRIPTION. The default is None.
 
-		DEC : float
-			Dec of the centre point
-
-		Size : int
-			size of the cutout
-
-		Sector : int
-			sector to download 
+		Raises
+		------
+		ValueError
+			DESCRIPTION.
 
 		Returns
 		-------
 		tpf : lightkurve target pixel file
 			tess ffi cutout of the selected region
-		"""
+
+		'''
+		
 		if Sector is None:
 			Sector = self.sector
 
 		if (name is None) & (self.name is None):
 			if (ra is not None) & (dec is not None):
 				c = SkyCoord(ra=float(ra)*u.degree, dec=float(dec) *
-							 u.degree, frame='icrs')
+								u.degree, frame='icrs')
 			else:
 				c = SkyCoord(ra=float(self.ra)*u.degree, dec=float(self.dec) *
-							 u.degree, frame='icrs')
+								u.degree, frame='icrs')
 			tess = lk.search_tesscut(c,sector=Sector)
 		else:
 			tess = lk.search_tesscut(name,sector=Sector)
 		if Size is None:
 			Size = self.size
-		
+
 		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=Size,download_dir=cache_dir)
 		if tpf is None:
 			m = 'Failure in TESScut api, not sure why.'
@@ -789,17 +348,48 @@ class tessreduce():
 		self.wcs  = tpf.wcs
 
 	def harsh_mask(self):
+		'''
+		DESCRIPTION
+
+		Returns
+		-------
+		None.
+
+		'''
+
 		if self._harshmask_counts is not None:
 			ind = self.ref > self._harshmask_counts
 			self.ref[ind]
 
-	def make_mask(self,maglim=19,scale=1,strapsize=6,useref=False):
+	def make_mask(self,catalogue_path=None,maglim=19,scale=1,strapsize=6,useref=False):
+		'''
+		DESCRIPTION
+
+	    Parameters
+	    ----------
+	    # catalogue_path : TYPE, optional
+	    #     DESCRIPTION. The default is None.
+	    # maglim : float64, optional
+	    #     DESCRIPTION. The default is 19.
+	    # scale : TYPE, optional
+	    #     DESCRIPTION. The default is 1.
+	    # strapsize : TYPE, optional
+	    #     DESCRIPTION. The default is 6.
+	    # useref : TYPE, optional
+	    #     DESCRIPTION. The default is False.
+
+	    Returns
+	    -------
+	    None.
+
+	    '''
+
 		# make a diagnostic plot for mask
 		data = strip_units(self.flux)
 		if useref:
-			mask, cat = Cat_mask(self.tpf,maglim,scale,strapsize,ref=self.ref)
+			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize,ref=self.ref)
 		else:
-			mask, cat = Cat_mask(self.tpf,maglim,scale,strapsize)
+			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize)
 		sky = ((mask & 1)+1 ==1) * 1.
 		sky[sky==0] = np.nan
 		tmp = np.nansum(data*sky,axis=(1,2))
@@ -826,7 +416,7 @@ class tessreduce():
 		sky = ((fullmask & 1)+1 ==1) * 1.
 		sky[sky==0] = np.nan
 		masked = ref*sky
-		mean = np.nanmean(masked) # assume sources weight the mean above the bkg
+		mean,med,std = sigma_clipped_stats(masked)# assume sources weight the mean above the bkg
 		if useref is False:
 			m_second = (masked > mean).astype(int)
 			self.mask = fullmask | m_second
@@ -835,33 +425,76 @@ class tessreduce():
 		self._mask_cat = cat
 
 	def psf_source_mask(self,mask,sigma=5):
+		"""
+	    Parameters
+	    ----------
+	    # mask : TYPE
+	    #     DESCRIPTION.
+	    # sigma : TYPE, optional
+	    #     DESCRIPTION. The default is 5.
+
+	    Returns
+	    -------
+	    # TYPE
+	    #     DESCRIPTION.
+		"""
+
+		if self._catalogue_path is not None:
+			prf_directory = '/fred/oz335/_local_TESS_PRFs'
+
+			if self.sector < 4:
+				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
+								localdatadir=f'{prf_directory}/Sectors1_2_3')
+			else:
+				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
+								localdatadir=f'{prf_directory}/Sectors4+')
+		else:
+			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+				   	   		self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
 		
-		prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
-				   	   self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
 		self.prf =  prf.locate(5,5,(11,11))
 
 		
 		data = (self._flux_aligned - self.ref) #* mask
 		if self.parallel:
 			try:
-				m = Parallel(n_jobs=self.num_cores)(delayed(_par_psf_source_mask)(frame,self.prf,sigma) for frame in data)
+				m = Parallel(n_jobs=self.num_cores)(delayed(par_psf_source_mask)(frame,self.prf,sigma) for frame in data)
 				m = np.array(m)
 			except:
 				m = np.ones_like(data)
 				for i in range(data.shape[0]):
 					#m[i] = _par_psf_source_mask(data[i],self.prf,sigma)
-					eh = _par_psf_source_mask(data[i],self.prf,sigma)
+					eh = par_psf_source_mask(data[i],self.prf,sigma)
 					m[i] = eh
 		else:
 			m = np.ones_like(data)
 			for i in range(data.shape[0]):
-				m[i] = _par_psf_source_mask(data[i],self.prf,sigma)
+				m[i] = par_psf_source_mask(data[i],self.prf,sigma)
 		return m * 1.0
 
 	def background(self,calc_qe=True, strap_iso=True,source_hunt=False,gauss_smooth=2,interpolate=True):
-		"""
-		Calculate the background for all frames in the TPF.
-		"""
+		'''
+		DESCRIPTION
+
+		Parameters
+		----------
+		# calc_qe : TYPE, optional
+		#     DESCRIPTION. The default is True.
+		# strap_iso : TYPE, optional
+		#     DESCRIPTION. The default is True.
+		# source_hunt : TYPE, optional
+		#     DESCRIPTION. The default is False.
+		# gauss_smooth : TYPE, optional
+		#     DESCRIPTION. The default is 2.
+		# interpolate : TYPE, optional
+		#     DESCRIPTION. The default is True.
+		
+		Returns
+		-------
+		None.
+		'''
 		if strap_iso:
 			m = (self.mask == 0) * 1.
 		else:
@@ -915,6 +548,14 @@ class tessreduce():
 
 
 	def small_background(self):
+		'''
+	    DESCRIPTION
+
+	    Returns
+	    -------
+	    None.
+
+	    '''
 		bkg = np.zeros_like(self.flux)
 		flux = strip_units(self.flux)
 		lim = 2*np.nanmin(flux,axis=(1,2))#np.nanpercentile(flux,1,axis=(1,2))
@@ -925,6 +566,19 @@ class tessreduce():
 		self.bkg = bkg
 
 	def _bkg_round_3(self,iters=5):
+		'''
+	    DESCRIPTION
+
+	    Parameters
+	    ----------
+	    iters : TYPE, optional
+	        DESCRIPTION. The default is 5.
+
+	    Returns
+	    -------
+	    None
+
+	    '''
 		for i in range(iters):
 			tb = self.bkg * self._bkgmask
 			m = np.nanmedian(tb,axis=(1,2))
@@ -943,30 +597,33 @@ class tessreduce():
 			kern = np.ones((1,3,3))
 			dist_mask = convolve(dist_mask,kern) > 0
 			if self.parallel:
-				bkg_3 = Parallel(n_jobs=self.num_cores)(delayed(_parallel_bkg3)(self.bkg[i],dist_mask[i]) 
+				bkg_3 = Parallel(n_jobs=self.num_cores)(delayed(parallel_bkg3)(self.bkg[i],dist_mask[i]) 
 														   for i in np.arange(len(dist_mask)))
 			else:
 				bkg_3 = []
 				bkg_smth = np.zeros_like(dist_mask)
 				for i in range(len(dist_mask)):
-					bkg_3[i] = _parallel_bkg3(self.bkg[i],dist_mask[i])
+					bkg_3[i] = parallel_bkg3(self.bkg[i],dist_mask[i])
 			self.bkg = np.array(bkg_3)
 
 	def get_ref(self,start = None, stop = None):
 		'''
-		Get refernce image to use for subtraction and mask creation.
+		Get reference image to use for subtraction and mask creation.
 		The image is made from all images with low background light.
 
 		Parameters
 		----------
-		data : array
-			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
+		start : TYPE, optional
+			DESCRIPTION. The default is None.
+		stop : TYPE, optional
+			DESCRIPTION. The default is None.
 
 		Returns
 		-------
-		reference : array
-			reference array from which the source mask is identified
+		None.
+
 		'''
+
 		data = strip_units(self.flux)
 		if (start is None) & (stop is None):
 			start = 0
@@ -997,28 +654,21 @@ class tessreduce():
 
 
 	def centroids_DAO(self,plot=None,savename=None):
-		"""
+		'''
 		Calculate the centroid shifts of time series images.
-		
+
 		Parameters
 		----------
-		Flux : array 
-			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
-
-		Median : array
-			median image used for the position reference
-
-		TPF : lightkurve targetpixelfile
-			tpf
-		
-		parallel : bool
-			if True then parallel processing will be used for shift calculations
+		plot : TYPE, optional
+			DESCRIPTION. The default is None.
+		savename : TYPE, optional
+			DESCRIPTION. The default is None.
 
 		Returns
 		-------
-		smooth : array
-			smoothed displacement of the centroids compared to the Median
-		"""
+		None.
+
+		'''
 		if plot is None:
 			plot = self.plot
 		if savename is None:
@@ -1048,8 +698,6 @@ class tessreduce():
 		#mx = mx[ind]
 		#my = my[ind]
 		if self.parallel:
-			
-			
 			shifts = Parallel(n_jobs=self.num_cores)(
 				delayed(Calculate_shifts)(frame,mx,my,finder) for frame in f)
 			shifts = np.array(shifts)
@@ -1086,28 +734,22 @@ class tessreduce():
 				plt.savefig(savename+'_disp.pdf', bbox_inches = "tight")
 		
 	def fit_shift(self,plot=None,savename=None):
-		"""
-		Calculate the centroid shifts of time series images.
+		'''
+	    Calculate the centroid shifts of time series images.
 
-		Parameters
-		----------
-		Flux : array 
-			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
+	    Parameters
+	    ----------
+	    plot : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    savename : TYPE, optional
+	        DESCRIPTION. The default is None.
 
-		Median : array
-			median image used for the position reference
+	    Returns
+	    -------
+	    None.
 
-		TPF : lightkurve targetpixelfile
-			tpf
+	    '''
 
-		parallel : bool
-			if True then parallel processing will be used for shift calculations
-
-		Returns
-		-------
-		smooth : array
-			smoothed displacement of the centroids compared to the Median
-		"""
 		if plot is None:
 			plot = self.plot
 		if savename is None:
@@ -1116,8 +758,9 @@ class tessreduce():
 		sources = ((self.mask & 1) ==1) * 1.0 - (self.mask & 2)
 		sources[sources<=0] = 0
 
-		f = self.flux * sources[np.newaxis,:,:]
+		f = self.flux #* sources[np.newaxis,:,:]
 		m = self.ref.copy() * sources
+		m[m==0] = np.nan
 		if self.parallel:
 
 			shifts = Parallel(n_jobs=self.num_cores)(
@@ -1156,21 +799,20 @@ class tessreduce():
 
 
 	def shift_images(self,median=False):
-		"""
+		'''
 		Shifts data by the values given in offset. Breaks horribly if data is all 0.
+
 		Parameters
 		----------
-		Offset : array 
-			centroid offsets relative to a reference image
-		Data : array
-			3x3 array of flux, axis: 0 = time; 1 = row; 2 = col
-		median : bool
-			if true then the shift direction will be reveresed to shift the reference
+		median : TYPE, optional
+			DESCRIPTION. The default is False.
+
 		Returns
 		-------
-		shifted : array
-			array shifted to match the offsets given
-		"""
+		None.
+
+		'''
+
 		shifted = self.flux.copy()
 		nans = ~np.isfinite(shifted)
 		shifted[nans] = 0.
@@ -1198,27 +840,25 @@ class tessreduce():
 
 
 	def bin_data(self,lc=None,time_bin=6/24,frames = None):
-		"""
+		'''
 		Bin a light curve to the desired duration specified by bin_size
 
 		Parameters
 		----------
-		flux : array
-			light curve in counts 
-
-		t : array
-			time array
-
-		bin_size : int
-			number of bins to average over
+		lc : TYPE, optional
+			DESCRIPTION. The default is None.
+		time_bin : TYPE, optional
+			DESCRIPTION. The default is 6/24.
+		frames : TYPE, optional
+			DESCRIPTION. The default is None.
 
 		Returns
 		-------
-		lc : array
-			time averaged light curve
-		t[x] : array
-			time averaged time 
-		"""
+		binlc : TYPE
+			DESCRIPTION.
+
+		'''
+
 		if lc is None:
 			lc = self.lc
 		else:
@@ -1259,26 +899,26 @@ class tessreduce():
 
 	def bin_flux(self,flux=None,time_bin=6/24,frames = None):
 		"""
-		Bin a light curve to the desired duration specified by bin_size
+	    Bin a light curve flux to the desired duration specified by bin_size
 
-		Parameters
-		----------
-		flux : array
-			light curve in counts 
+	    Parameters
+	    ----------
+	    flux : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    time_bin : TYPE, optional
+	        DESCRIPTION. The default is 6/24.
+	    frames : TYPE, optional
+	        DESCRIPTION. The default is None.
 
-		t : array
-			time array
+	    Returns
+	    -------
+	    binf : TYPE
+	        DESCRIPTION.
+	    bint : TYPE
+	        DESCRIPTION.
 
-		bin_size : int
-			number of bins to average over
+	    """
 
-		Returns
-		-------
-		lc : array
-			time averaged light curve
-		t[x] : array
-			time averaged time 
-		"""
 		if flux is None:
 			flux = self.flux
 
@@ -1311,47 +951,48 @@ class tessreduce():
 	def diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
 				sky_in=5,sky_out=9,phot_method=None,plot=None,savename=None,mask=None,diff = True):
 		"""
-		Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
+	    Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
 		then it degaults to the centre. Sky flux is calculated with an annulus aperture surrounding 
 		the target aperture and subtracted from the source. The sky aperture undergoes sigma clipping
 		to remove pixels that are poorly subtracted and contain other sources.
 
-		------
-		Inputs
-		------
-			time : array
-				1d array of times 
-			x : int 
-				centre of target aperture in x dim 
-			y : int 
-				centre of target aperture in y dim
-			ra : float
-				centre of target aperture in ra
-			dec : float
-				centre of target aperture in dec
-			tar_ap : int (odd)
-				width of the aperture
-			sky_in : int (odd)
-				inner edge of the sky aperture 
-			sky_out : int (odd, larger than sky_in)
-				outter edge of the sky aperture 
-			plot : bool
-				option for plotting diagnostic plot
-			mask : array
-				optional sky mask 
+	    Parameters
+	    ----------
+	    time : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    x : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    y : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    ra : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    dec : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    tar_ap : TYPE, optional
+	        DESCRIPTION. The default is 3.
+	    sky_in : TYPE, optional
+	        DESCRIPTION. The default is 5.
+	    sky_out : TYPE, optional
+	        DESCRIPTION. The default is 9.
+	    phot_method : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    plot : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    savename : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    mask : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    diff : TYPE, optional
+	        DESCRIPTION. The default is True.
 
-		------
-		Output
-		------
-			lc : array (3xn)
-				difference imaged light curve of target. 
-				lc[0] = time, lc[1] = flux, lc[2] = flux error
+	    Returns
+	    -------
+	    lc : TYPE
+	        DESCRIPTION.
+	    sky : TYPE
+	        DESCRIPTION.
 
-			sky : array (3xn)
-				difference imaged light curve of sky. 
-				sky[0] = time, sky[1] = flux, sky[2] = flux error
-				
-		"""
+	    """
 		if plot is None:
 			plot = self.plot
 		if savename is None:
@@ -1402,15 +1043,16 @@ class tessreduce():
 		if mask is not None:
 			ap_sky = mask
 			ap_sky[ap_sky==0] = np.nan
-		sky_med = np.nanmedian(ap_sky*data,axis=(1,2))
-		sky_std = np.nanstd(ap_sky*data,axis=(1,2))
+		mean_sky, sky_med, sky_std = sigma_clipped_stats(ap_sky*data,axis=(1,2))
+		#sky_med = np.nanmedian(ap_sky*data,axis=(1,2))
+		#sky_std = np.nanstd(ap_sky*data,axis=(1,2))
 		if phot_method == 'aperture':
 			if self.diff:
 				tar = np.nansum(data*ap_tar,axis=(1,2))
 			else:
 				tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
 			tar -= sky_med * tar_ap**2
-			tar_err = sky_std #* tar_ap**2
+			tar_err = sky_std * tar_ap**2
 		if phot_method == 'psf':
 			tar = self.psf_photometry(x,y,diff=diff)
 			tar_err = sky_std # still need to work this out
@@ -1430,24 +1072,28 @@ class tessreduce():
 
 	def dif_diag_plot(self,ap_tar,ap_sky,lc=None,sky=None,data=None):
 		"""
-		Makes a plot showing the target light curve, sky, and difference image at the brightest point
+	    Makes a plot showing the target light curve, sky, and difference image at the brightest point
 		in the target lc.
 
-		------
-		Inputs
-		------
-			ap_tar : array
-				aperture mask
-			ap_sky : array
-				sky mask
-			data : array (shape = 3)
-				sequence of images
+	    Parameters
+	    ----------
+	    ap_tar : TYPE
+	        DESCRIPTION.
+	    ap_sky : TYPE
+	        DESCRIPTION.
+	    lc : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    sky : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    data : TYPE, optional
+	        DESCRIPTION. The default is None.
 
-		------
-		Output
-		------
-			Figure
-		"""
+	    Returns
+	    -------
+	    Figure.
+
+	    """
+
 		if lc is None:
 			lc = self.lc
 		if sky is None:
@@ -1500,21 +1146,30 @@ class tessreduce():
 		"""
 		Simple plotter for light curves. 
 
+		Parameters
+		----------
+		lc : TYPE, optional
+			DESCRIPTION. The default is None.
+		ax : TYPE, optional
+			DESCRIPTION. The default is None.
+		ground : TYPE, optional
+			DESCRIPTION. The default is False.
+		time_bin : TYPE, optional
+			DESCRIPTION. The default is 6/24.
+		xlims : TYPE, optional
+			DESCRIPTION. The default is None.
+
+		Raises
 		------
-		Inputs (Optional)
-		------
-		lc : np.array
-			light curve with dimensions of at least [2,n]
-		ax : matplotlib axes
-			existing figure axes to add data to 
-		time_bin : float
-			time range to bin data to in days. ie 1 = 24 hours.
+		ValueError
+			DESCRIPTION.
+
+		Returns
 		-------
-		Options
-		-------
-			ground : bool
-				if True then ground based data is plotted alongside TESS
+		Figure.
+
 		"""
+
 		if ground:
 			if self.ground.ztf is None:
 				self.ground.get_ztf_data()
@@ -1591,18 +1246,18 @@ class tessreduce():
 	def save_lc(self,filename,time_bin=None):
 		"""
 		Saves the current lightcurve out to csv format, doesn't include flux units.
-		
-		------
-		Inputs
-		------
-		filename : str
-			output name of the file
-		time_bin : float
-			Duration in days for binning the lightcurve. If none, no binning is done.
 
+		Parameters
+		----------
+		filename : TYPE
+			DESCRIPTION.
+		time_bin : TYPE, optional
+			DESCRIPTION. The default is None.
 
+		Returns
+		-------
+		csv file.
 
-		
 		"""
 
 		if time_bin is not None:
@@ -1616,28 +1271,26 @@ class tessreduce():
 		if format == 'csv':
 			lc.to_csv(filename)
 		
-
-
 	def to_lightkurve(self,lc=None,flux_unit=None):
 		"""
 		Convert TESSreduce light curve into lighkurve.lightcurve object. Flux units are recorded
-		
-		-----------------
-		Inputs (optional)
-		-----------------
-		lc : array
-			light curve with 2xn or 3xn shape
-		flux_unit : str
-			units of the light curve flux 
+
+		Parameters
+		----------
+		lc : TYPE, optional
+			DESCRIPTION. The default is None.
+		flux_unit : TYPE, optional
+			DESCRIPTION. The default is None.
 			Valid options:
 				counts
 				mjy
 				cgs
-		-------
+
 		Returns
 		-------
-		light : lightcurve
-			lightkurve lightcurve object. All lk function will work on this!
+		light : TYPE
+			DESCRIPTION.
+
 		"""
 		if lc is None:
 			lc = self.lc
@@ -1660,9 +1313,33 @@ class tessreduce():
 		return light
 
 	def _update_reduction_params(self,align,parallel,calibrate,plot,diff_lc,diff,verbose,
-								 corr_correction):
+								 corr_correction,imaging):
 		"""
 		Updates relevant parameters for if reduction functions are called out of order.
+
+		Parameters
+		----------
+		align : TYPE
+			DESCRIPTION.
+		parallel : TYPE
+			DESCRIPTION.
+		calibrate : TYPE
+			DESCRIPTION.
+		plot : TYPE
+			DESCRIPTION.
+		diff_lc : TYPE
+			DESCRIPTION.
+		diff : TYPE
+			DESCRIPTION.
+		verbose : TYPE
+			DESCRIPTION.
+		corr_correction : TYPE
+			DESCRIPTION.
+
+		Returns
+		-------
+		None.
+
 		"""
 		if align is not None:
 			self.align = align
@@ -1676,6 +1353,8 @@ class tessreduce():
 			self.diff = diff
 		if corr_correction is not None:
 			self.corr_correction = corr_correction
+		if imaging is not None:
+			self.imaging = imaging
 
 
 	def correlation_corrector(self,limit=0.8):
@@ -1686,8 +1365,17 @@ class tessreduce():
 		background and subtracted from the flux minimises the correlation between the background and 
 		the pixel light curve. This function saves the correlation correction as corr_coeff, and 
 		applies the correction to the flux, for all pixels that aren't included as sky pixels. 
-			This process seems to do a good job at removing some of the residual background structure 
+		This process seems to do a good job at removing some of the residual background structure 
 		that is present in some pixels. 
+
+		Parameters
+		----------
+		limit : TYPE, optional
+			DESCRIPTION. The default is 0.8.
+
+		Returns
+		-------
+		None.
 
 		"""
 		flux, bkg = multi_correlation_cor(self,limit=limit,cores=self.num_cores)
@@ -1695,25 +1383,84 @@ class tessreduce():
 		self.bkg = bkg
 
 
-	def _psf_initialise(self,cutoutSize,loc,ref=False):
+	def _psf_initialise(self,cutoutSize,loc,time_ind=None,ref=False):
 		"""
 		For gathering the cutouts and PRF base.
+
+		Parameters
+		----------
+		cutoutSize : TYPE
+			DESCRIPTION.
+		loc : TYPE
+			DESCRIPTION.
+		ref : TYPE, optional
+			DESCRIPTION. The default is False.
+
+		Returns
+		-------
+		prf : TYPE
+			DESCRIPTION.
+		cutout : TYPE
+			DESCRIPTION.
+
 		"""
-		if type(loc[0]) == float:
+		if time_ind is None:
+			time_ind = np.arange(0,len(self.flux))
+
+		if (type(loc[0]) == float) | (type(loc[0]) == np.float64) |  (type(loc[0]) == np.float32):
 			loc[0] = int(loc[0]+0.5)
-		if type(loc[1]) == float:
+		if (type(loc[1]) == float) | (type(loc[1]) == np.float64) |  (type(loc[1]) == np.float32):
 			loc[1] = int(loc[1]+0.5)
 		col = self.tpf.column - int(self.size/2-1) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
 		row = self.tpf.row - int(self.size/2-1) + loc[1] 
 			
 		prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row) # initialise psf kernel
 		if ref:
-			cutout = (self.flux+self.ref)[:,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+			cutout = (self.flux+self.ref)[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 		else:
-			cutout = self.flux[:,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+			cutout = self.flux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 		return prf, cutout
 
-	def psf_photometry(self,xPix,yPix,size=5,repFact=10,snap='brightest',ext_shift=True,plot=False,diff=None):
+	def moving_psf_photometry(self,xpos,ypos,size=5,time_ind=None,xlim=2,ylim=2):
+		if time_ind is None:
+			if len(xpos) != len(self.flux):
+				m = 'If "times" is not specified then xpos must have the same length as flux.'
+				raise ValueError(m)
+			else:
+				time_ind = np.arange(0,len(flux))
+			if (len(xpos) != len(time_ind)) | (len(ypos) != len(time_ind)):
+				m = 'xpos/ypos and time_ind must be the same length'
+				raise ValueError(m)
+		inds = np.arange(0,len(xpos))
+		if self.parallel:
+			prfs, cutouts = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_initialise)(self.flux,self.tpf.camera,self.tpf.ccd,
+																   						     self.tpf.sector,self.tpf.column,self.tpf.row,
+																						     size,[xpos[i],ypos[i]],time_ind) for i in inds))
+		else:
+			prfs = []
+			cutouts = []
+			for i in range(len(time_ind)):
+				prf, cutout = self._psf_initialise(size,[xpos[i],ypos[i]],time_ind=time_ind[i])
+				prfs += [prf]
+				cutouts += [cutout]
+		cutouts = np.array(cutouts)
+		print('made cutouts')
+		if self.parallel:
+			flux, pos = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_full)(cutouts[i],prfs[i],self.shift[i],xlim,ylim) for i in inds))
+		else:
+			flux = []
+			pos = []
+			for i in range(len(xpos)):
+				f, p = par_psf_full(cutouts[i],prfs[i],self.shift[i])
+				flux += [f]
+				pos += [p]
+		flux = np.array(flux)
+		pos = np.array(pos)
+		pos[0,:] += xpos; pos[1,:] += ypos
+		return flux, pos
+
+
+	def psf_photometry(self,xPix,yPix,size=5,snap='brightest',ext_shift=True,plot=False,diff=None):
 		"""
 		Main Function! Just switch self to self inside tessreduce and all should follow.
 
@@ -1745,66 +1492,70 @@ class tessreduce():
 			diff = self.diff
 		flux = []
 
-		if snap == None:  # if no snap, each cutout has their position fitted and considered during flux fitting
-			prf, cutouts = self._psf_initialise(size,(xPix,yPix))   # gather base PRF and the array of cutouts data
-			xShifts = []
-			yShifts = []
-			for cutout in tqdm(cutouts):
-				PSF = create_psf(prf,size,repFact)
-				PSF.psf_position(cutout)
-				PSF.psf_flux(cutout)
-				flux.append(PSF.flux)
-				yShifts.append(PSF.source_y)
-				xShifts.append(PSF.source_x)
-			if plot:
-				fig,ax = plt.subplots(ncols=3,figsize=(12,4))
-				ax[0].plot(flux)
-				ax[0].set_ylabel('Flux')
-				ax[1].plot(xShifts,marker='.',linestyle=' ')
-				ax[1].set_ylabel('xShift')
-				ax[2].plot(yShifts,marker='.',linestyle=' ')
-				ax[2].set_ylabel('yShift')
+		if isinstance(xPix,(list,np.ndarray)):
+			self.moving_psf_phot()
 
-		elif type(snap) == str:
-			if snap == 'brightest': # each cutout has position snapped to brightest frame fit position
-				prf, cutouts = self._psf_initialise(size,(xPix,yPix),(not diff))   # gather base PRF and the array of cutouts data
-				ind = np.where(cutouts==np.nanmax(cutouts))[0][0]
-				ref = cutouts[ind]
-				base = create_psf(prf,size,repFact=repFact)
-				base.psf_position(ref,ext_shift=self.shift[ind])
-			elif snap == 'ref':
-				prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=True)   # gather base PRF and the array of cutouts data
-				ref = cutouts[self.ref_ind]
-				base = create_psf(prf,size,repFact=repFact)
-				base.psf_position(ref)
-				if diff:
-					_, cutouts = self._psf_initialise(size,(xPix,yPix),ref=False)
-			if self.parallel:
-				inds = np.arange(len(cutouts))
-				flux = Parallel(n_jobs=self.num_cores)(delayed(_par_psf_flux)(cutouts[i],base,self.shift[i]) for i in inds)
-			else:
-				for i in range(len(cutouts)):
-					flux += [_par_psf_flux(cutouts[i],base,self.shift[i])]
-			if plot:
-				plt.figure()
-				plt.plot(flux)
-				plt.ylabel('Flux')
+		else:
+			if snap == None:  # if no snap, each cutout has their position fitted and considered during flux fitting
+				prf, cutouts = self._psf_initialise(size,(xPix,yPix))   # gather base PRF and the array of cutouts data
+				xShifts = []
+				yShifts = []
+				for cutout in tqdm(cutouts):
+					PSF = create_psf(prf,size)
+					PSF.psf_position(cutout)
+					PSF.psf_flux(cutout)
+					flux.append(PSF.flux)
+					yShifts.append(PSF.source_y)
+					xShifts.append(PSF.source_x)
+				if plot:
+					fig,ax = plt.subplots(ncols=3,figsize=(12,4))
+					ax[0].plot(flux)
+					ax[0].set_ylabel('Flux')
+					ax[1].plot(xShifts,marker='.',linestyle=' ')
+					ax[1].set_ylabel('xShift')
+					ax[2].plot(yShifts,marker='.',linestyle=' ')
+					ax[2].set_ylabel('yShift')
 
-		
-		elif type(snap) == int:	   # each cutout has position snapped to 'snap' frame fit position (snap is integer)
-			base = create_psf(prf,size)
-			base.psf_position(cutouts[snap])
-			for cutout in cutouts:
-				PSF = create_psf(prf,size,repFact)
-				PSF.source_x = base.source_x
-				PSF.source_y = base.source_y
-				PSF.psf_flux(cutout)
-				flux.append(PSF.flux)
-			if plot:
-				fig,ax = plt.subplots(ncols=1,figsize=(12,4))
-				ax.plot(flux)
-				ax.set_ylabel('Flux')
-		flux = np.array(flux)
+			elif type(snap) == str:
+				if snap == 'brightest': # each cutout has position snapped to brightest frame fit position
+					prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
+					ind = np.where(cutouts==np.nanmax(cutouts))[0][0]
+					ref = cutouts[ind]
+					base = create_psf(prf,size)
+					base.psf_position(ref,ext_shift=self.shift[ind])
+				elif snap == 'ref':
+					prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=True)   # gather base PRF and the array of cutouts data
+					ref = cutouts[self.ref_ind]
+					base = create_psf(prf,size)
+					base.psf_position(ref)
+					if diff:
+						_, cutouts = self._psf_initialise(size,(xPix,yPix),ref=False)
+				if self.parallel:
+					inds = np.arange(len(cutouts))
+					flux = Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i]) for i in inds)
+				else:
+					for i in range(len(cutouts)):
+						flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
+				if plot:
+					plt.figure()
+					plt.plot(flux)
+					plt.ylabel('Flux')
+
+			
+			elif type(snap) == int:	   # each cutout has position snapped to 'snap' frame fit position (snap is integer)
+				base = create_psf(prf,size)
+				base.psf_position(cutouts[snap])
+				for cutout in cutouts:
+					PSF = create_psf(prf,size)
+					PSF.source_x = base.source_x
+					PSF.source_y = base.source_y
+					PSF.psf_flux(cutout)
+					flux.append(PSF.flux)
+				if plot:
+					fig,ax = plt.subplots(ncols=1,figsize=(12,4))
+					ax.plot(flux)
+					ax.set_ylabel('Flux')
+			flux = np.array(flux)
 		return flux
 
 
@@ -1813,7 +1564,7 @@ class tessreduce():
 	def reduce(self, aper = None, align = None, parallel = None, calibrate=None,
 				bin_size = 0, plot = None, mask_scale = 1, ref_start=None, ref_stop=None,
 				diff_lc = None,diff=None,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
-				moving_mask=None,mask=None,double_shift=False,corr_correction=None,test_seed=None):
+				moving_mask=None,mask=None,double_shift=False,corr_correction=None,test_seed=None,imaging=None):
 		"""
 		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
@@ -1862,7 +1613,7 @@ class tessreduce():
 		"""
 		# make reference
 		try:
-			self._update_reduction_params(align, parallel, calibrate, plot, diff_lc, diff, verbose,corr_correction)
+			self._update_reduction_params(align, parallel, calibrate, plot, diff_lc, diff, verbose,corr_correction,imaging)
 
 			if (self.flux.shape[1] < 30) & (self.flux.shape[2] < 30):
 				small = True	
@@ -1878,12 +1629,12 @@ class tessreduce():
 				print('made reference')
 			# make source mask
 			if mask is None:
-				self.make_mask(maglim=18,strapsize=7,scale=mask_scale)#Source_mask(ref,grid=0)
+				self.make_mask(catalogue_path=self._catalogue_path,maglim=18,strapsize=7,scale=mask_scale)#Source_mask(ref,grid=0)
 				frac = np.nansum((self.mask == 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 				#print('mask frac ',frac)
 				if frac < 0.05:
 					print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-					self.make_mask(maglim=15,strapsize=7,scale=0.5)
+					self.make_mask(catalogue_path=self._catalogue_path,maglim=15,strapsize=7,scale=0.5)
 				if self.verbose > 0:
 					print('made source mask')
 			else:
@@ -1927,9 +1678,12 @@ class tessreduce():
 				except:
 					print('Something went wrong, switching to serial')
 					self.parallel = False
-					self.centroids_DAO()
+					#self.centroids_DAO()
+					self.fit_shift()
 					#self.fit_shift()
 				#self.fit_shift()
+			else:
+				self.shift = np.zeros((len(self.flux),2))
 			
 			if not self.diff:
 				if self.align:
@@ -1961,12 +1715,12 @@ class tessreduce():
 
 				self.ref -= self.bkg[self.ref_ind]
 				# remake mask
-				self.make_mask(maglim=18,strapsize=7,scale=mask_scale*.8,useref=True)#Source_mask(ref,grid=0)
+				self.make_mask(catalogue_path=self._catalogue_path,maglim=18,strapsize=7,scale=mask_scale*.8,useref=True)#Source_mask(ref,grid=0)
 				frac = np.nansum((self.mask== 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 				#print('mask frac ',frac)
 				if frac < 0.05:
 					print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-					self.make_mask(maglim=15,strapsize=7,scale=0.5)
+					self.make_mask(catalogue_path=self._catalogue_path,maglim=15,strapsize=7,scale=0.5)
 				# assuming that the target is in the centre, so masking it out 
 				#m_tar = np.zeros_like(self.mask,dtype=int)
 				#m_tar[self.ref.shape[0]//2,self.ref.shape[1]//2]= 1
@@ -1998,12 +1752,22 @@ class tessreduce():
 				self.field_calibrate()
 
 			
-			self.lc, self.sky = self.diff_lc(plot=True,diff=self.diff_lc,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
+			self.lc, self.sky = self.diff_lc(plot=True,diff=self.diff,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
+
+			if self.imaging:
+				# if self.verbose > 0:
+				# 	print('Retrieving external photometry')
+				self.external_photometry()
+
+
 		except Exception:
 			print(traceback.format_exc())
 
 		
-		
+	def external_photometry(self,size=50,phot=None):
+
+		event_cutout((self.ra,self.dec),size,phot)
+
 
 	def make_lc(self,aperture = None,bin_size=0,zeropoint=None,scale='counts',clip = False):
 		"""
@@ -2848,229 +2612,3 @@ class tessreduce():
 			self.zp_e = 0
 			self.lc_units = 'Counts'
 		return 
-		
-		
-
-
-
-
-def sig_err(data,err=None,sig=5,maxiter=10):
-	if sig is None:
-		sig = 5
-	clipped = data.copy()
-	ind = np.arange(0,len(data))
-	breaker = 0
-	if err is not None:
-		for i in range(maxiter):
-			nonan = np.isfinite(clipped)
-			med = np.average(clipped[nonan],weights=1/err[nonan])
-			#med = np.nanmedian(clipped)
-			std = np.nanstd(clipped)
-			mask = (clipped-1*err > med + 3*std) #| (clipped+1*err < med - 3*std)
-			clipped[mask] = np.nan
-			if ~mask.any():
-				break
-
-		mask = np.isnan(clipped)
-	else:
-		mask = sigma_clip(data,sigma_upper=sig,sigma_lower=10).mask
-	return mask
-
-
-def Identify_masks(Obj):
-	"""
-	Uses an iterrative process to find spacially seperated masks in the object mask.
-	"""
-	objsub = np.copy(Obj*1)
-	Objmasks = []
-
-	mask1 = np.zeros((Obj.shape))
-	if np.nansum(objsub) > 0:
-		mask1[np.where(objsub==1)[0][0]] = 1
-		
-		while np.nansum(objsub) > 0:
-			conv = ((convolve(mask1*1,np.ones(3),mode='constant', cval=0.0)) > 0)*1.0
-			objsub = objsub - mask1
-			objsub[objsub < 0] = 0
-			if np.nansum(conv*objsub) > 0:
-
-				mask1 = mask1 + (conv * objsub)
-				mask1 = (mask1 > 0)*1
-			else:
-
-				Objmasks.append(mask1 > 0)
-				mask1 = np.zeros((Obj.shape))
-				if np.nansum(objsub) > 0:
-					mask1[np.where(objsub==1)[0][0]] = 1
-	return np.array(Objmasks)
-
-def auto_tail(lc,mask,err = None):
-	if err is not None:
-		higherr = sigma_clip(err,sigma=2).mask
-	else:
-		higherr = False
-	masks = Identify_masks(mask*1)
-	med = np.nanmedian(lc[1][~mask & ~higherr])
-	std = np.nanstd(lc[1][~mask & ~higherr])
-
-	if lc.shape[1] > 4000:
-		tail_length = 50
-		start_length = 10
-
-	else:
-		tail_length = 5
-		start_length = 1
-			
-	for i in range(len(masks)):
-		m = np.argmax(lc[1]*masks[i])
-		sig = (lc[1][m] - med) / std
-		median = np.nanmedian(sig[sig>0])
-		if median > 50:
-			sig = sig / 100
-			#sig[(sig < 1) & (sig > 0)] = 1
-		if sig > 20:
-			sig = 20
-		if sig < 0:
-			sig = 0
-		masks[i][int(m-sig*start_length):int(m+tail_length*sig)] = 1
-		masks[i] = masks[i] > 0
-	summed = np.nansum(masks*1,axis=0)
-	mask = summed > 0 
-	return ~mask
-		
-def Multiple_day_breaks(lc):
-	"""
-	If the TESS data has a section of data isolated by at least a day either side,
-	it is likely poor data. Such regions are identified and removed.
-	
-	Inputs:
-	-------
-	Flux - 3d array
-	Time - 1d array
-	
-	Output:
-	-------
-	removed_flux - 3d array
-	"""
-	ind = np.where(~np.isnan(lc[1]))[0]
-	breaks = np.array([np.where(np.diff(lc[0][ind]) > .5)[0] +1])
-	breaks = np.insert(breaks,0,0)
-	breaks = np.append(breaks,len(lc[0]))
-	return breaks
-
-
-
-### Serious source mask
-
-def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
-	"""
-	Make a source mask from the PS1 and Gaia catalogs.
-
-	------
-	Inputs
-	------
-	tpf : lightkurve target pixel file
-		tpf of the desired region
-	maglim : float
-		magnitude limit in PS1 i band  and Gaia G band for sources.
-	scale : float
-		scale factor for default mask size 
-	strapsize : int
-		size of the mask for TESS straps 
-	badpix : str
-		not implemented correctly, so just ignore! 
-
-	-------
-	Returns
-	-------
-	total mask : bitmask
-		a bitwise mask for the given tpf. Bits are as follows:
-		0 - background
-		1 - catalogue source
-		2 - saturated source
-		4 - strap mask
-		8 - bad pixel (not used)
-	"""
-	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
-	wcs = tpf.wcs
-	image = tpf.flux[100]
-	image = strip_units(image)
-	gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
-	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
-	#if tpf.dec > -30:
-	#	pp,pm = Get_PS1(tpf,magnitude_limit=maglim)
-	#	ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
-	#	mp  = ps1_auto_mask(ps1,image,scale)
-	#else:
-	#	mp = {}
-	#	mp['all'] = np.zeros_like(image)
-	
-	sat = Big_sat(gaia,image,scale)
-	if ref is None:
-		mg  = gaia_auto_mask(gaia,image,scale)
-		mask = (mg['all'] > 0).astype(int) * 1 # assign 1 bit
-	else:
-		mg = np.zeros_like(ref,dtype=int)
-		mean, med, std = sigma_clipped_stats(ref)
-		lim = med + sigma * std
-		ind = ref > lim
-		mg[ind] = 1
-		mask = (mg > 0).astype(int) * 1 # assign 1 bit
-	
-
-	sat = (np.nansum(sat,axis=0) > 0).astype(int) * 2 # assign 2 bit 
-	#mask = ((mg['all']+mp['all']) > 0).astype(int) * 1 # assign 1 bit
-	
-	if strapsize > 0: 
-		strap = Strap_mask(image,tpf.column,strapsize).astype(int) * 4 # assign 4 bit 
-	else:
-		strap = np.zeros_like(image,dtype=int)
-	if badpix is not None:
-		bp = cat_mask.Make_bad_pixel_mask(badpix, file)
-		totalmask = mask | sat | strap | bp
-	else:
-		totalmask = mask | sat | strap
-	
-	return totalmask, gaia
-
-	
-
-
-#### CLUSTERING 
-
-def Cluster_lc(lc):
-	arr = np.array([np.gradient(lc[1]),lc[1]])
-	clust = OPTICS(min_samples=12, xi=.05, min_cluster_size=.05)
-	opt = clust.fit(arr.T)
-	lab = opt.labels_
-	keys = np.unique(opt.labels_)
-	
-	m = np.zeros(len(keys))
-	for i in range(len(keys)):
-		m[i] = np.nanmedian(lc[1,keys[i]==lab])
-	bkg_ind = lab == keys[np.nanargmin(m)]
-	other_ind = ~bkg_ind
-	
-	return bkg_ind, other_ind
-
-def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=48*2):
-	bkg_ind, other_ind = Cluster_lc(lc)
-	leng = 5
-	if smoothing:
-		for i in range(leng-2):
-			kern = np.zeros((leng))
-			kern[[0, -1]] = 1
-			other_ind[convolve(other_ind*1, kern) > 1] = True
-			leng -= 1
-	segments = Identify_masks(other_ind)
-	clipped = lc[1].copy()
-	med = np.nanmedian(clipped[bkg_ind])
-	std = np.nanstd(clipped[bkg_ind])
-	if err is not None:
-		mask = (clipped-1*err > med + sig*std)
-	else:
-		mask = (clipped > med + sig*std)
-	overlap = np.nansum(mask * segments,axis=1) > 0
-	mask = np.nansum(segments[overlap],axis=0)>0 
-	mask = convolve(mask,np.ones(buffer)) > 0
-	return mask

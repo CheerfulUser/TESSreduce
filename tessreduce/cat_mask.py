@@ -8,13 +8,15 @@ from astropy.nddata import Cutout2D
 from astropy.wcs import WCS
 from scipy.signal import fftconvolve
 import os
+
+from .catalog_tools import Get_Gaia, external_load_cat
+from .helpers import *
+
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
 # turn off runtime warnings (lots from logic on nans)
 import warnings
 warnings.filterwarnings("ignore", category=RuntimeWarning) 
-
-
 
 def size_limit(x,y,image):
     yy,xx = image.shape
@@ -98,7 +100,6 @@ def gaia_auto_mask(table,Image,scale=1):
         masks['all'] += masks[key]
     masks['all'] = (masks['all'] > .1) * 1.
     return masks
-
     
 def Big_sat(table,Image,scale=1):
     """
@@ -163,7 +164,6 @@ def Big_sat(table,Image,scale=1):
     satmasks = np.array(satmasks)
     return satmasks
 
-
 def Strap_mask(Image,col,size=4):
     strap_mask = np.zeros_like(Image)
     straps = pd.read_csv(package_directory + 'tess_straps.csv')['Column'].values - col + 44
@@ -171,3 +171,74 @@ def Strap_mask(Image,col,size=4):
     strap_mask[:,strap_in_tpf] = 1
     big_strap = fftconvolve(strap_mask,np.ones((size,size)),mode='same') > .5
     return big_strap
+
+def Cat_mask(tpf,catalogue_path=None,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
+
+	"""
+	Make a source mask from the PS1 and Gaia catalogs.
+
+	------
+	Inputs
+	------
+	tpf : lightkurve target pixel file
+		tpf of the desired region
+	maglim : float
+		magnitude limit in PS1 i band  and Gaia G band for sources.
+	scale : float
+		scale factor for default mask size 
+	strapsize : int
+		size of the mask for TESS straps 
+	badpix : str
+		not implemented correctly, so just ignore! 
+
+	-------
+	Returns
+	-------
+	total mask : bitmask
+		a bitwise mask for the given tpf. Bits are as follows:
+		0 - background
+		1 - catalogue source
+		2 - saturated source
+		4 - strap mask
+		8 - bad pixel (not used)
+	"""
+
+	if catalogue_path is not None:
+		gaia  = external_load_cat(catalogue_path,maglim)
+		coords = tpf.wcs.all_world2pix(gaia['ra'],gaia['dec'], 0)
+		gaia['x'] = coords[0]
+		gaia['y'] = coords[1]
+	else:
+		gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
+		gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
+
+	image = tpf.flux[10]
+	image = strip_units(image)
+
+	sat = Big_sat(gaia,image,scale)
+	if ref is None:
+		mg  = gaia_auto_mask(gaia,image,scale)
+		mask = (mg['all'] > 0).astype(int) * 1 # assign 1 bit
+	else:
+		mg = np.zeros_like(ref,dtype=int)
+		mean, med, std = sigma_clipped_stats(ref)
+		lim = med + sigma * std
+		ind = ref > lim
+		mg[ind] = 1
+		mask = (mg > 0).astype(int) * 1 # assign 1 bit
+	
+
+	sat = (np.nansum(sat,axis=0) > 0).astype(int) * 2 # assign 2 bit 
+	#mask = ((mg['all']+mp['all']) > 0).astype(int) * 1 # assign 1 bit
+	
+	if strapsize > 0: 
+		strap = Strap_mask(image,tpf.column,strapsize).astype(int) * 4 # assign 4 bit 
+	else:
+		strap = np.zeros_like(image,dtype=int)
+	if badpix is not None:
+		bp = cat_mask.Make_bad_pixel_mask(badpix, file)
+		totalmask = mask | sat | strap | bp
+	else:
+		totalmask = mask | sat | strap
+	
+	return totalmask, gaia
