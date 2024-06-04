@@ -1,4 +1,5 @@
 import numpy as np
+import os
 import matplotlib.pyplot as plt
 import lightkurve as lk
 from scipy import interpolate
@@ -10,6 +11,10 @@ from astropy.coordinates import SkyCoord, Angle
 from copy import deepcopy
 import pandas as pd
 from .R_load import R_val
+
+package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
+
+from .helpers import *
 
 def Get_Catalogue(tpf, Catalog = 'gaia'):
 	"""
@@ -464,3 +469,25 @@ def Reformat_df(df):
     new_df.columns = new_cols
     
     return new_df
+
+def external_save_cat(radec,size,cutCornerPx,image_path,save_path,maglim):
+	
+	file = Extract_fits(image_path)
+	wcsItem = WCS(file[1].header)
+	file.close()
+	
+	ra = radec[0]
+	dec = radec[1]
+
+	gp,gm, source = Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit=maglim)
+	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm,source]).T,columns=['ra','dec','mag','Source'])
+
+	gaia.to_csv(f'{save_path}/local_gaia_cat.csv',index=False)
+
+def external_load_cat(path,maglim):
+
+	gaia = pd.read_csv(f'{path}/local_gaia_cat.csv')
+	gaia = gaia[gaia['mag']<(maglim-0.5)]
+	gaia = gaia[['ra','dec','mag']]
+	return gaia
+

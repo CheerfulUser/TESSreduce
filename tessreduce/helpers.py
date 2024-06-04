@@ -1,51 +1,49 @@
 import os
+import requests
+import json
+from copy import deepcopy
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-from astropy.table import Table
-import requests
 from PIL import Image
 from io import BytesIO
 
-from photutils.detection import StarFinder
-
-from copy import deepcopy
 from scipy.ndimage import shift
 from scipy.ndimage import gaussian_filter
 from scipy.ndimage.filters import convolve
-from skimage.restoration import inpaint
-
 from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.optimize import minimize
+from sklearn.cluster import OPTICS
+from skimage.restoration import inpaint
 
-from PRF import TESS_PRF
-
+from astropy.table import Table
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import sigma_clip
+from astropy.coordinates import SkyCoord
+from astropy.io import fits
+from astropy import units as u
+from astropy.time import Time
+import lightkurve as lk
+from photutils.detection import StarFinder
 
+from PRF import TESS_PRF
 from tess_stars2px import tess_stars2px_function_entry as focal_plane
 from tabulate import tabulate
 
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
-from astropy.coordinates import SkyCoord
-from astropy import units as u
-from astropy.time import Time
-import lightkurve as lk
-
 from .psf_photom import create_psf
-
-import requests
-import json
+from .catalog_tools import *
+from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
 
 fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
 inches_per_pt = 1.0/72.27			   # Convert pt to inches
 golden_mean = (np.sqrt(5)-1.0)/2.0		 # Aesthetic ratio
 fig_width = fig_width_pt*inches_per_pt  # width in inches
-
 
 def strip_units(data):
 	if type(data) != np.ndarray:
@@ -690,7 +688,6 @@ def external_get_TESS():
 	
 	return tpf
 
-
 def sig_err(data,err=None,sig=5,maxiter=10):
 	if sig is None:
 		sig = 5
@@ -711,7 +708,7 @@ def sig_err(data,err=None,sig=5,maxiter=10):
 		mask = np.isnan(clipped)
 	else:
 		mask = sigma_clip(data,sigma_upper=sig,sigma_lower=10).mask
-	return mask
+	return mask	
 
 
 def Identify_masks(Obj):
@@ -789,88 +786,11 @@ def Multiple_day_breaks(lc):
 	-------
 	removed_flux - 3d array
 	"""
-	ind = np.where(~np.isnan(lc[1]))[0]
+	ind = np.where(~np.isnan(lc[1]))[0] 
 	breaks = np.array([np.where(np.diff(lc[0][ind]) > .5)[0] +1])
 	breaks = np.insert(breaks,0,0)
 	breaks = np.append(breaks,len(lc[0]))
 	return breaks
-
-
-
-### Serious source mask
-from .catalog_tools import *
-from sklearn.cluster import OPTICS
-def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
-	"""
-	Make a source mask from the PS1 and Gaia catalogs.
-
-	------
-	Inputs
-	------
-	tpf : lightkurve target pixel file
-		tpf of the desired region
-	maglim : float
-		magnitude limit in PS1 i band  and Gaia G band for sources.
-	scale : float
-		scale factor for default mask size 
-	strapsize : int
-		size of the mask for TESS straps 
-	badpix : str
-		not implemented correctly, so just ignore! 
-
-	-------
-	Returns
-	-------
-	total mask : bitmask
-		a bitwise mask for the given tpf. Bits are as follows:
-		0 - background
-		1 - catalogue source
-		2 - saturated source
-		4 - strap mask
-		8 - bad pixel (not used)
-	"""
-	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
-	wcs = tpf.wcs
-	image = tpf.flux[100]
-	image = strip_units(image)
-	gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
-	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
-	#if tpf.dec > -30:
-	#	pp,pm = Get_PS1(tpf,magnitude_limit=maglim)
-	#	ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
-	#	mp  = ps1_auto_mask(ps1,image,scale)
-	#else:
-	#	mp = {}
-	#	mp['all'] = np.zeros_like(image)
-	
-	sat = Big_sat(gaia,image,scale)
-	if ref is None:
-		mg  = gaia_auto_mask(gaia,image,scale)
-		mask = (mg['all'] > 0).astype(int) * 1 # assign 1 bit
-	else:
-		mg = np.zeros_like(ref,dtype=int)
-		mean, med, std = sigma_clipped_stats(ref)
-		lim = med + sigma * std
-		ind = ref > lim
-		mg[ind] = 1
-		mask = (mg > 0).astype(int) * 1 # assign 1 bit
-	
-
-	sat = (np.nansum(sat,axis=0) > 0).astype(int) * 2 # assign 2 bit 
-	#mask = ((mg['all']+mp['all']) > 0).astype(int) * 1 # assign 1 bit
-	
-	if strapsize > 0: 
-		strap = Strap_mask(image,tpf.column,strapsize).astype(int) * 4 # assign 4 bit 
-	else:
-		strap = np.zeros_like(image,dtype=int)
-	if badpix is not None:
-		bp = cat_mask.Make_bad_pixel_mask(badpix, file)
-		totalmask = mask | sat | strap | bp
-	else:
-		totalmask = mask | sat | strap
-	
-	return totalmask, gaia
-
 
 #### CLUSTERING 
 
@@ -1039,3 +959,14 @@ def event_cutout(coords,size=50,phot=None):
 
     else:
         print('Photometry name invalid.')
+
+def Extract_fits(pixelfile):
+    """
+    Quickly extract fits
+    """
+    try:
+        hdu = fits.open(pixelfile)
+        return hdu
+    except OSError:
+        print('OSError ',pixelfile)
+        return
