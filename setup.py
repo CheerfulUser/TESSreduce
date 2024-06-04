@@ -11,7 +11,7 @@ from shutil import rmtree
 
 from setuptools import find_packages, setup, Command
 
-version = exec(open('TESSreduce/__version__.py').read())
+version = exec(open('tessreduce/__version__.py').read())
 
 # Package meta-data.
 NAME = 'tessreduce'
