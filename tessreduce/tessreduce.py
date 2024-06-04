@@ -188,12 +188,17 @@ class tessreduce():
 
 
 		if obs_list is not None:
-			obs_list = np.array(obs_list,dtype=object)
-			if len(obs_list.shape) > 1:
-				obs_list = obs_list[obs_list[:,3].astype('bool')][0]
-			self.ra = obs_list[0]
-			self.dec = obs_list[1]
-			self.sector = obs_list[2]
+			if isinstance(obs_list,list):
+				obs_list = np.array(obs_list,dtype=object)
+				if len(obs_list.shape) > 1:
+					obs_list = obs_list[obs_list[:,3].astype('bool')][0]
+				self.ra = obs_list[0]
+				self.dec = obs_list[1]
+				self.sector = obs_list[2]
+			elif isinstance(obs_list, pd.DataFrame):
+				self.ra = obs_list['RA'].to_numpy()[0]
+				self.dec = obs_list['DEC'].to_numpy()[0]
+				self.sector = obs_list['Sector'].to_numpy()
 
 		if tpf is not None:
 			if type(tpf) == str:
@@ -1455,32 +1460,39 @@ class tessreduce():
 
 	def psf_photometry(self,xPix,yPix,size=5,snap='brightest',ext_shift=True,plot=False,diff=None):
 		"""
-		Main Function! Just switch self to self inside tessreduce and all should follow.
+	    Main PSF Photometry function
 
-		--------
-		Inputs:
+	    Parameters
+	    ----------
+	    xPix : TYPE
+	        x pixel location of target region.
+	    yPix : TYPE
+	        y pixel location of target region.
+	    size : int, optional
+	        Size of cutout to use (should be odd). The default is 5.
+	    repFact : TYPE, optional
+	        Super sampling factor for modelling. The default is 10.
+	    snap : TYPE, optional
+	        Determines how psf position is fit.. The default is 'brightest'.
+			Valid Options:
+				None = each frame's position will be fit and used when fitting for flux
+				'brightest' = the position of the brightest cutout frame will be applied to all subsequent frames
+				int = providing an integer allows for explicit choice of which frame to use as position reference
+				'ref' = use the reference as the position fit point
+	    ext_shift : TYPE, optional
+	        DESCRIPTION. The default is True.
+	    plot : bool, optional
+	        Whether plots will a. The default is False.
+	    diff : TYPE, optional
+	        DESCRIPTION. The default is None.
+
+	    Returns
+	    -------
+	    flux : numpy array
+	        Flux light curve across entire sector..
+
+	    """
 		
-		self : tessreduce object
-		xPix : x pixel location of target region
-		yPix : y pixel location of target region
-		size : size of cutout to use (should be odd)
-		repFact : super sampling factor for modelling
-		
-		--------
-		Options:
-
-		snap : Determines how psf position is fit.
-			- None = each frame's position will be fit and used when fitting for flux
-			- 'brightest' = the position of the brightest cutout frame will be applied to all subsequent frames
-			- int = providing an integer allows for explicit choice of which frame to use as position reference
-			- 'ref' = use the reference as the position fit point
-
-		--------
-		Returns:
-
-		flux : flux light curve across entire sector.
-
-		"""
 		if diff is None:
 			diff = self.diff
 		flux = []
@@ -1559,51 +1571,62 @@ class tessreduce():
 				diff_lc = None,diff=None,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
 				moving_mask=None,mask=None,double_shift=False,corr_correction=None,test_seed=None,imaging=None):
 		"""
-		Reduce the images from the target pixel file and make a light curve with aperture photometry.
+	    Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
-		
-		----------
-		Parameters 
-		----------
-		aper : None, list, array
-			aperature to do photometry on
 
-		shift : bool
-			if True the flux array will be shifted to match the position of a reference
+	    Parameters
+	    ----------
+	    aper : None, list or numpy array, optional
+	        Aperature to do photometry on. The default is None.
+	    align : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    parallel : bool, optional
+	        If True parallel processing will be used for background estimation and centroid shifts. The default is None.
+	    calibrate : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    bin_size : int, optional
+	        If > 1 then the lightcurve will be binned by that amount. The default is 0.
+	    plot : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    mask_scale : TYPE, optional
+	        DESCRIPTION. The default is 1.
+	    ref_start : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    ref_stop : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    diff_lc : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    diff : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    verbose : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    tar_ap : TYPE, optional
+	        DESCRIPTION. The default is 3.
+	    sky_in : TYPE, optional
+	        DESCRIPTION. The default is 7.
+	    sky_out : TYPE, optional
+	        DESCRIPTION. The default is 11.
+	    moving_mask : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    mask : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    double_shift : TYPE, optional
+	        DESCRIPTION. The default is False.
+	    corr_correction : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    test_seed : TYPE, optional
+	        DESCRIPTION. The default is None.
 
-		parallel : bool
-			if True parallel processing will be used for background estimation and centroid shifts 
+	    Raises
+	    ------
+	    ValueError
+	        DESCRIPTION.
 
-		scale : str
-			options = [counts, magnitude, flux, normalise]
-			if True the light curve will be normalised to the median
+	    Returns
+	    -------
+	    None.
 
-		bin_size : int
-			if > 1 then the lightcurve will be binned by that amount
-
-		all_output : bool
-			if True then the lc, flux, reference and background will be returned.
-		
-		-------
-		Returns
-		-------
-		if all_output = True
-			lc : array 
-				light curve
-
-			flux : array
-				shifted images to match the reference
-
-			ref : array
-				reference array used in image matching
-			
-			bkg : array
-				array of background flux avlues for each image
-		
-		else
-			lc : array 
-				light curve
-		"""
+	    """
 		# make reference
 		try:
 			self._update_reduction_params(align, parallel, calibrate, plot, diff_lc, diff, verbose,corr_correction,imaging)
@@ -1764,30 +1787,29 @@ class tessreduce():
 
 	def make_lc(self,aperture = None,bin_size=0,zeropoint=None,scale='counts',clip = False):
 		"""
-		Perform aperature photometry on a time series of images
+	    Perform aperature photometry on a time series of images
 
-		Parameters
-		----------
-		flux : array
+	    Parameters
+	    ----------
+	    aperture : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    bin_size : TYPE, optional
+	        Number of points to average. The default is 0.
+	    zeropoint : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    scale : TYPE, optional
+	        If True the light curve will be normalised to the median. The default is 'counts'.
+			Valid options = [counts, magnitude, flux, normalise]
+	    clip : TYPE, optional
+	        DESCRIPTION. The default is False.
 
-		t : array
-			time 
-
-		aper : None, list, array
-			aperature to do aperature photometry on.
-
-
-		bin_size : int
-			number of points to average
-
-		normalise : bool
-			if true the light curve is normalised to the median
-
-		Returns
-		-------
-		lc : array 
+	    Returns
+	    -------
+		self.lc : array 
 			light curve for the pixels defined by the aperture
-		"""
+
+	    """
+		
 		# hack solution for new lightkurve
 		flux = strip_units(self.flux)
 		t = self.tpf.time.mjd
@@ -1820,21 +1842,24 @@ class tessreduce():
 		Use clustering to detect individual high SNR events in a light curve.
 		Clustering isn't incredibly robust, so it could be better.
 
-		-----------------
-		Inputs (optional)
-		-----------------
-		err : array
-			flux error to be used in weighting of events
-		duration : int 
-			How long an event needs to last for before being detected
-		sig : float
-			significance of the detection above the background
-		--------
+		Parameters
+		----------
+		lc : TYPE, optional
+			DESCRIPTION. The default is None.
+		err : numpy array, optional
+			Flux error to be used in weighting of events. The default is None.
+		duration : int, optional
+			How long an event needs to last for before being detected. The default is 10.
+		sig : float64, optional
+			Significance of the detection above the background. The default is 5.
+
 		Returns
 		-------
 		self.events : list
 			list of light curves for all identified events 
+
 		"""
+
 		if lc is None:
 			lc = deepcopy(self.lc)
 		if lc.shape[0] > lc.shape[1]:
@@ -1860,6 +1885,16 @@ class tessreduce():
 	def event_plotter(self,**kwargs):
 		"""
 		Lazy plotting tool for checking the detected events.
+
+		Parameters
+		----------
+		**kwargs : TYPE
+			DESCRIPTION.
+
+		Returns
+		-------
+		None.
+
 		"""
 		if self.events is None:
 			self.lc_events(**kwargs)
@@ -1874,28 +1909,42 @@ class tessreduce():
 	def detrend_transient(self,lc=None,err=None,Mask=None,variable=False,sig = 5, 
 						  sig_up = 3, sig_low = 10, tail_length='auto',plot=False):
 		"""
-		Removes all long term stellar variability, while preserving flares. Input a light curve 
+	    Removes all long term stellar variability, while preserving flares. Input a light curve 
 		with shape (2,n) and it should work!
 
-		Parameters
-		----------
-		lc : array
-			lightcurve with the shape of (2,n), where the first index is time and the second is 
-			flux.
-		sig_up : float
-			upper sigma clip value 
-		sig_low : float
-			lower sigma clip value
-		tail_length : str OR int
-			option for setting the buffer zone of points after the peak. If it is 'auto' it 
+	    Parameters
+	    ----------
+	    lc : numpy array, optional
+	        lightcurve with the shape of (2,n), where the first index is time and the second is 
+			flux. The default is None.
+	    err : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    Mask : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    variable : TYPE, optional
+	        DESCRIPTION. The default is False.
+	    sig : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    sig_up : float64, optional
+	        Upper sigma clip value . The default is 5.
+	    sig_low : float64, optional
+	        Lower sigma clip value. The default is 10.
+	    tail_length : str OR int, optional
+			Option for setting the buffer zone of points after the peak. If it is 'auto' it 
 			will be determined through functions, but if its an int then it will take the given 
-			value as the buffer tail length for fine tuning.
+			value as the buffer tail length for fine tuning. The default is ''.
 
-		Outputs
-		-------
-		trends : array
-			the stellar trends, subtract this from your input lc
-		"""
+	    Raises
+	    ------
+	    ValueError
+	        DESCRIPTION.
+
+	    Returns
+	    -------
+	    detrend : numpy array
+	        Lightcurve with the stellar trends subtracted.
+
+	    """
 		# Make a smoothing value with a significant portion of the total 
 		
 		if lc is None:
@@ -2002,26 +2051,43 @@ class tessreduce():
 	def detrend_stellar_var(self,lc=None,err=None,Mask=None,variable=False,sig = None, 
 							sig_up = 5, sig_low = 10, tail_length=''):
 		"""
-		Removes all long term stellar variability, while preserving flares. Input a light curve 
+	    Removes all long term stellar variability, while preserving flares. Input a light curve 
 		with shape (2,n) and it should work!
-		Parameters
-		----------
-		lc : array
-			lightcurve with the shape of (2,n), where the first index is time and the second is 
-			flux.
-		sig_up : float
-			upper sigma clip value 
-		sig_low : float
-			lower sigma clip value
-		tail_length : str OR int
-			option for setting the buffer zone of points after the peak. If it is 'auto' it 
+
+	    Parameters
+	    ----------
+	    lc : numpy array, optional
+	        lightcurve with the shape of (2,n), where the first index is time and the second is 
+			flux. The default is None.
+	    err : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    Mask : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    variable : TYPE, optional
+	        DESCRIPTION. The default is False.
+	    sig : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    sig_up : float64, optional
+	        Upper sigma clip value . The default is 5.
+	    sig_low : float64, optional
+	        Lower sigma clip value. The default is 10.
+	    tail_length : str OR int, optional
+			Option for setting the buffer zone of points after the peak. If it is 'auto' it 
 			will be determined through functions, but if its an int then it will take the given 
-			value as the buffer tail length for fine tuning.
-		Outputs
-		-------
-		trends : array
-			the stellar trends, subtract this from your input lc
-		"""
+			value as the buffer tail length for fine tuning. The default is ''.
+
+	    Raises
+	    ------
+	    ValueError
+	        DESCRIPTION.
+
+	    Returns
+	    -------
+	    detrend : numpy array
+	        Lightcurve with the stellar trends subtracted.
+
+	    """
+
 		# Make a smoothing value with a significant portion of the total 
 		if lc is None:
 			lc = self.lc[:2]
@@ -2102,7 +2168,23 @@ class tessreduce():
 		return detrend
 
 
-	def bin_interp(self,lc=None,time_bin=6/26):
+	def bin_interp(self,lc=None,time_bin=6/24):
+		"""
+	    Bin Interp
+
+	    Parameters
+	    ----------
+	    lc : TYPE, optional
+	        DESCRIPTION. The default is None.
+	    time_bin : TYPE, optional
+	        DESCRIPTION. The default is 6/24.
+
+	    Returns
+	    -------
+	    smooth : TYPE
+	        DESCRIPTION.
+
+	    """
 		if lc is None:
 			lc = self.lc
 		if lc.shape[0] > lc.shape[1]:
@@ -2115,6 +2197,20 @@ class tessreduce():
 
 
 	def detrend_star(self,lc=None):
+		"""
+	    DESCRIPTION
+
+	    Parameters
+	    ----------
+	    lc : TYPE, optional
+	        DESCRIPTION. The default is None.
+
+	    Returns
+	    -------
+	    detrended : TYPE
+	        DESCRIPTION.
+
+	    """
 		if lc is None:
 			lc = self.lc
 		if lc.shape[0] > lc.shape[1]:
@@ -2152,6 +2248,17 @@ class tessreduce():
 
 	### serious calibration 
 	def isolated_star_lcs(self):
+		"""
+		DESCRIPTION
+
+		Returns
+		-------
+		TYPE
+			DESCRIPTION.
+		TYPE
+			DESCRIPTION.
+
+		"""
 		if self.dec < -30:
 			if self.verbose > 0:
 				print('Target is below -30 dec, calibrating to SkyMapper photometry.')
@@ -2259,28 +2366,30 @@ class tessreduce():
 		that to TESS aperture photometry. Averaging together all valid sources gives us a 
 		good representation of the TESS zeropoint. 
 
-		Since we currently only use PS1 photometry, this method is only avaiable in areas of 
-		PS1 coverage, so dec > -30. 
+		Parameters
+		----------
+		zp_single : bool, optional
+			valid options are True or False. The default is True.		
+				if True all points through time are averaged to a single zp
+				if False then the zp is time varying, creating an extra photometric correction
+				for light curves, but with increased error in the zp.
+		plot : bool, optional
+			If True then diagnostic plots will be created. The default is None.
+		savename : TYPE, optional
+			DESCRIPTION. The default is None.
 
-		-------
-		Options
-		-------
-		zp_single : bool
-			if True all points through time are averaged to a single zp
-			if False then the zp is time varying, creating an extra photometric correction
-			for light curves, but with increased error in the zp.
-		plot : bool
-			if True then diagnostic plots will be created
-		-------
 		Returns
 		-------
-		self.ebv : float 
-			estimated E(B-V) extinction from stellar locus regression
-		self.zp/tzp : float
-			TESS photometric zeropoint
-		self.zp_e/tzp_e : float
-			error in the photometric zeropoint
+		None.
+			self.ebv : float 
+				Estimated E(B-V) extinction from stellar locus regression
+			self.zp/tzp : float
+				TESS photometric zeropoint
+			self.zp_e/tzp_e : float
+				Error in the photometric zeropoint
+
 		"""
+
 		if plot is None:
 			plot = self.plot
 		if savename is None:
@@ -2491,13 +2600,20 @@ class tessreduce():
 		Convert the TESS lc into magnitude space.
 		This is non reversible, since negative values will be lost.
 
-		Inputs:
-			zp: zeropoint to use for conversion. If None, use the default zp from the object.
-			zp_e: error on the zeropoint to use for conversion. If None, use the default zp_e from the object.
-		
-		Outputs:
-			lc: lightcurve in magnitude space.
+		Parameters
+		----------
+		zp : TYPE, optional
+			Zeropoint to use for conversion. If None, use the default zp from the object. The default is None.
+		zp_e : TYPE, optional
+			Error on the zeropoint to use for conversion. If None, use the default zp_e from the object.. The default is 0.
+
+		Returns
+		-------
+		lc : numpy array
+			Lightcurve in magnitude space..
+
 		"""
+
 		if (zp is None) & (self.zp is not None):
 			zp = self.zp
 			zp_e = self.zp_e
@@ -2523,38 +2639,41 @@ class tessreduce():
 		Convert the TESS lc to physical flux. Either the field calibrated zp 
 		or a given zp can be used. 
 
-		-----------------
-		Inputs (optional)
-		-----------------
-		zp : float
-			tess zeropoint 
-		zp_e : float
-			error in the tess zeropoint
-		flux_type : str
+		Parameters
+		----------
+		zp : float64, optional
+			TESS zeropoint. The default is None.
+		zp_e : TYPE, optional
+			Error in the TESS zeropoint. The default is 0.
+		flux_type : TYPE, optional
+			The units for the flux output. The default is 'mjy'.
 			Valid options:
-			mjy 
-			jy
-			erg/cgs
-			tess/counts
-		-------
-		Options
-		-------
-		plot : bool
-			plot the field calibration figures, if used.
+				mjy 
+				jy
+				erg/cgs
+				tess/counts
+		plot : TYPE, optional
+			Plot the field calibration figures, if used. The default is False.
 
-		-------
+		Raises
+		------
+		ValueError
+			DESCRIPTION.
+
 		Returns
 		-------
-		self.lc : array
-			converted to the requested unit
-		self.zp : float
-			updated with the new zeropoint 
-		self.zp_e : float 
-			updated with the new zeropoint error
-		self.lc_units : str
-			updated with the flux unit used
+		None.
+			self.lc : array
+				converted to the requested unit
+			self.zp : float
+				updated with the new zeropoint 
+			self.zp_e : float 
+				updated with the new zeropoint error
+			self.lc_units : str
+				updated with the flux unit used
 
 		"""
+
 		if (zp is None) & (self.zp is not None):
 			zp = self.zp
 			zp_e = self.zp_e
