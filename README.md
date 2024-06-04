@@ -57,4 +57,27 @@ tess.plotter()
 ![plot](./figs/fub_cal.png)
 
 
-There are a lot of other functions burried in TESSreduce which currently aren't well documented, so for more information contact me at: rridden@stsci.edu
+There are a lot of other functions burried in TESSreduce which currently aren't well documented, so for more information contact me at: ryan.ridden@canterbury.ac.nz
+
+# Citing TESSreduce
+
+If you make use of TESSreduce, please cite [Ridden-Harper et al. (2021)](https://ui.adsabs.harvard.edu/abs/2021arXiv211115006R/abstract):
+
+```code
+@ARTICLE{2021arXiv211115006R,
+       author = {{Ridden-Harper}, R. and {Rest}, A. and {Hounsell}, R. and {M{\"u}ller-Bravo}, T.~E. and {Wang}, Q. and {Villar}, V.~A.},
+        title = "{TESSreduce: transient focused TESS data reduction pipeline}",
+      journal = {arXiv e-prints},
+     keywords = {Astrophysics - Instrumentation and Methods for Astrophysics, Astrophysics - High Energy Astrophysical Phenomena},
+         year = 2021,
+        month = nov,
+          eid = {arXiv:2111.15006},
+        pages = {arXiv:2111.15006},
+archivePrefix = {arXiv},
+       eprint = {2111.15006},
+ primaryClass = {astro-ph.IM},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2021arXiv211115006R},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
+}
+```
+

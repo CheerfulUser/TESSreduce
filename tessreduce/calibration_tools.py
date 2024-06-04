@@ -133,6 +133,7 @@ def Tonry_reduce(Data,plot=False,savename=None,system='ps1'):
         plt.ylabel('$g-r$',fontsize=15)
         plt.text(0.75, 0.25, '$E(B-V)={}$'.format(str(np.round(res.x[0],3))))
         plt.legend()
+        plt.show()
         if savename is not None:
             plt.savefig(savename + '_SLR.pdf', bbox_inches = "tight")
     #clipped_data = data.iloc[clips[0]] 

@@ -125,31 +125,47 @@ def Big_sat(table,Image,scale=1):
         if (mag <= 7) & (mag > 5):
             body   = int(13 * scale)
             length = int(20 * scale)
-            width  = int(4 * scale)
+            width  = int(3 * scale)
         if (mag <= 5) & (mag > 4):
             body   = 15 * scale
             length = int(60 * scale)
-            width  = int(10 * scale)
+            width  = int(5 * scale)
         if (mag <= 4):# & (mag > 4):
-            body   = int(25 * scale)
+            body   = int(22 * scale)
             length = int(115 * scale)
-            width  = int(10 * scale)
+            width  = int(7 * scale)
         body = int(body) # no idea why this is needed, but it apparently is.
-        kernal = np.ones((body*2,body*2))
+        kernel = np.zeros((body*2+1,body*2+1))
+        yy,xx = np.where(kernel == 0)
+        dist = np.sqrt((yy-body)**2 + (xx-body)**2)
+        ind = dist <= body+1
+        kernel[yy[ind],xx[ind]] = 1
         mask[y[i],x[i]] = 1 
-        conv = fftconvolve(mask, kernal,mode='same')#.astype(int)
+        conv = fftconvolve(mask, kernel,mode='same')#.astype(int)
         mask = (conv >.1) * 1.
-
-        mask[y[i]-length:y[i]+length,x[i]-width:x[i]+width] = 1 
-        mask[y[i]-width:y[i]+width,x[i]-length:x[i]+length] = 1 
+        
+        ylow = y[i]-length; yhigh=y[i]+length
+        xlow = x[i]-width; xhigh = x[i]+width
+        if ylow < 0:
+            ylow = 0
+        if xlow < 0:
+            xlow = 0
+        mask[ylow:yhigh,xlow:xhigh] = 1 
+        ylow = y[i]-width
+        xlow = x[i]-length
+        if ylow < 0:
+            ylow = 0
+        if xlow < 0:
+            xlow = 0
+        mask[ylow:y[i]+width,xlow:x[i]+length] = 1 
         
         satmasks += [mask]
     satmasks = np.array(satmasks)
     return satmasks
 
-def Strap_mask(Image,col,size=3):
+
+def Strap_mask(Image,col,size=4):
     strap_mask = np.zeros_like(Image)
-    path = '/user/rridden/feet/'
     straps = pd.read_csv(package_directory + 'tess_straps.csv')['Column'].values - col + 44
     strap_in_tpf = straps[((straps > 0) & (straps < Image.shape[1]))]
     strap_mask[:,strap_in_tpf] = 1

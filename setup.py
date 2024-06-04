@@ -15,24 +15,26 @@ from setuptools import find_packages, setup, Command
 NAME = 'tessreduce'
 DESCRIPTION = 'Reduce TESS target pixel files.'
 URL = 'https://github.com/CheerfulUser/TESSreduce'
-EMAIL = 'rridden@stsci.edu'
+EMAIL = 'ryanridden@gmail.com'
 AUTHOR ='Ryan Ridden-Harper'
-REQUIRES_PYTHON = '>=3.6.0'
+REQUIRES_PYTHON = '>=3.9.0'
 VERSION = '1.0.0'
 
 # What packages are required for this module to be executed?
 REQUIRED = ['lightkurve>=2.0.0',
             'numpy',           
-            'photutils',
+            'photutils>=1.4',
             'pandas',
             'scipy!=1.4.0,!=1.4.1,>=0.19.0',
             'astropy',
             'joblib',
             'multiprocess',
-            'scikit-learn>=0.24.1',
+            'scikit-image',
             'alerce',
             'tess-point',
-            'tabulate']
+            'tabulate',
+            'TESS_PRF',
+            'opencv-python']
 
 # What packages are optional?
 EXTRAS = {
