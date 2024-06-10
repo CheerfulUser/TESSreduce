@@ -445,15 +445,15 @@ class tessreduce():
 			prf_directory = '/fred/oz335/_local_TESS_PRFs'
 
 			if self.sector < 4:
-				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.sector,
 								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
 								localdatadir=f'{prf_directory}/Sectors1_2_3')
 			else:
-				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.sector,
 								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
 								localdatadir=f'{prf_directory}/Sectors4+')
 		else:
-			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.sector,
 				   	   		self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
 		
 		self.prf =  prf.locate(5,5,(11,11))
