@@ -157,6 +157,7 @@ class tessreduce():
 			catalogue_path = None
 		self._catalogue_path = catalogue_path
 		self.num_cores = num_cores
+		self.imaging = imaging
 
 
 		# Plotting
@@ -208,6 +209,9 @@ class tessreduce():
 			self.ra = self.tpf.ra
 			self.dec = self.tpf.dec
 			self.size = self.tpf.flux.shape[1]
+			self.sector = self.tpf.sector
+			if self.sector is None:
+				self.sector = 30
 
 		elif self.check_coord():
 			if self.verbose>0:
@@ -228,7 +232,7 @@ class tessreduce():
 
 
 	def check_coord(self):
-		'''
+		"""
 		DESCRIPTION
 
 	    Returns
@@ -236,7 +240,7 @@ class tessreduce():
 	    bool
 	        DESCRIPTION.
 
-	    '''
+	    """
 		if ((self.ra is None) | (self.dec is None)) & (self.name is None):
 			return False
 		else:
@@ -258,7 +262,7 @@ class tessreduce():
 		self.gaia = result
 
 	def _assign_phot_method(self,phot_method):
-		'''
+		"""
 		DESCRIPTION
 
 		Parameters
@@ -275,7 +279,7 @@ class tessreduce():
 		-------
 		None.
 
-		'''
+		"""
 		if type(phot_method) == str:
 			method = phot_method.lower()
 			if (method == 'psf') | (method == 'aperture'):
@@ -288,7 +292,7 @@ class tessreduce():
 			raise ValueError(m)
 
 	def get_TESS(self,ra=None,dec=None,name=None,Size=None,Sector=None,quality_bitmask='default',cache_dir=None):
-		'''
+		"""
 		Use the lightcurve interface with TESScut to get an FFI cutout 
 		of a region around the given coords.
 
@@ -319,7 +323,7 @@ class tessreduce():
 		tpf : lightkurve target pixel file
 			tess ffi cutout of the selected region
 
-		'''
+		"""
 		
 		if Sector is None:
 			Sector = self.sector
@@ -346,21 +350,21 @@ class tessreduce():
 		self.wcs  = tpf.wcs
 
 	def harsh_mask(self):
-		'''
+		"""
 		DESCRIPTION
 
 		Returns
 		-------
 		None.
 
-		'''
+		"""
 
 		if self._harshmask_counts is not None:
 			ind = self.ref > self._harshmask_counts
 			self.ref[ind]
 
 	def make_mask(self,catalogue_path=None,maglim=19,scale=1,strapsize=6,useref=False):
-		'''
+		"""
 		DESCRIPTION
 
 	    Parameters
@@ -380,7 +384,7 @@ class tessreduce():
 	    -------
 	    None.
 
-	    '''
+	    """
 
 		# make a diagnostic plot for mask
 		data = strip_units(self.flux)
@@ -473,7 +477,7 @@ class tessreduce():
 		return m * 1.0
 
 	def background(self,calc_qe=True, strap_iso=True,source_hunt=False,gauss_smooth=2,interpolate=True):
-		'''
+		"""
 		DESCRIPTION
 
 		Parameters
@@ -492,7 +496,7 @@ class tessreduce():
 		Returns
 		-------
 		None.
-		'''
+		"""
 		if strap_iso:
 			m = (self.mask == 0) * 1.
 		else:
@@ -546,14 +550,14 @@ class tessreduce():
 
 
 	def small_background(self):
-		'''
+		"""
 	    DESCRIPTION
 
 	    Returns
 	    -------
 	    None.
 
-	    '''
+	    """
 		bkg = np.zeros_like(self.flux)
 		flux = strip_units(self.flux)
 		lim = 2*np.nanmin(flux,axis=(1,2))#np.nanpercentile(flux,1,axis=(1,2))
@@ -564,7 +568,7 @@ class tessreduce():
 		self.bkg = bkg
 
 	def _bkg_round_3(self,iters=5):
-		'''
+		"""
 	    DESCRIPTION
 
 	    Parameters
@@ -576,7 +580,7 @@ class tessreduce():
 	    -------
 	    None
 
-	    '''
+	    """
 		for i in range(iters):
 			tb = self.bkg * self._bkgmask
 			m = np.nanmedian(tb,axis=(1,2))
@@ -605,7 +609,7 @@ class tessreduce():
 			self.bkg = np.array(bkg_3)
 
 	def get_ref(self,start = None, stop = None):
-		'''
+		"""
 		Get reference image to use for subtraction and mask creation.
 		The image is made from all images with low background light.
 
@@ -620,7 +624,7 @@ class tessreduce():
 		-------
 		None.
 
-		'''
+		"""
 
 		data = strip_units(self.flux)
 		if (start is None) & (stop is None):
@@ -652,7 +656,7 @@ class tessreduce():
 
 
 	def centroids_DAO(self,plot=None,savename=None):
-		'''
+		"""
 		Calculate the centroid shifts of time series images.
 
 		Parameters
@@ -666,7 +670,7 @@ class tessreduce():
 		-------
 		None.
 
-		'''
+		"""
 		if plot is None:
 			plot = self.plot
 		if savename is None:
@@ -732,7 +736,7 @@ class tessreduce():
 				plt.savefig(savename+'_disp.pdf', bbox_inches = "tight")
 		
 	def fit_shift(self,plot=None,savename=None):
-		'''
+		"""
 	    Calculate the centroid shifts of time series images.
 
 	    Parameters
@@ -746,7 +750,7 @@ class tessreduce():
 	    -------
 	    None.
 
-	    '''
+	    """
 
 		if plot is None:
 			plot = self.plot
@@ -797,7 +801,7 @@ class tessreduce():
 
 
 	def shift_images(self,median=False):
-		'''
+		"""
 		Shifts data by the values given in offset. Breaks horribly if data is all 0.
 
 		Parameters
@@ -809,7 +813,7 @@ class tessreduce():
 		-------
 		None.
 
-		'''
+		"""
 
 		shifted = self.flux.copy()
 		nans = ~np.isfinite(shifted)
@@ -838,7 +842,7 @@ class tessreduce():
 
 
 	def bin_data(self,lc=None,time_bin=6/24,frames = None):
-		'''
+		"""
 		Bin a light curve to the desired duration specified by bin_size
 
 		Parameters
@@ -855,7 +859,7 @@ class tessreduce():
 		binlc : TYPE
 			DESCRIPTION.
 
-		'''
+		"""
 
 		if lc is None:
 			lc = self.lc

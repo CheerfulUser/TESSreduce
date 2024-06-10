@@ -969,3 +969,19 @@ def Extract_fits(pixelfile):
     except OSError:
         print('OSError ',pixelfile)
         return
+
+def regional_stats_mask(image,size=90,sigma=3,iters=10):
+    if size < 30:
+        print('!!! Region size is small !!!')
+    sx, sy = image.shape
+    X, Y = np.ogrid[0:sx, 0:sy]
+    regions = sy//size * (X//size) + Y//size
+    max_reg = np.max(regions)
+
+    clip = np.zeros_like(image)
+    for i in range(max_reg+1):
+        rx,ry = np.where(regions == i)
+        m,me, s = sigma_clipped_stats(image[ry,rx],maxiters=iters)
+        cut_ind = np.where((image[rx,ry] >= me+sigma*s) | (image[rx,ry] <= me-sigma*s))
+        clip[rx[cut_ind],ry[cut_ind]] = 1
+    return clip
