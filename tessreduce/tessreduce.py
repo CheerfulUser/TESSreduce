@@ -1799,7 +1799,7 @@ class tessreduce():
 	        Number of points to average. The default is 0.
 	    zeropoint : TYPE, optional
 	        DESCRIPTION. The default is None.
-	    scale : TYPE, optional
+	    scale : bool, optional
 	        If True the light curve will be normalised to the median. The default is 'counts'.
 			Valid options = [counts, magnitude, flux, normalise]
 	    clip : TYPE, optional
