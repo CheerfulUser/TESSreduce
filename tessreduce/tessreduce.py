@@ -1891,7 +1891,7 @@ class tessreduce():
 		Parameters
 		----------
 		**kwargs : TYPE
-			DESCRIPTION.
+			Keyword arguments, takes arguments for lightcurve events.
 
 		Returns
 		-------
@@ -2172,19 +2172,19 @@ class tessreduce():
 
 	def bin_interp(self,lc=None,time_bin=6/24):
 		"""
-	    Bin Interp
+	    Grabs the binned data and interpolates it to the original time values.
 
 	    Parameters
 	    ----------
-	    lc : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    time_bin : TYPE, optional
-	        DESCRIPTION. The default is 6/24.
+	    lc : array, optional
+	        The lightcurve of the target in the form of three rows: mjd, flux, flux error. The default is None.	
+	    time_bin : float, optional
+	        The time (in days) for each bin to be for averaging data. The default is 6/24.
 
 	    Returns
 	    -------
-	    smooth : TYPE
-	        DESCRIPTION.
+	    smooth : array
+	        Binned data in the form of three rows: mjd, flux, flux error.
 
 	    """
 		if lc is None:
@@ -2200,17 +2200,18 @@ class tessreduce():
 
 	def detrend_star(self,lc=None):
 		"""
-	    DESCRIPTION
+	    Removes trends, e.g. background or stellar variability from the lightcurve data.
 
 	    Parameters
 	    ----------
-	    lc : TYPE, optional
-	        DESCRIPTION. The default is None.
+	    lc : array, optional
+	        The lightcurve of the target in the form of three rows: mjd, flux, flux error. The default is None.
 
 	    Returns
 	    -------
-	    detrended : TYPE
-	        DESCRIPTION.
+	    detrended : array
+	        The lightcurve data where datapoints with strict gradient changes are ignored and a 
+			savitsky-savgol filter is then applied to smooth out the data.
 
 	    """
 		if lc is None:
@@ -2251,14 +2252,16 @@ class tessreduce():
 	### serious calibration 
 	def isolated_star_lcs(self):
 		"""
-		DESCRIPTION
+		Serious calibration for isolated stars grabbing from either the skymapper or panstarrs database.
+		This gives the lightcurves for the TESS target and the isolated stars in the field.
 
 		Returns
 		-------
-		TYPE
-			DESCRIPTION.
-		TYPE
-			DESCRIPTION.
+		final_flux : array
+			The final flux/TESS lightcurves for the stars in the final_d subset.
+		final_d : array
+			A subset of the skymapper or panstarrs observations/data tables that are not strongly 
+			red in colour and below certain apparent magnitudes.
 
 		"""
 		if self.dec < -30:
@@ -2353,7 +2356,10 @@ class tessreduce():
 		#eind = abs(eflux) > 20
 		flux[~eind] = np.nan
 
-		return flux[eind], d.iloc[eind]
+		final_d = d.iloc[eind]
+		final_flux = flux[eind]
+
+		return final_flux, final_d
 
 
 	def field_calibrate(self,zp_single=True,plot=None,savename=None):
@@ -2377,8 +2383,8 @@ class tessreduce():
 				for light curves, but with increased error in the zp.
 		plot : bool, optional
 			If True then diagnostic plots will be created. The default is None.
-		savename : TYPE, optional
-			DESCRIPTION. The default is None.
+		savename : str, optional
+			The name used for the saving files. The default is None.
 
 		Returns
 		-------
@@ -2604,15 +2610,15 @@ class tessreduce():
 
 		Parameters
 		----------
-		zp : TYPE, optional
+		zp : float, optional
 			Zeropoint to use for conversion. If None, use the default zp from the object. The default is None.
-		zp_e : TYPE, optional
+		zp_e : float, optional
 			Error on the zeropoint to use for conversion. If None, use the default zp_e from the object.. The default is 0.
 
 		Returns
 		-------
 		lc : numpy array
-			Lightcurve in magnitude space..
+			Lightcurve in magnitude space. mjd, magnitude, magnitude_error.
 
 		"""
 
@@ -2643,18 +2649,18 @@ class tessreduce():
 
 		Parameters
 		----------
-		zp : float64, optional
+		zp : float, optional
 			TESS zeropoint. The default is None.
-		zp_e : TYPE, optional
+		zp_e : float, optional
 			Error in the TESS zeropoint. The default is 0.
-		flux_type : TYPE, optional
+		flux_type : str, optional
 			The units for the flux output. The default is 'mjy'.
 			Valid options:
 				mjy 
 				jy
 				erg/cgs
 				tess/counts
-		plot : TYPE, optional
+		plot : bool, optional
 			Plot the field calibration figures, if used. The default is False.
 
 		Raises
@@ -2666,13 +2672,13 @@ class tessreduce():
 		-------
 		None.
 			self.lc : array
-				converted to the requested unit
+				Returns the lightcurve in flux units, with mjd, flux, flux error being the three rows.
 			self.zp : float
-				updated with the new zeropoint 
+				Returns the zeropoint used for the magnitude conversion.
 			self.zp_e : float 
-				updated with the new zeropoint error
+				Returns the error on the zeropoint used for the magnitude conversion.
 			self.lc_units : str
-				updated with the flux unit used
+				Returns the flux units of the lightcurve.
 
 		"""
 
