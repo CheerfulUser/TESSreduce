@@ -127,7 +127,7 @@ class tessreduce():
 			Directory to cache files. The default is None.
 		catalogue_path : str, optional
 			Path to required catalogs for when using TESSreduce in offline mode. The default is False.
-		psf_path : str, optional
+		prf_path : str, optional
 			Path to local TESS PRF files. The default is currently a specific location on the OzStar supercomputer.
 		verbose : int, optional
 			Controls the level of verbosity, 0 is none, 1 is verbose. The default is 1.
