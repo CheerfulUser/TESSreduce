@@ -72,7 +72,8 @@ class tessreduce():
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,
 			     reduce=True,align=True,diff=True,corr_correction=True,calibrate=True,sourcehunt=True,
 				 phot_method='aperture',imaging=False,parallel=True,num_cores=-1,diagnostic_plot=False,
-				 savename=None,quality_bitmask='default',cache_dir=None,catalogue_path=False,verbose=1):
+				 savename=None,quality_bitmask='default',cache_dir=None,catalogue_path=False,
+				 prf_path='/fred/oz335/_local_TESS_PRFs',verbose=1):
 
 		"""
 		Class for extracting reduced TESS photometry around a target coordinate or event. 
@@ -126,41 +127,49 @@ class tessreduce():
 			Directory to cache files. The default is None.
 		catalogue_path : str, optional
 			Path to required catalogs for when using TESSreduce in offline mode. The default is False.
+		psf_path : str, optional
+			Path to local TESS PRF files. The default is currently a specific location on the OzStar supercomputer.
 		verbose : int, optional
 			Controls the level of verbosity, 0 is none, 1 is verbose. The default is 1.
 
 		"""
 
+		# Field Specific
 		self.ra = ra
 		self.dec = dec 
 		self.name = name
 		self.size = size
-		self.align = align
 		self.sector = sector
-		self.verbose = verbose
-		self.parallel = parallel
+		self.tpf = tpf
+
+		# Reduction Process Specific
+		self.align = align
 		self.calibrate = calibrate
 		self.corr_correction = corr_correction
 		self.diff = diff
-		self.tpf = tpf
+		self.imaging = imaging
+		self.parallel = parallel
+		if type(num_cores) == str:
+			self.num_cores = multiprocessing.cpu_count()
+		else:
+			self.num_cores = num_cores
 		self._assign_phot_method(phot_method)
 		self._sourcehunt = sourcehunt
+		self.verbose = verbose
+
+		# Offline Paths 
 		if catalogue_path is None:
 			catalogue_path = os.getcwd()
 		elif catalogue_path is False:
 			catalogue_path = None
 		self._catalogue_path = catalogue_path
-		if type(num_cores) == str:
-			self.num_cores = multiprocessing.cpu_count()
-		else:
-			self.num_cores = num_cores
-		self.imaging = imaging
-
+		self._prf_path = prf_path
+		
 		# Plotting
 		self.diagnostic_plot = diagnostic_plot
 		self.savename = savename
 
-		# calculated 
+		# Calculated 
 		self.mask = None
 		self.shift = None
 		self.bkg = None
@@ -182,7 +191,6 @@ class tessreduce():
 		
 		# light curve units 
 		self.lc_units = 'Counts'
-
 
 		# Generate coordinate information from 'obs_list'
 		if obs_list is not None:
@@ -467,16 +475,15 @@ class tessreduce():
 
 		# Find PRF for cutout (depends on Sector, Camera, CCD, Pixel Row, Pixel Column)
 		if self._catalogue_path is not None:
-			prf_directory = '/fred/oz335/_local_TESS_PRFs'
 
 			if self.sector < 4:
 				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
 								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
-								localdatadir=f'{prf_directory}/Sectors1_2_3')
+								localdatadir=f'{self._prf_path}/Sectors1_2_3')
 			else:
 				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
 								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
-								localdatadir=f'{prf_directory}/Sectors4+')
+								localdatadir=f'{self._prf_path}/Sectors4+')
 		else:
 			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
 				   	   		self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)

@@ -653,18 +653,26 @@ def par_psf_full(cutout,prf,shift=[0,0],xlim=2,ylim=2):
 	return prf.flux, pos
 
 
-def external_save_TESS(ra,dec,sector,size=90,quality_bitmask='default',cache_dir=None):
+def external_save_TESS(ra,dec,sector,size=90,save_path=None,quality_bitmask='default',cache_dir=None):
+
+	if save_path is None:
+		save_path = os.getcwd()
 
 	c = SkyCoord(ra=float(ra)*u.degree, dec=float(dec) * u.degree, frame='icrs')
 	tess = lk.search_tesscut(c,sector=sector)
-	tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=size,download_dir=cache_dir)
+	tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=size,download_dir=save_path,cache_dir=cache_dir)
+	
+	os.system(f'mv {tpf.path} {save_path}')
+	os.system(f'rm -r {save_path}/tesscut')
 
 	if tpf is None:
 		m = 'Failure in TESScut api, not sure why.'
 		raise ValueError(m)
 	
-	else:
-		os.system(f'mv {tpf.path} {os.getcwd()}')
+	# else:
+	# 	if save_path is None:
+	# 		save_path = os.getcwd()
+	# 	os.system(f'mv {tpf.path} {save_path}')
 
 def external_get_TESS():
 
