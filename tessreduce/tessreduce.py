@@ -494,15 +494,15 @@ class tessreduce():
 		# Iterate through frames to find PRF like sources
 		data = (self._flux_aligned - self.ref) #* mask
 		if self.parallel:
-			try:
-				m = Parallel(n_jobs=self.num_cores)(delayed(par_psf_source_mask)(frame,self.prf,sigma) for frame in data)
-				m = np.array(m)
-			except:
-				m = np.ones_like(data)
-				for i in range(data.shape[0]):
-					#m[i] = _par_psf_source_mask(data[i],self.prf,sigma)
-					eh = par_psf_source_mask(data[i],self.prf,sigma)
-					m[i] = eh
+			#try:
+			m = Parallel(n_jobs=self.num_cores)(delayed(par_psf_source_mask)(frame,self.prf,sigma) for frame in data)
+			m = np.array(m)
+			# except:
+			# 	m = np.ones_like(data)
+			# 	for i in range(data.shape[0]):
+			# 		#m[i] = _par_psf_source_mask(data[i],self.prf,sigma)
+			# 		eh = par_psf_source_mask(data[i],self.prf,sigma)
+			# 		m[i] = eh
 		else:
 			m = np.ones_like(data)
 			for i in range(data.shape[0]):
