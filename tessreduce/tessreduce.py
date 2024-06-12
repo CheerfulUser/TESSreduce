@@ -210,6 +210,7 @@ class tessreduce():
 			self.ra = self.tpf.ra
 			self.dec = self.tpf.dec
 			self.size = self.tpf.flux.shape[1]
+			self.sector = self.tpf.sector
 
 		# Retrieve TPF
 		elif self.check_coord():
