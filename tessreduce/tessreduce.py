@@ -609,7 +609,7 @@ class tessreduce():
 					bkg_3[i] = parallel_bkg3(self.bkg[i],dist_mask[i])
 			self.bkg = np.array(bkg_3)
 
-	def _clip_background(self,sigma=5):
+	def _clip_background(self,sigma=5,ideal_size=90):
 		"""
 	    DESCRIPTION
 
@@ -625,12 +625,12 @@ class tessreduce():
 	    """
 		
 		if self.parallel:
-			bkg_clip = Parallel(n_jobs=self.num_cores)(delayed(clip_background)(self.bkg[i],self.mask,sigma) 
+			bkg_clip = Parallel(n_jobs=self.num_cores)(delayed(clip_background)(self.bkg[i],self.mask,sigma,ideal_size) 
 													   for i in np.arange(len(self.bkg)))
 		else:
 			bkg_clip = []
 			for i in range(len(dist_mask)):
-				bkg_clip[i] = clip_background(self.bkg[i],self.mask)
+				bkg_clip[i] = clip_background(self.bkg[i],self.mask,ideal_size)
 		self.bkg = np.array(bkg_clip)
 
 	def get_ref(self,start = None, stop = None):

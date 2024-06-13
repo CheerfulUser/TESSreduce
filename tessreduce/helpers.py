@@ -17,11 +17,13 @@ from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.optimize import minimize
+from scipy.signal import fftconvolve
 from sklearn.cluster import OPTICS
 from sklearn.preprocessing import PolynomialFeatures
 from sklearn.linear_model import LinearRegression
 from sklearn.pipeline import make_pipeline
 from skimage.restoration import inpaint
+
 
 from astropy.table import Table
 from astropy.stats import sigma_clipped_stats
@@ -996,23 +998,45 @@ def regional_stats_mask(image,size=90,sigma=3,iters=10):
     return clip
 
 
+
+def subdivide_region(flux,ideal_size=90):
+	sx, sy = flux.shape
+	valid = np.arange(0,101)
+	ystep = valid[np.where(sy / valid == sy // valid)[0]]
+	xstep = valid[np.where(sx / valid == sx // valid)[0]]
+
+	ysteps = ystep[np.argmin((abs((sy / ystep) - ideal_size)))].astype(int)
+	xsteps = xstep[np.argmin((abs((sx / xstep) - ideal_size)))].astype(int)
+	ystep = sy//ystep[np.argmin((abs((sy / ystep) - ideal_size)))].astype(int)
+	xstep = sx//xstep[np.argmin((abs((sx / xstep) - ideal_size)))].astype(int)
+
+	regions = np.zeros_like(flux)
+	counter = 0
+	for i in range(ysteps):
+	    for j in range(xsteps):
+	        regions[i*ystep:(i+1)*ystep,j*xstep:(j+1)*xstep] = counter
+	        counter += 1
+	        
+	max_reg = np.max(regions)
+	return regions, max_reg, ystep, xstep
+
 def Surface_names2model(names):
 	# C[i] * X^n * Y^m
 	return ' + '.join([
 				f"C[{i}]*{n.replace(' ','*')}"
 				for i,n in enumerate(names)])
 
-def clip_background(bkg,mask,sigma=3):
-	regions, max_reg = subdivide_region(bkg)
+def clip_background(bkg,mask,sigma=3,kern_size=5):
+	regions, max_reg, ystep, xstep = subdivide_region(bkg)
 	b2 = deepcopy(bkg)
 	for j in range(2):
 		for region in range(int(max_reg)):
-			rx,ry = np.where(regions == region)
-			y = rx.reshape(ystep,xstep)
-			x = ry.reshape(ystep,xstep)
+			ry,rx = np.where(regions == region)
+			y = ry.reshape(ystep,xstep)
+			x = rx.reshape(ystep,xstep)
 			sm = abs((mask & 1)-1)[y,x] * 1.0
 			sm[sm==0] = np.nan
-			cut = b2[i,y,x]
+			cut = b2[y,x]
 			if j > 0:
 				masked = cut * sm
 			else:
