@@ -41,7 +41,7 @@ tess = tr.tessreduce(ra=ra,dec=dec,sector=sector)
 
 # Flux calibration
 
-TESSreduce can calibrate TESS counts to physical flux, or AB magnitudes, by using PS1 data, If your field is dec > -30, and SkyMapper data for Southern field. IF you want a flux calibrated light curve then use:
+TESSreduce can calibrate TESS counts to physical flux, or AB magnitudes, by using PS1 data, If your field is dec >-30, and SkyMapper data for Southern field. IF you want a flux calibrated light curve then use:
 ```python
 tess.to_flux()
 ```
