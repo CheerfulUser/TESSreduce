@@ -495,7 +495,6 @@ class tessreduce():
 				   	   		self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
 		
 		self.prf =  prf.locate(5,5,(11,11))
-		print(self.prf)
 
 		# Iterate through frames to find PRF like sources
 		data = (self._flux_aligned - self.ref) #* mask
@@ -550,7 +549,7 @@ class tessreduce():
 
 		# Find extra sources not found in catalogue mask
 		if source_hunt:
-			sm = self.psf_source_mask(m)
+			sm = self.psf_source_mask()
 			sm[sm==0] = np.nan
 			m = sm * m
 		self._bkgmask = m
