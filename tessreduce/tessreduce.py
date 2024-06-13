@@ -221,14 +221,13 @@ class tessreduce():
 		elif self.check_coord():
 			if self.verbose>0:
 				print('getting TPF from TESScut')
-
-			if self._catalogue_path is None:
-				self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
-				self._get_gaia()
-			else:
-				self.tpf = external_get_TESS()
-				self.flux = strip_units(self.tpf.flux)
-				self.wcs  = self.tpf.wcs
+			# if self._catalogue_path is None:
+			self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
+			self._get_gaia()
+			# else:
+			# 	self.tpf = external_get_TESS()
+			# 	self.flux = strip_units(self.tpf.flux)
+			# 	self.wcs  = self.tpf.wcs
 
 		self.ground = ground(ra = self.ra, dec = self.dec)
 
@@ -2329,13 +2328,13 @@ class tessreduce():
 			savename = self.savename
 		if self.dec < -30:
 			if self.verbose > 0:
-				print('Target is below -30 dec, calibrating to SkyMapper photometry.')
+				print('target is below -30 dec, calibrating to SkyMapper photometry.')
 			table = Get_Catalogue(self.tpf,Catalog='skymapper')
 			table = Skymapper_df(table)
 			system = 'skymapper'
 		else:
 			if self.verbose > 0:
-				print('Target is above -30 dec, calibrating to PS1 photometry.')
+				print('target is above -30 dec, calibrating to PS1 photometry.')
 			table = Get_Catalogue(self.tpf,Catalog='ps1')
 			system = 'ps1'
 		x,y = self.wcs.all_world2pix(table.RAJ2000.values,table.DEJ2000.values,0)
