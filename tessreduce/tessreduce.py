@@ -495,6 +495,7 @@ class tessreduce():
 				   	   		self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
 		
 		self.prf =  prf.locate(5,5,(11,11))
+		print(self.prf)
 
 		# Iterate through frames to find PRF like sources
 		data = (self._flux_aligned - self.ref) #* mask
