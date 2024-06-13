@@ -194,12 +194,17 @@ class tessreduce():
 
 		# Generate coordinate information from 'obs_list'
 		if obs_list is not None:
-			obs_list = np.array(obs_list,dtype=object)
-			if len(obs_list.shape) > 1:
-				obs_list = obs_list[obs_list[:,3].astype('bool')][0]
-			self.ra = obs_list[0]
-			self.dec = obs_list[1]
-			self.sector = obs_list[2]
+			if isinstance(obs_list,list):
+				obs_list = np.array(obs_list,dtype=object)
+				if len(obs_list.shape) > 1:
+					obs_list = obs_list[obs_list[:,3].astype('bool')][0]
+				self.ra = obs_list[0]
+				self.dec = obs_list[1]
+				self.sector = obs_list[2]
+			elif isinstance(obs_list, pd.DataFrame):
+				self.ra = obs_list['RA'].to_numpy()[0]
+				self.dec = obs_list['DEC'].to_numpy()[0]
+				self.sector = obs_list['Sector'].to_numpy()
 
 		# Generate coordinate information from 'tpf'
 		if tpf is not None:
@@ -494,15 +499,15 @@ class tessreduce():
 		# Iterate through frames to find PRF like sources
 		data = (self._flux_aligned - self.ref) #* mask
 		if self.parallel:
-			#try:
-			m = Parallel(n_jobs=self.num_cores)(delayed(par_psf_source_mask)(frame,self.prf,sigma) for frame in data)
-			m = np.array(m)
-			# except:
-			# 	m = np.ones_like(data)
-			# 	for i in range(data.shape[0]):
-			# 		#m[i] = _par_psf_source_mask(data[i],self.prf,sigma)
-			# 		eh = par_psf_source_mask(data[i],self.prf,sigma)
-			# 		m[i] = eh
+			try:
+				m = Parallel(n_jobs=self.num_cores)(delayed(par_psf_source_mask)(frame,self.prf,sigma) for frame in data)
+				m = np.array(m)
+			except:
+				m = np.ones_like(data)
+				for i in range(data.shape[0]):
+					#m[i] = _par_psf_source_mask(data[i],self.prf,sigma)
+					eh = par_psf_source_mask(data[i],self.prf,sigma)
+					m[i] = eh
 		else:
 			m = np.ones_like(data)
 			for i in range(data.shape[0]):
@@ -582,14 +587,12 @@ class tessreduce():
 			straps[straps==0] = 1
 
 			value = np.nanmedian(straps,axis=1)
-
 			qe = np.ones_like(bkg_smth) * value[:,np.newaxis,:]
 			bkg = bkg_smth * qe
 			self.qe = qe
 		else:
 			bkg = np.array(bkg_smth)
-
-		self.bkg = bkg 
+		self.bkg = bkg
 
 	def small_background(self):
 		"""
