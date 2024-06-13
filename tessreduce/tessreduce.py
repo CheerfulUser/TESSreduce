@@ -1700,7 +1700,7 @@ class tessreduce():
 
 			if self.align:
 				if self.verbose > 0:
-					print('Aligning images')
+					print('aligning images')
 				
 				try:
 					#self.centroids_shifts_starfind()
@@ -1778,12 +1778,12 @@ class tessreduce():
 				self.flux -= self.bkg
 				if self.corr_correction:
 					if self.verbose > 0:
-						print('Background correlation correction')
+						print('background correlation correction')
 					self.correlation_corrector()
 
 
 			if self.calibrate:
-				print('Field calibration')
+				print('field calibration')
 				self.field_calibrate()
 
 			
@@ -2196,13 +2196,13 @@ class tessreduce():
 	def isolated_star_lcs(self):
 		if self.dec < -30:
 			if self.verbose > 0:
-				print('Target is below -30 dec, calibrating to SkyMapper photometry.')
+				print('target is below -30 dec, calibrating to SkyMapper photometry.')
 			table = Get_Catalogue(self.tpf,Catalog='skymapper')
 			table = Skymapper_df(table)
 			system = 'skymapper'
 		else:
 			if self.verbose > 0:
-				print('Target is above -30 dec, calibrating to PS1 photometry.')
+				print('target is above -30 dec, calibrating to PS1 photometry.')
 			table = Get_Catalogue(self.tpf,Catalog='ps1')
 			system = 'ps1'
 
