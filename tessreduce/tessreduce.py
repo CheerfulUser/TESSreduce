@@ -363,6 +363,7 @@ class tessreduce():
 			ind = self.ref > self._harshmask_counts
 			self.ref[ind]
 
+
 	def make_mask(self,catalogue_path=None,maglim=19,scale=1,strapsize=6,useref=False):
 		"""
 		DESCRIPTION
@@ -607,6 +608,30 @@ class tessreduce():
 				for i in range(len(dist_mask)):
 					bkg_3[i] = parallel_bkg3(self.bkg[i],dist_mask[i])
 			self.bkg = np.array(bkg_3)
+
+	def _clip_background(self,sigma=5):
+		"""
+	    DESCRIPTION
+
+	    Parameters
+	    ----------
+	    iters : TYPE, optional
+	        DESCRIPTION. The default is 5.
+
+	    Returns
+	    -------
+	    None
+
+	    """
+		
+		if self.parallel:
+			bkg_clip = Parallel(n_jobs=self.num_cores)(delayed(clip_background)(self.bkg[i],self.mask,sigma) 
+													   for i in np.arange(len(self.bkg)))
+		else:
+			bkg_clip = []
+			for i in range(len(dist_mask)):
+				bkg_clip[i] = clip_background(self.bkg[i],self.mask)
+		self.bkg = np.array(bkg_clip)
 
 	def get_ref(self,start = None, stop = None):
 		"""
@@ -1058,6 +1083,11 @@ class tessreduce():
 		if phot_method == 'psf':
 			tar = self.psf_photometry(x,y,diff=diff)
 			tar_err = sky_std # still need to work this out
+		nan_ind = np.where(np.nansum(self.flux,axis=(1,2))==0,True,False)
+		nan_ind[self.ref_ind] = False
+		tar[nan_ind] = np.nan
+		tar_err[nan_ind] = np.nan
+
 		#tar[tar_err > 100] = np.nan
 		#sky_med[tar_err > 100] = np.nan
 		if self.tpf is not None:
@@ -1105,7 +1135,7 @@ class tessreduce():
 		plt.figure(figsize=(3*fig_width,1*fig_width))
 		plt.subplot(121)
 		plt.fill_between(lc[0],sky[1]-sky[2],sky[1]+sky[2],alpha=.5,color='C1')
-		plt.plot(sky[0],sky[1],'C1.',label='Sky')
+		plt.plot(sky[0],sky[1],'C3.',label='Sky')
 		plt.fill_between(lc[0],lc[1]-lc[2],lc[1]+lc[2],alpha=.5,color='C0')
 		plt.plot(lc[0],lc[1],'C0.',label='Target')
 		binned = self.bin_data(lc=lc)
@@ -1759,7 +1789,7 @@ class tessreduce():
 					print('background')
 				self.bkg_orig = deepcopy(self.bkg)
 				self.background(calc_qe = False,strap_iso = False,source_hunt=self._sourcehunt,gauss_smooth=1,interpolate=False)
-				self._bkg_round_3()
+				self._clip_background()
 				self.flux -= self.bkg
 				if self.corr_correction:
 					if self.verbose > 0:

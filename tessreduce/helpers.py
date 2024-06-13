@@ -18,6 +18,9 @@ from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.optimize import minimize
 from sklearn.cluster import OPTICS
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+from sklearn.pipeline import make_pipeline
 from skimage.restoration import inpaint
 
 from astropy.table import Table
@@ -37,6 +40,8 @@ from tabulate import tabulate
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
 from .psf_photom import create_psf
+
+
 
 fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
 inches_per_pt = 1.0/72.27			   # Convert pt to inches
@@ -412,8 +417,8 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True, df = False):
 	------
 	name : str
 		catalog name
-	time : str
-		reference time to use, can be either disc, or max
+	time : str or float
+		reference time to use, accepted string values are disc, or max. Float times are assumed to be MJD.
 	buffer : float
 		overlap buffer time in days 
 	
@@ -479,12 +484,16 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True, df = False):
 		new_ind = [i for i in ind if i < len(sec_times)]
 
 		secs = sec_times.iloc[new_ind]
-		if (time.lower() == 'disc') | (time.lower() == 'discovery'):
-			disc_start = secs['mjd_start'].values - disc_t.mjd
-			disc_end = secs['mjd_end'].values - disc_t.mjd
-		elif (time.lower() == 'max') | (time.lower() == 'peak'):
-			disc_start = secs['mjd_start'].values - max_t.mjd
-			disc_end = secs['mjd_end'].values - max_t.mjd
+		if type(time) == str:
+			if (time.lower() == 'disc') | (time.lower() == 'discovery'):
+				disc_start = secs['mjd_start'].values - disc_t.mjd
+				disc_end = secs['mjd_end'].values - disc_t.mjd
+			elif (time.lower() == 'max') | (time.lower() == 'peak'):
+				disc_start = secs['mjd_start'].values - max_t.mjd
+				disc_end = secs['mjd_end'].values - max_t.mjd
+		else:
+			disc_start = secs['mjd_start'].values - time
+			disc_end = secs['mjd_end'].values - time
 
 		covers = []
 		differences = []
@@ -985,3 +994,49 @@ def regional_stats_mask(image,size=90,sigma=3,iters=10):
         cut_ind = np.where((image[rx,ry] >= me+sigma*s) | (image[rx,ry] <= me-sigma*s))
         clip[rx[cut_ind],ry[cut_ind]] = 1
     return clip
+
+
+def Surface_names2model(names):
+	# C[i] * X^n * Y^m
+	return ' + '.join([
+				f"C[{i}]*{n.replace(' ','*')}"
+				for i,n in enumerate(names)])
+
+def clip_background(bkg,mask,sigma=3):
+	regions, max_reg = subdivide_region(bkg)
+	b2 = deepcopy(bkg)
+	for j in range(2):
+		for region in range(int(max_reg)):
+			rx,ry = np.where(regions == region)
+			y = rx.reshape(ystep,xstep)
+			x = ry.reshape(ystep,xstep)
+			sm = abs((mask & 1)-1)[y,x] * 1.0
+			sm[sm==0] = np.nan
+			cut = b2[i,y,x]
+			if j > 0:
+				masked = cut * sm
+			else:
+				masked = cut
+			xx = x.reshape(-1,1)
+			yy = y.reshape(-1,1)
+			zz = masked.reshape(-1,1)
+			ind = np.where(np.isfinite(zz))
+			order = 6
+			model = make_pipeline(PolynomialFeatures(degree=order),
+										 LinearRegression(fit_intercept=False))
+			model.fit(np.c_[xx[ind], yy[ind]], zz[ind])
+			m = Surface_names2model(model[0].get_feature_names_out(['X', 'Y']))
+			C = model[1].coef_.T  # coefficients
+			r2 = model.score(np.c_[xx[ind], yy[ind]], zz[ind])  # R-squared
+			ZZ = model.predict(np.c_[x.flatten(), y.flatten()]).reshape(x.shape)
+			diff = cut - ZZ
+			m,me, s = sigma_clipped_stats(diff,maxiters=10)
+			ind_arr = (diff >= (me+sigma*s)) | (diff <= (me-sigma*s))
+			ind_arr = fftconvolve(ind_arr,np.ones((kern_size,kern_size)),mode='same')
+			ind_arr = ind_arr > 0.8
+			cut_ind = np.where(ind_arr)
+			bkg2 = deepcopy(cut)
+			bkg2[cut_ind] = ZZ[cut_ind]
+			#bkg2 = ZZ
+			b2[y,x] = bkg2
+	return b2
