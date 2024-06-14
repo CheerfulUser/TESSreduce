@@ -50,7 +50,7 @@ def Get_Catalogue(tpf, Catalog = 'gaia'):
 	elif Catalog == 'skymapper':
 		catalog = 'II/358/smss'
 	else:
-		raise ValueError("{} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
+		raise ValueError(f"{catalog} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
 	if Catalog == 'gaia':
 		result = Vizier.query_region(c1, catalog=[catalog],
                              		 radius=Angle(np.max(tpf.shape[1:]) * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
@@ -103,13 +103,13 @@ def Get_Catalogue_External(ra,dec,size,Catalog = 'gaia'):
 	elif Catalog == 'skymapper':
 		catalog = 'II/358/smss'
 	else:
-		raise ValueError("{} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
+		raise ValueError(f"{catalog} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
 	if Catalog == 'gaia':
 		result = Vizier.query_region(c1, catalog=[catalog],
-                             		 radius=Angle(size * pix_scale, "arcsec"),column_filters={'Gmag':'<19'})
+                             		 radius=Angle(size * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
 	else:
 		result = Vizier.query_region(c1, catalog=[catalog],
-									 radius=Angle(np.max(tpf.shape[1:]) * pix_scale, "arcsec"))
+									 radius=Angle(size * pix_scale + 60, "arcsec"))
 
 	no_targets_found_message = ValueError('Either no sources were found in the query region '
 										  'or Vizier is unavailable')
@@ -122,7 +122,7 @@ def Get_Catalogue_External(ra,dec,size,Catalog = 'gaia'):
 	
 	return result 
 
-def Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit = 18, Offset = 10):
+def Get_Gaia_External(tpf,magnitude_limit = 18, Offset = 10):
 	"""
 	Get the coordinates and mag of all gaia sources in the field of view.
 
@@ -144,33 +144,33 @@ def Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit = 18, Offs
 			'ymag','e_ymag','yKmag','e_yKmag','tmag','gaiaid','gaiamag','gaiadist','gaiadist_u','gaiadist_l',
 			'row','col']
 
-	result =  Get_Catalogue_External(ra,dec,size,Catalog = 'gaia')
+	#result =  Get_Catalogue_External(ra,dec,size,Catalog = 'gaia')
+
+	result = Get_Catalogue(tpf,Catalog='gaia')
 
 	result = result[result.Gmag < magnitude_limit]
 	if len(result) == 0:
 		raise no_targets_found_message
 	radecs = np.vstack([result['RA_ICRS'], result['DE_ICRS']]).T
 	try:
-		coords = wcsItem.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
+		coords = tpf.wcs.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
 	except:
 		good_coords = []
 		for i,radec in enumerate(radecs):
 			try:
-				c = wcsItem.all_world2pix(radec[0],radec[1], 0)
+				c = tpf.wcs.all_world2pix(radec[0],radec[1], 0)
 				good_coords.append(i)
 			except:
 				pass
 		radecs = radecs[good_coords]
 		result = result.iloc[good_coords]
-		coords = wcsItem.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
+		coords = tpf.wcs.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
 
-	coords[:,0] -= cutCornerPx[0]
-	coords[:,1] -= cutCornerPx[1]
 	source = result['Source'].values
 	Gmag = result['Gmag'].values
 	#Jmag = result['Jmag']
-	ind = (((coords[:,0] >= -20) & (coords[:,1] >= -20)) & 
-		   ((coords[:,0] < (size + 20)) & (coords[:,1] < (size + 20))))
+	ind = (((coords[:,0] >= -10) & (coords[:,1] >= -10)) & 
+		   ((coords[:,0] < (tpf.shape[2] + 10)) & (coords[:,1] < (tpf.shape[1] + 10))))
 	coords = coords[ind]
 	radecs = radecs[ind]
 	Gmag = Gmag[ind]
@@ -470,23 +470,32 @@ def Reformat_df(df):
     
     return new_df
 
-def external_save_cat(radec,size,cutCornerPx,image_path,save_path,maglim):
+# def external_save_cat(radec,size,cutCornerPx,image_path,save_path,maglim):
 	
-	file = Extract_fits(image_path)
-	wcsItem = WCS(file[1].header)
-	file.close()
+# 	file = Extract_fits(image_path)
+# 	wcsItem = WCS(file[1].header)
+# 	file.close()
 	
-	ra = radec[0]
-	dec = radec[1]
+# 	ra = radec[0]
+# 	dec = radec[1]
 
-	gp,gm, source = Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit=maglim)
+# 	# gp,gm, source = Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit=maglim)
+# 	gp,gm, source = Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit=maglim)
+# 	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm,source]).T,columns=['ra','dec','mag','Source'])
+
+# 	gaia.to_csv(f'{save_path}/local_gaia_cat.csv',index=False)
+
+def external_save_cat(tpf,save_path,maglim):
+	
+	tpf = lk.TessTargetPixelFile(tpf)
+	gp,gm, source = Get_Gaia_External(tpf,magnitude_limit=maglim)
 	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm,source]).T,columns=['ra','dec','mag','Source'])
 
 	gaia.to_csv(f'{save_path}/local_gaia_cat.csv',index=False)
 
 def external_load_cat(path,maglim):
 
-	gaia = pd.read_csv(f'{path}/local_gaia_cat.csv')
+	gaia = pd.read_csv(path)
 	gaia = gaia[gaia['mag']<(maglim-0.5)]
 	gaia = gaia[['ra','dec','mag']]
 	return gaia
