@@ -53,7 +53,7 @@ def Get_Catalogue(tpf, Catalog = 'gaia'):
 		raise ValueError(f"{catalog} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
 	if Catalog == 'gaia':
 		result = Vizier.query_region(c1, catalog=[catalog],
-                             		 radius=Angle(np.max(tpf.shape[1:]) * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
+							 		 radius=Angle(np.max(tpf.shape[1:]) * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
 	else:
 		result = Vizier.query_region(c1, catalog=[catalog],
 									 radius=Angle(np.max(tpf.shape[1:]) * pix_scale + 60, "arcsec"))
@@ -106,7 +106,7 @@ def Get_Catalogue_External(ra,dec,size,Catalog = 'gaia'):
 		raise ValueError(f"{catalog} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
 	if Catalog == 'gaia':
 		result = Vizier.query_region(c1, catalog=[catalog],
-                             		 radius=Angle(size * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
+							 		 radius=Angle(size * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
 	else:
 		result = Vizier.query_region(c1, catalog=[catalog],
 									 radius=Angle(size * pix_scale + 60, "arcsec"))
@@ -220,59 +220,59 @@ def Get_Gaia(tpf, magnitude_limit = 18, Offset = 10):
 
 
 def mag2flux(mag,zp):
-    f = 10**(2/5*(zp-mag))
-    return f
+	f = 10**(2/5*(zp-mag))
+	return f
 
 
 
 def PS1_to_TESS_mag(PS1,ebv = 0):
-    zp = 25
-    gr = (PS1.gmag - PS1.rmag).values
-    
-    eg, e = R_val('g',gr=gr,ext=ebv); er, e = R_val('r',gr=gr,ext=ebv)
-    ei, e = R_val('i',gr=gr,ext=ebv); ez, e = R_val('z',gr=gr,ext=ebv)
-    ey, e = R_val('y',gr=gr,ext=ebv); et, e = R_val('tess',gr=gr,ext=ebv)
-    eg = eg  * ebv; er = er  * ebv; ei = ei  * ebv; ez = ez  * ebv
-    ey = ey  * ebv; et = et  * ebv
+	zp = 25
+	gr = (PS1.gmag - PS1.rmag).values
+	
+	eg, e = R_val('g',gr=gr,ext=ebv); er, e = R_val('r',gr=gr,ext=ebv)
+	ei, e = R_val('i',gr=gr,ext=ebv); ez, e = R_val('z',gr=gr,ext=ebv)
+	ey, e = R_val('y',gr=gr,ext=ebv); et, e = R_val('tess',gr=gr,ext=ebv)
+	eg = eg  * ebv; er = er  * ebv; ei = ei  * ebv; ez = ez  * ebv
+	ey = ey  * ebv; et = et  * ebv
 
-    g = mag2flux(PS1.gmag.values - eg,zp)
-    r = mag2flux(PS1.rmag.values - er,zp)
-    i = mag2flux(PS1.imag.values - ei,zp)
-    z = mag2flux(PS1.zmag.values - ez,zp)
-    y = mag2flux(PS1.ymag.values - ey,zp)
-    
-    cr = 0.25582823; ci = 0.27609407; cz = 0.35809516
-    cy = 0.11244277; cp = 0.00049096
+	g = mag2flux(PS1.gmag.values - eg,zp)
+	r = mag2flux(PS1.rmag.values - er,zp)
+	i = mag2flux(PS1.imag.values - ei,zp)
+	z = mag2flux(PS1.zmag.values - ez,zp)
+	y = mag2flux(PS1.ymag.values - ey,zp)
+	
+	cr = 0.25582823; ci = 0.27609407; cz = 0.35809516
+	cy = 0.11244277; cp = 0.00049096
 
-    t = (cr*r + ci*i + cz*z + cy*y)*(g/i)**cp
-    t = -2.5*np.log10(t) + zp + et
-    PS1['tmag'] = t
-    return PS1
+	t = (cr*r + ci*i + cz*z + cy*y)*(g/i)**cp
+	t = -2.5*np.log10(t) + zp + et
+	PS1['tmag'] = t
+	return PS1
 
 def SM_to_TESS_mag(SM,ebv = 0):
-    zp = 25
-    gr = (SM.gmag - SM.rmag).values
-    
-    eg, e = R_val('g',gr=gr,ext=ebv,system='skymapper')
-    er, e = R_val('r',gr=gr,ext=ebv,system='skymapper')
-    ei, e = R_val('i',gr=gr,ext=ebv,system='skymapper') 
-    ez, e = R_val('z',gr=gr,ext=ebv,system='skymapper')
-    et, e = R_val('tess',gr=gr,ext=ebv)
-    eg = eg  * ebv; er = er  * ebv; ei = ei  * ebv
-    ez = ez  * ebv; et = et  * ebv
+	zp = 25
+	gr = (SM.gmag - SM.rmag).values
+	
+	eg, e = R_val('g',gr=gr,ext=ebv,system='skymapper')
+	er, e = R_val('r',gr=gr,ext=ebv,system='skymapper')
+	ei, e = R_val('i',gr=gr,ext=ebv,system='skymapper') 
+	ez, e = R_val('z',gr=gr,ext=ebv,system='skymapper')
+	et, e = R_val('tess',gr=gr,ext=ebv)
+	eg = eg  * ebv; er = er  * ebv; ei = ei  * ebv
+	ez = ez  * ebv; et = et  * ebv
 
-    g = mag2flux(SM.gmag.values - eg,zp)
-    r = mag2flux(SM.rmag.values - er,zp)
-    i = mag2flux(SM.imag.values - ei,zp)
-    z = mag2flux(SM.zmag.values - ez,zp)
-    
-    cr = 0.25825435; ci = 0.35298213
-    cz = 0.39388206; cp = -0.00170817
+	g = mag2flux(SM.gmag.values - eg,zp)
+	r = mag2flux(SM.rmag.values - er,zp)
+	i = mag2flux(SM.imag.values - ei,zp)
+	z = mag2flux(SM.zmag.values - ez,zp)
+	
+	cr = 0.25825435; ci = 0.35298213
+	cz = 0.39388206; cp = -0.00170817
 
-    t = (cr*r + ci*i + cz*z)*(g/i)**cp
-    t = -2.5*np.log10(t) + zp + et
-    SM['tmag'] = t
-    return SM
+	t = (cr*r + ci*i + cz*z)*(g/i)**cp
+	t = -2.5*np.log10(t) + zp + et
+	SM['tmag'] = t
+	return SM
 
 
 
@@ -314,39 +314,39 @@ def Get_PS1(tpf, magnitude_limit = 18, Offset = 10):
 
 
 def Skymapper_df(sm):
-    a = np.zeros(len(sm['ObjectId']),dtype=object)
-    a[:] = 's'
-    b = sm['ObjectId'].values.astype(str).astype(object)
-    obj = a+b
-    
-    keep = ['objID','RAJ2000', 'DEJ2000','e_RAJ2000','e_DEJ2000','gmag', 'e_gmag', 'gKmag',
-           'e_gKmag', 'rmag', 'e_rmag', 'rKmag', 'e_rKmag',
-           'imag', 'e_imag', 'iKmag', 'e_iKmag', 'zmag', 'e_zmag',
-           'zKmag', 'e_zKmag', 'ymag', 'e_ymag', 'yKmag', 'e_yKmag',
-           'tmag']
-    df = pd.DataFrame(columns=keep)
-    df['objID'] = obj
-    df['RAJ2000'] = sm['RAICRS'].values
-    df['DEJ2000'] = sm['DEICRS'].values
+	a = np.zeros(len(sm['ObjectId']),dtype=object)
+	a[:] = 's'
+	b = sm['ObjectId'].values.astype(str).astype(object)
+	obj = a+b
+	
+	keep = ['objID','RAJ2000', 'DEJ2000','e_RAJ2000','e_DEJ2000','gmag', 'e_gmag', 'gKmag',
+		   'e_gKmag', 'rmag', 'e_rmag', 'rKmag', 'e_rKmag',
+		   'imag', 'e_imag', 'iKmag', 'e_iKmag', 'zmag', 'e_zmag',
+		   'zKmag', 'e_zKmag', 'ymag', 'e_ymag', 'yKmag', 'e_yKmag',
+		   'tmag']
+	df = pd.DataFrame(columns=keep)
+	df['objID'] = obj
+	df['RAJ2000'] = sm['RAICRS'].values
+	df['DEJ2000'] = sm['DEICRS'].values
 
-    df['e_RAJ2000'] = sm['e_RAICRS'].values
-    df['e_DEJ2000'] = sm['e_DEICRS'].values
+	df['e_RAJ2000'] = sm['e_RAICRS'].values
+	df['e_DEJ2000'] = sm['e_DEICRS'].values
 
-    df['gmag'] = sm['gPSF'].values
-    df['rmag'] = sm['rPSF'].values
-    df['imag'] = sm['iPSF'].values
-    df['zmag'] = sm['zPSF'].values
+	df['gmag'] = sm['gPSF'].values
+	df['rmag'] = sm['rPSF'].values
+	df['imag'] = sm['iPSF'].values
+	df['zmag'] = sm['zPSF'].values
 
-    df['e_gmag'] = sm['gPSF'].values * np.nan
-    df['e_rmag'] = sm['rPSF'].values * np.nan
-    df['e_imag'] = sm['iPSF'].values * np.nan
-    df['e_zmag'] = sm['zPSF'].values * np.nan
+	df['e_gmag'] = sm['gPSF'].values * np.nan
+	df['e_rmag'] = sm['rPSF'].values * np.nan
+	df['e_imag'] = sm['iPSF'].values * np.nan
+	df['e_zmag'] = sm['zPSF'].values * np.nan
 
-    df['gKmag'] = sm['gPetro'].values
-    df['rKmag'] = sm['rPetro'].values
-    df['iKmag'] = sm['iPetro'].values
-    df['zKmag'] = sm['zPetro'].values
-    return df
+	df['gKmag'] = sm['gPetro'].values
+	df['rKmag'] = sm['rPetro'].values
+	df['iKmag'] = sm['iPetro'].values
+	df['zKmag'] = sm['zPetro'].values
+	return df
 
 
 def Unified_catalog(tpf,magnitude_limit=18,offset=10):
@@ -460,15 +460,15 @@ def Unified_catalog(tpf,magnitude_limit=18,offset=10):
 	return result
 
 def Reformat_df(df):
-    new_cols = ['objID', 'RAJ2000', 'DEJ2000', 'e_RAJ2000', 'e_DEJ2000', 'gMeanPSFMag',
-               'gMeanPSFMagErr', 'gKmag', 'e_gKmag', 'rMeanPSFMag', 'rMeanPSFMagErr', 'rKmag', 'e_rKmag',
-               'iMeanPSFMag', 'iMeanPSFMagErr', 'iKmag', 'e_iKmag', 'zMeanPSFMag', 'zMeanPSFMagErr', 'zKmag',
-               'e_zKmag', 'yMeanPSFMag', 'yMeanPSFMagErr', 'yKmag', 'e_yKmag', 'tmag', 'gaiaid',
-               'gaiamag', 'gaiadist', 'gaiadist_u', 'gaiadist_l', 'row', 'col']
-    new_df = deepcopy(df)
-    new_df.columns = new_cols
-    
-    return new_df
+	new_cols = ['objID', 'RAJ2000', 'DEJ2000', 'e_RAJ2000', 'e_DEJ2000', 'gMeanPSFMag',
+			   'gMeanPSFMagErr', 'gKmag', 'e_gKmag', 'rMeanPSFMag', 'rMeanPSFMagErr', 'rKmag', 'e_rKmag',
+			   'iMeanPSFMag', 'iMeanPSFMagErr', 'iKmag', 'e_iKmag', 'zMeanPSFMag', 'zMeanPSFMagErr', 'zKmag',
+			   'e_zKmag', 'yMeanPSFMag', 'yMeanPSFMagErr', 'yKmag', 'e_yKmag', 'tmag', 'gaiaid',
+			   'gaiamag', 'gaiadist', 'gaiadist_u', 'gaiadist_l', 'row', 'col']
+	new_df = deepcopy(df)
+	new_df.columns = new_cols
+	
+	return new_df
 
 # def external_save_cat(radec,size,cutCornerPx,image_path,save_path,maglim):
 	
