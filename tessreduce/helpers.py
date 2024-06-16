@@ -664,18 +664,26 @@ def par_psf_full(cutout,prf,shift=[0,0],xlim=2,ylim=2):
 	return prf.flux, pos
 
 
-def external_save_TESS(ra,dec,sector,size=90,quality_bitmask='default',cache_dir=None):
+def external_save_TESS(ra,dec,sector,size=90,save_path=None,quality_bitmask='default',cache_dir=None):
+
+	if save_path is None:
+		save_path = os.getcwd()
 
 	c = SkyCoord(ra=float(ra)*u.degree, dec=float(dec) * u.degree, frame='icrs')
 	tess = lk.search_tesscut(c,sector=sector)
-	tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=size,download_dir=cache_dir)
+	tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=size,download_dir=save_path,cache_dir=cache_dir)
+	
+	os.system(f'mv {tpf.path} {save_path}')
+	os.system(f'rm -r {save_path}/tesscut')
 
 	if tpf is None:
 		m = 'Failure in TESScut api, not sure why.'
 		raise ValueError(m)
 	
-	else:
-		os.system(f'mv {tpf.path} {os.getcwd()}')
+	# else:
+	# 	if save_path is None:
+	# 		save_path = os.getcwd()
+	# 	os.system(f'mv {tpf.path} {save_path}')
 
 def external_get_TESS():
 
@@ -844,158 +852,158 @@ def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=48*2):
 
 
 def _Get_images(ra,dec,filters):
-    
-    """Query ps1filenames.py service to get a list of images"""
-    
-    service = "https://ps1images.stsci.edu/cgi-bin/ps1filenames.py"
-    url = f"{service}?ra={ra}&dec={dec}&filters={filters}"
-    table = Table.read(url, format='ascii')
-    return table
+	
+	"""Query ps1filenames.py service to get a list of images"""
+	
+	service = "https://ps1images.stsci.edu/cgi-bin/ps1filenames.py"
+	url = f"{service}?ra={ra}&dec={dec}&filters={filters}"
+	table = Table.read(url, format='ascii')
+	return table
 
 def _Get_url(ra, dec, size, filters, color=False):
-    
-    """Get URL for images in the table"""
-    
-    table = _Get_images(ra,dec,filters=filters)
-    url = (f"https://ps1images.stsci.edu/cgi-bin/fitscut.cgi?"
-           f"ra={ra}&dec={dec}&size={size}&format=jpg")
+	
+	"""Get URL for images in the table"""
+	
+	table = _Get_images(ra,dec,filters=filters)
+	url = (f"https://ps1images.stsci.edu/cgi-bin/fitscut.cgi?"
+		   f"ra={ra}&dec={dec}&size={size}&format=jpg")
    
-    # sort filters from red to blue
-    flist = ["yzirg".find(x) for x in table['filter']]
-    table = table[np.argsort(flist)]
-    if color:
-        if len(table) > 3:
-            # pick 3 filters
-            table = table[[0,len(table)//2,len(table)-1]]
-        for i, param in enumerate(["red","green","blue"]):
-            url = url + "&{}={}".format(param,table['filename'][i])
-    else:
-        urlbase = url + "&red="
-        url = []
-        for filename in table['filename']:
-            url.append(urlbase+filename)
-    return url
+	# sort filters from red to blue
+	flist = ["yzirg".find(x) for x in table['filter']]
+	table = table[np.argsort(flist)]
+	if color:
+		if len(table) > 3:
+			# pick 3 filters
+			table = table[[0,len(table)//2,len(table)-1]]
+		for i, param in enumerate(["red","green","blue"]):
+			url = url + "&{}={}".format(param,table['filename'][i])
+	else:
+		urlbase = url + "&red="
+		url = []
+		for filename in table['filename']:
+			url.append(urlbase+filename)
+	return url
 
 def _Get_im(ra, dec, size,color):
-    
-    """Get color image at a sky position"""
+	
+	"""Get color image at a sky position"""
 
-    if color:
-        url = _Get_url(ra,dec,size=size,filters='grz',color=True)
-        r = requests.get(url)
-    else:
-        url = _Get_url(ra,dec,size=size,filters='i')
-        r = requests.get(url[0])
-    im = Image.open(BytesIO(r.content))
-    return im
+	if color:
+		url = _Get_url(ra,dec,size=size,filters='grz',color=True)
+		r = requests.get(url)
+	else:
+		url = _Get_url(ra,dec,size=size,filters='i')
+		r = requests.get(url[0])
+	im = Image.open(BytesIO(r.content))
+	return im
 
 def _Panstarrs_phot(ra,dec,size):
 
-    grey_im = _Get_im(ra,dec,size=size*4,color=False)
-    colour_im = _Get_im(ra,dec,size=size*4,color=True)
+	grey_im = _Get_im(ra,dec,size=size*4,color=False)
+	colour_im = _Get_im(ra,dec,size=size*4,color=True)
 
-    plt.rcParams.update({'font.size':12})
-    plt.figure(1,figsize=(3*fig_width,1*fig_width))
-    plt.subplot(121)
-    plt.imshow(grey_im,origin="lower",cmap="gray")
-    plt.title('PS1 i')
-    plt.xlabel('px (0.25")')
-    plt.ylabel('px (0.25")')
-    plt.subplot(122)
-    plt.title('PS1 grz')
-    plt.imshow(colour_im,origin="lower")
-    plt.xlabel('px (0.25")')
-    plt.ylabel('px (0.25")')
+	plt.rcParams.update({'font.size':12})
+	plt.figure(1,figsize=(3*fig_width,1*fig_width))
+	plt.subplot(121)
+	plt.imshow(grey_im,origin="lower",cmap="gray")
+	plt.title('PS1 i')
+	plt.xlabel('px (0.25")')
+	plt.ylabel('px (0.25")')
+	plt.subplot(122)
+	plt.title('PS1 grz')
+	plt.imshow(colour_im,origin="lower")
+	plt.xlabel('px (0.25")')
+	plt.ylabel('px (0.25")')
 
 
 def _Skymapper_phot(ra,dec,size):
-    """
-    Gets g,r,i from skymapper.
-    """
+	"""
+	Gets g,r,i from skymapper.
+	"""
 
-    size /= 3600
+	size /= 3600
 
-    url = f"https://api.skymapper.nci.org.au/public/siap/dr2/query?POS={ra},{dec}&SIZE={size}&BAND=g,r,i&FORMAT=GRAPHIC&VERB=3"
-    table = Table.read(url, format='ascii')
+	url = f"https://api.skymapper.nci.org.au/public/siap/dr2/query?POS={ra},{dec}&SIZE={size}&BAND=g,r,i&FORMAT=GRAPHIC&VERB=3"
+	table = Table.read(url, format='ascii')
 
-    # sort filters from red to blue
-    flist = ["irg".find(x) for x in table['col3']]
-    table = table[np.argsort(flist)]
+	# sort filters from red to blue
+	flist = ["irg".find(x) for x in table['col3']]
+	table = table[np.argsort(flist)]
 
-    if len(table) > 3:
-        # pick 3 filters
-        table = table[[0,len(table)//2,len(table)-1]]
+	if len(table) > 3:
+		# pick 3 filters
+		table = table[[0,len(table)//2,len(table)-1]]
 
-    plt.rcParams.update({'font.size':12})
-    plt.figure(1,figsize=(3*fig_width,1*fig_width))
+	plt.rcParams.update({'font.size':12})
+	plt.figure(1,figsize=(3*fig_width,1*fig_width))
 
-    plt.subplot(131)
-    url = table[2][3]
-    r = requests.get(url)
-    im = Image.open(BytesIO(r.content))
-    plt.imshow(im,origin="upper",cmap="gray")
-    plt.title('SkyMapper g')
-    plt.xlabel('px (1.1")')
+	plt.subplot(131)
+	url = table[2][3]
+	r = requests.get(url)
+	im = Image.open(BytesIO(r.content))
+	plt.imshow(im,origin="upper",cmap="gray")
+	plt.title('SkyMapper g')
+	plt.xlabel('px (1.1")')
 
-    plt.subplot(132)
-    url = table[1][3]
-    r = requests.get(url)
-    im = Image.open(BytesIO(r.content))
-    plt.title('SkyMapper r')
-    plt.imshow(im,origin="upper",cmap="gray")
-    plt.xlabel('px (1.1")')
+	plt.subplot(132)
+	url = table[1][3]
+	r = requests.get(url)
+	im = Image.open(BytesIO(r.content))
+	plt.title('SkyMapper r')
+	plt.imshow(im,origin="upper",cmap="gray")
+	plt.xlabel('px (1.1")')
 
-    plt.subplot(133)
-    url = table[0][3]
-    r = requests.get(url)
-    im = Image.open(BytesIO(r.content))
-    plt.title('SkyMapper i')
-    plt.imshow(im,origin="upper",cmap="gray")
-    plt.xlabel('px (1.1")')
+	plt.subplot(133)
+	url = table[0][3]
+	r = requests.get(url)
+	im = Image.open(BytesIO(r.content))
+	plt.title('SkyMapper i')
+	plt.imshow(im,origin="upper",cmap="gray")
+	plt.xlabel('px (1.1")')
 
 def event_cutout(coords,size=50,phot=None):
 
-    if phot is None:
-        if coords[1] > -10:
-            phot = 'PS1'
-        else:
-            phot = 'SkyMapper'
-        
-    if phot == 'PS1':
-        _Panstarrs_phot(coords[0],coords[1],size)
+	if phot is None:
+		if coords[1] > -10:
+			phot = 'PS1'
+		else:
+			phot = 'SkyMapper'
+		
+	if phot == 'PS1':
+		_Panstarrs_phot(coords[0],coords[1],size)
 
-    elif phot.lower() == 'skymapper':
-        _Skymapper_phot(coords[0],coords[1],size)
+	elif phot.lower() == 'skymapper':
+		_Skymapper_phot(coords[0],coords[1],size)
 
-    else:
-        print('Photometry name invalid.')
+	else:
+		print('Photometry name invalid.')
 
 def Extract_fits(pixelfile):
-    """
-    Quickly extract fits
-    """
-    try:
-        hdu = fits.open(pixelfile)
-        return hdu
-    except OSError:
-        print('OSError ',pixelfile)
-        return
+	"""
+	Quickly extract fits
+	"""
+	try:
+		hdu = fits.open(pixelfile)
+		return hdu
+	except OSError:
+		print('OSError ',pixelfile)
+		return
 
 def regional_stats_mask(image,size=90,sigma=3,iters=10):
-    if size < 30:
-        print('!!! Region size is small !!!')
-    sx, sy = image.shape
-    X, Y = np.ogrid[0:sx, 0:sy]
-    regions = sy//size * (X//size) + Y//size
-    max_reg = np.max(regions)
+	if size < 30:
+		print('!!! Region size is small !!!')
+	sx, sy = image.shape
+	X, Y = np.ogrid[0:sx, 0:sy]
+	regions = sy//size * (X//size) + Y//size
+	max_reg = np.max(regions)
 
-    clip = np.zeros_like(image)
-    for i in range(max_reg+1):
-        rx,ry = np.where(regions == i)
-        m,me, s = sigma_clipped_stats(image[ry,rx],maxiters=iters)
-        cut_ind = np.where((image[rx,ry] >= me+sigma*s) | (image[rx,ry] <= me-sigma*s))
-        clip[rx[cut_ind],ry[cut_ind]] = 1
-    return clip
+	clip = np.zeros_like(image)
+	for i in range(max_reg+1):
+		rx,ry = np.where(regions == i)
+		m,me, s = sigma_clipped_stats(image[ry,rx],maxiters=iters)
+		cut_ind = np.where((image[rx,ry] >= me+sigma*s) | (image[rx,ry] <= me-sigma*s))
+		clip[rx[cut_ind],ry[cut_ind]] = 1
+	return clip
 
 
 
@@ -1013,10 +1021,10 @@ def subdivide_region(flux,ideal_size=90):
 	regions = np.zeros_like(flux)
 	counter = 0
 	for i in range(ysteps):
-	    for j in range(xsteps):
-	        regions[i*ystep:(i+1)*ystep,j*xstep:(j+1)*xstep] = counter
-	        counter += 1
-	        
+		for j in range(xsteps):
+			regions[i*ystep:(i+1)*ystep,j*xstep:(j+1)*xstep] = counter
+			counter += 1
+			
 	max_reg = np.max(regions)
 	return regions, max_reg, ystep, xstep
 
