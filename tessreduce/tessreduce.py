@@ -71,7 +71,7 @@ class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,
 				 reduce=True,align=True,diff=True,corr_correction=True,calibrate=True,sourcehunt=True,
-				 phot_method='aperture',imaging=False,parallel=True,num_cores=-1,diagnostic_plot=False,
+				 phot_method='aperture',imaging=False,parallel=True,num_cores=-1,diagnostic_plot=False,plot=True,
 				 savename=None,quality_bitmask='default',cache_dir=None,catalogue_path=False,
 				 prf_path=None,verbose=1):
 
@@ -203,6 +203,7 @@ class tessreduce():
 
 
 		# Plotting
+		self.plot = plot
 		self.diagnostic_plot = diagnostic_plot
 		self.savename = savename
 
@@ -1883,7 +1884,7 @@ class tessreduce():
 				self.field_calibrate()
 
 			
-			self.lc, self.sky = self.diff_lc(plot=True,diff=self.diff,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
+			self.lc, self.sky = self.diff_lc(plot=self.plot,diff=self.diff,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
 
 			if self.imaging:
 				# if self.verbose > 0:
