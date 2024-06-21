@@ -747,12 +747,12 @@ class tessreduce():
 		"""
 		
 		if self.parallel:
-			bkg_clip = Parallel(n_jobs=self.num_cores)(delayed(grad_clip_fill_bkg)(self.bkg[i],sigma,ideal_size) 
+			bkg_clip = Parallel(n_jobs=self.num_cores)(delayed(grad_clip_fill_bkg)(self.bkg[i],sigma,max_size) 
 													   for i in np.arange(len(self.bkg)))
 		else:
 			bkg_clip = []
 			for i in range(len(dist_mask)):
-				bkg_clip[i] = grad_clip_fill_bkg(self.bkg[i],ideal_size)
+				bkg_clip[i] = grad_clip_fill_bkg(self.bkg[i],max_size)
 		self.bkg = np.array(bkg_clip)
 
 
