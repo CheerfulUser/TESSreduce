@@ -731,6 +731,31 @@ class tessreduce():
 				bkg_clip[i] = clip_background(self.bkg[i],self.mask,ideal_size)
 		self.bkg = np.array(bkg_clip)
 
+	def _grad_bkg_clip(self,sigma=3,max_size=1000):
+		"""
+		DESCRIPTION
+
+		Parameters
+		----------
+		iters : TYPE, optional
+			DESCRIPTION. The default is 5.
+
+		Returns
+		-------
+		None
+
+		"""
+		
+		if self.parallel:
+			bkg_clip = Parallel(n_jobs=self.num_cores)(delayed(grad_clip_fill_bkg)(self.bkg[i],sigma,ideal_size) 
+													   for i in np.arange(len(self.bkg)))
+		else:
+			bkg_clip = []
+			for i in range(len(dist_mask)):
+				bkg_clip[i] = grad_clip_fill_bkg(self.bkg[i],ideal_size)
+		self.bkg = np.array(bkg_clip)
+
+
 	def get_ref(self,start = None, stop = None):
 		"""
 		Get reference image to use for subtraction and mask creation.

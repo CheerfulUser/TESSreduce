@@ -1072,3 +1072,79 @@ def clip_background(bkg,mask,sigma=3,kern_size=5):
 			#bkg2 = ZZ
 			b2[y,x] = bkg2
 	return b2
+
+def grad_clip_fill_bkg(bkg,sigma=3,max_size=1000):
+	a,b = np.gradient(bkg)
+	c = np.nanmax([abs(a),abs(b)],axis=0)
+	a_mean,a_med,a_std = sigma_clipped_stats(abs(a),maxiters=10)
+	b_mean,b_med,b_std = sigma_clipped_stats(abs(b),maxiters=10)
+	bp = (abs(b) - b_med) > 3*b_std
+	bp = fftconvolve(bp,np.ones((3,3)),mode='same') > 0.8
+	ap = (abs(a) - a_med) > 3*a_std
+	ap = fftconvolve(ap,np.ones((3,3)),mode='same') > 0.8
+
+	b_labeled, b_objects = label(bp) 
+	a_labeled, a_objects = label(ap) 
+
+	b_obj_size = []
+	for i in range(b_objects):
+		b_obj_size += [np.sum(b_labeled==i)]
+	b_obj_size = np.array(b_obj_size)
+
+	a_obj_size = []
+	for i in range(a_objects):
+		a_obj_size += [np.sum(a_labeled==i)]
+	a_obj_size = np.array(a_obj_size)
+
+	for i in range(a_objects):
+		if (a_obj_size[i] >= max_size) | (a_obj_size[i] <= 9):
+			a_labeled[a_labeled==i] = 0
+
+	for i in range(b_objects):
+		if (b_obj_size[i] >= max_size) | (b_obj_size[i] <= 9):
+			b_labeled[b_labeled==i] = 0
+			
+			
+	overlap = (a_labeled>0) & (b_labeled>0)
+	y,x = np.where(overlap)
+
+
+	good_a = np.unique(a_labeled[y,x])
+	good_b = np.unique(b_labeled[y,x])
+
+	a_ratio = []
+	for ind in good_a:
+		eh = a_labeled == ind
+		eh2 = eh * overlap
+		ratio = np.sum(eh2) / np.sum(eh)
+		a_ratio += [ratio]
+	a_ratio = np.array(a_ratio)
+		
+		
+	b_ratio = []
+	for ind in good_b:
+		eh = b_labeled == ind 
+		eh2 = eh * overlap
+		ratio = np.sum(eh2) / np.sum(eh)
+		b_ratio += [ratio]
+	b_ratio = np.array(b_ratio)
+
+
+	for i in good_a[a_ratio<0.2]: 
+		a_labeled[a_labeled==i] = 0
+	for i in good_b[b_ratio<0.2]: 
+		b_labeled[b_labeled==i] = 0
+	c = (a_labeled + b_labeled) > 0
+
+	c_labeled, c_objects = label(c==0) 
+	for i in range(c_objects):
+		if np.sum(c_labeled==i) < 10:
+			c[c_labeled==i] = 1
+	
+	#points = fftconvolve(c,np.ones((5,5)),mode='same')
+	points = c>0#oints > 0.8
+	data = deepcopy(flux)
+	data[points] = np.nan
+	estimate = inpaint.inpaint_biharmonic(data,points)
+	return estimate
+
