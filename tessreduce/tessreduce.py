@@ -1803,6 +1803,7 @@ class tessreduce():
 			
 			# calculate the background
 			self.background()
+			
 
 			if np.isnan(self.bkg).all():
 				# check to see if the background worked
@@ -1896,7 +1897,7 @@ class tessreduce():
 					print('background')
 				self.bkg_orig = deepcopy(self.bkg)
 				self.background(calc_qe = False,strap_iso = False,source_hunt=self._sourcehunt,gauss_smooth=1,interpolate=False)
-				self._clip_background()
+				self._grad_bkg_clip()
 				self.flux -= self.bkg
 				if self.corr_correction:
 					if self.verbose > 0:
