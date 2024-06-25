@@ -13,6 +13,7 @@ from io import BytesIO
 from scipy.ndimage import shift
 from scipy.ndimage import gaussian_filter
 from scipy.ndimage import convolve
+from scipy.ndimage import label
 from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
