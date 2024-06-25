@@ -1144,7 +1144,7 @@ def grad_clip_fill_bkg(bkg,sigma=3,max_size=1000):
 	
 	#points = fftconvolve(c,np.ones((5,5)),mode='same')
 	points = c>0#oints > 0.8
-	data = deepcopy(flux)
+	data = deepcopy(bkg)
 	data[points] = np.nan
 	estimate = inpaint.inpaint_biharmonic(data,points)
 	return estimate
