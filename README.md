@@ -25,7 +25,7 @@ obs = tr.sn_lookup('sn2018fub')
 ```
 
 ```python
-tess = tr.tessreduce(obs_list=obs,plot=False,reduce=True)
+tess = tr.tessreduce(obs_list=obs,plot=False)
 ```
 ![plot](./figs/fub.png)
 
@@ -36,13 +36,12 @@ ra = 10.127
 dec = -50.687
 sector = 2
 tess = tr.tessreduce(ra=ra,dec=dec,sector=sector)
-tess.reduce()
 ```
 
 
 # Flux calibration
 
-TESSreduce can calibrate TESS counts to physical flux, or AB magnitudes, by using PS1 data, If your field is dec > -30, and SkyMapper data for Southern field. IF you want a flux calibrated light curve then use:
+TESSreduce can calibrate TESS counts to physical flux, or AB magnitudes, by using PS1 data, If your field is dec >-30, and SkyMapper data for Southern field. IF you want a flux calibrated light curve then use:
 ```python
 tess.to_flux()
 ```
