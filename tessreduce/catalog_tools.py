@@ -122,7 +122,7 @@ def Get_Catalogue_External(ra,dec,size,Catalog = 'gaia'):
 	
 	return result 
 
-def Get_Gaia_External(tpf,magnitude_limit = 18, Offset = 10):
+def Get_Gaia_External(ra,dec,size,magnitude_limit = 18, Offset = 10):
 	"""
 	Get the coordinates and mag of all gaia sources in the field of view.
 
@@ -146,7 +146,7 @@ def Get_Gaia_External(tpf,magnitude_limit = 18, Offset = 10):
 
 	#result =  Get_Catalogue_External(ra,dec,size,Catalog = 'gaia')
 
-	result = Get_Catalogue(tpf,Catalog='gaia')
+	result = Get_Catalogue_External(ra,dec,size,Catalog='gaia')
 
 	result = result[result.Gmag < magnitude_limit]
 	if len(result) == 0:
@@ -170,7 +170,7 @@ def Get_Gaia_External(tpf,magnitude_limit = 18, Offset = 10):
 	Gmag = result['Gmag'].values
 	#Jmag = result['Jmag']
 	ind = (((coords[:,0] >= -10) & (coords[:,1] >= -10)) & 
-		   ((coords[:,0] < (tpf.shape[2] + 10)) & (coords[:,1] < (tpf.shape[1] + 10))))
+		   ((coords[:,0] < (size + 10)) & (coords[:,1] < (size + 10))))
 	coords = coords[ind]
 	radecs = radecs[ind]
 	Gmag = Gmag[ind]
@@ -222,8 +222,6 @@ def Get_Gaia(tpf, magnitude_limit = 18, Offset = 10):
 def mag2flux(mag,zp):
 	f = 10**(2/5*(zp-mag))
 	return f
-
-
 
 def PS1_to_TESS_mag(PS1,ebv = 0):
 	zp = 25
@@ -485,10 +483,24 @@ def Reformat_df(df):
 
 # 	gaia.to_csv(f'{save_path}/local_gaia_cat.csv',index=False)
 
-def external_save_cat(tpf,save_path,maglim):
+# def external_save_cat(tpf,save_path,maglim):
 	
-	tpf = lk.TessTargetPixelFile(tpf)
-	gp,gm, source = Get_Gaia_External(tpf,magnitude_limit=maglim)
+# 	tpf = lk.TessTargetPixelFile(tpf)
+# 	gp,gm, source = Get_Gaia_External(tpf,magnitude_limit=maglim)
+# 	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm,source]).T,columns=['ra','dec','mag','Source'])
+
+# 	gaia.to_csv(f'{save_path}/local_gaia_cat.csv',index=False)
+
+def external_save_cat(tpf,save_path,maglim):
+
+	tpfFits = fits.open(tpf)
+
+	ra = tpfFits[1].header['RA_OBJ']
+	dec = tpfFits[1].header['DEC_OBJ']
+	size = eval(tpfFits[1].header['TDIM8'])[0] 
+
+	gp,gm, source = Get_Gaia_External(ra,dec,size,magnitude_limit=maglim)
+	
 	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm,source]).T,columns=['ra','dec','mag','Source'])
 
 	gaia.to_csv(f'{save_path}/local_gaia_cat.csv',index=False)
