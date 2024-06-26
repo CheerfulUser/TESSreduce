@@ -122,7 +122,7 @@ def Get_Catalogue_External(ra,dec,size,Catalog = 'gaia'):
 	
 	return result 
 
-def Get_Gaia_External(ra,dec,size,magnitude_limit = 18, Offset = 10):
+def Get_Gaia_External(ra,dec,size,wcsObj,magnitude_limit = 18, Offset = 10):
 	"""
 	Get the coordinates and mag of all gaia sources in the field of view.
 
@@ -153,18 +153,18 @@ def Get_Gaia_External(ra,dec,size,magnitude_limit = 18, Offset = 10):
 		raise no_targets_found_message
 	radecs = np.vstack([result['RA_ICRS'], result['DE_ICRS']]).T
 	try:
-		coords = tpf.wcs.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
+		coords = wcsObj.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
 	except:
 		good_coords = []
 		for i,radec in enumerate(radecs):
 			try:
-				c = tpf.wcs.all_world2pix(radec[0],radec[1], 0)
+				c = wcsObj.all_world2pix(radec[0],radec[1], 0)
 				good_coords.append(i)
 			except:
 				pass
 		radecs = radecs[good_coords]
 		result = result.iloc[good_coords]
-		coords = tpf.wcs.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
+		coords = wcsObj.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
 
 	source = result['Source'].values
 	Gmag = result['Gmag'].values
@@ -499,7 +499,9 @@ def external_save_cat(tpf,save_path,maglim):
 	dec = tpfFits[1].header['DEC_OBJ']
 	size = eval(tpfFits[1].header['TDIM8'])[0] 
 
-	gp,gm, source = Get_Gaia_External(ra,dec,size,magnitude_limit=maglim)
+	wcsObj = WCS(tpfFits[2].header)
+
+	gp,gm, source = Get_Gaia_External(ra,dec,size,wcsObj,magnitude_limit=maglim)
 	
 	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm,source]).T,columns=['ra','dec','mag','Source'])
 
