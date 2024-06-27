@@ -7,6 +7,9 @@ from joblib import Parallel, delayed
 from copy import deepcopy
 
 def cor_minimizer(coeff,pix_lc,bkg_lc):
+    """
+    
+    """
     lc = pix_lc - coeff * bkg_lc
     ind = np.isfinite(lc) & np.isfinite(bkg_lc)
     #bkgnorm = bkg_lc/np.nanmax(bkg_lc)
