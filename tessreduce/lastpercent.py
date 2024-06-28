@@ -7,6 +7,23 @@ from joblib import Parallel, delayed
 from copy import deepcopy
 
 def cor_minimizer(coeff,pix_lc,bkg_lc):
+    """
+    Calculates the Pearson r correlation coefficent between the background subtracted lightcurve and the background itself. Takes inputs in a form for minimizing methods to be run on this function.
+
+    Parameters:
+    ----------
+    coeff: float
+        The multiplier on the background flux to be subtracted from the lightcurve. This is the variable being changed in any minimization.
+    pix_lc: ArrayLike
+        The full lightcurve of pixel flux data. Has a back 
+    bkg_lc: ArrayLike
+        The background lightcurve, to be multiplied by coeff and subtracted from pix_lc
+    
+    Returns:
+    -------
+    corr: float
+        The absolute value of the Pearson r correlation coefficent between the background subtracted lightcurve and the background. 
+    """
     lc = pix_lc - coeff * bkg_lc
     ind = np.isfinite(lc) & np.isfinite(bkg_lc)
     #bkgnorm = bkg_lc/np.nanmax(bkg_lc)
@@ -16,6 +33,28 @@ def cor_minimizer(coeff,pix_lc,bkg_lc):
     return abs(corr)
 
 def _parallel_correlation(pixel,bkg,arr,coord,smth_time):
+    """
+    Calculates the Pearson r correlation coefficent between the savgol filtered lightcurve and the upper 30% of the background, at the same indices.
+
+    Parameters:
+    ----------
+    pixel: ArrayLike
+        The flux lightcurve to be filtered and correlated.
+    bkg: ArrayLike
+        The background lightcurve.
+
+    arr: Not Used But Positional
+
+    coord: Not Used But Positional
+
+    smth_time: int
+        The window lenght of the savgol filter, must be <= size of pixel
+
+    Returns:
+    -------
+    corr: float
+        The absolute value of the Pearson r correlation coefficent between the filtered lightcurve and the upper 30% of the background, rounded to 2 decimal places.
+    """
     nn = np.isfinite(pixel)
     ff = savgol_filter(pixel[nn],smth_time,2)
     b = bkg[nn]
@@ -24,6 +63,21 @@ def _parallel_correlation(pixel,bkg,arr,coord,smth_time):
     return np.round(abs(corr),2)
 
 def _find_bkg_cor(tess,cores):
+    """
+    Takes a TESSreduce object and calculates the flux-background Pearson r correlation coefficent in parallel.
+
+    Parameters:
+    ----------
+    tess: TESSreduce Object
+        The TESSreduce object that is needing the correlation coefficents calculated.
+    cores: int
+        The number of cores to be used for parallel processing.
+    
+    Returns:
+    cors: ArrayLike 
+        The array of Pearson r correlation coefficents     
+
+    """
     y,x = np.where(np.isfinite(tess.ref))
     coord = np.c_[y,x]
     cors = np.zeros_like(tess.ref)
@@ -37,6 +91,26 @@ def _find_bkg_cor(tess,cores):
     return cors
 
 def _address_peaks(flux,bkg,std):  
+    """
+    Filters the upper 30% of the background values and their corresponding flux values. The fit to the background involves a minimization of the correlation coefficents and an interpolated savgol filter of the fluxes. The fluxes are modified by the same savgol filter, and the median of the lower 16% of the std. 
+
+    Parameters:
+    ----------
+    flux: ArrayLike
+        The flux array of interest
+    bkg: ArrayLike
+        The background flux array corresponding to flux.
+    std: ArrayLike
+        An array of the standard deviations of the background
+    
+    Returns:
+    -------
+    new_flux: ArrayLike
+        The modified flux array. If there is nothing to modify, new_flux==flux.
+    new_bkg: ArrayLike
+        The modified background array. If there is nothing to modify, new_bkg==bkg.
+    """
+    
     nn = np.isfinite(flux)
     b = bkg[nn]
     f = flux[nn]
@@ -85,6 +159,24 @@ def _address_peaks(flux,bkg,std):
     return new_flux, new_bkg
 
 def _calc_bkg_std(data,coord,d=6):
+    """
+    Calculates the background standard deviation of data in a rectangle of size d pixels around the coord point given. 
+
+    Parameters:
+    ----------
+    data: ArrayLike
+        A 2d Array of flux values to calculate the standard deviation of.
+    coord: ArrayLike (shape(2,))
+        The y, x coordinate to calculate the standard deviation around.
+    d: int, optional
+        The size of the rectangle to have the standard deviation calculates in. If the pairing of coord and d would result in a rectangle indexing outside of data, this is corrected for, so d is the maximum size of the rectangle, and will give a square box if no corrections are needed. Default is 6.
+
+    Returns:
+    ------- 
+    std: float
+        The standard deviation of data at and around coord.
+    """
+
     y = coord[0]; x = coord[1]
     ylow = y-d; yhigh=y+d+1
     if ylow < 0: 
@@ -102,6 +194,26 @@ def _calc_bkg_std(data,coord,d=6):
 
 
 def multi_correlation_cor(tess,limit=0.8,cores=7):
+    """
+    Corrects for correlation coefficents larger than limit. If the flux and the background of tess are correlated (absolute value of correlation coefficent, |r|) to a level higher than limit, a fit to minimize this coefficent is preformed, and the new background and flux values are returned
+
+    Parameters:
+    ----------
+    tess: TESSreduce Object
+
+    limit: float, optional
+        The largest acceptable |r| before any modifications are needed. Should be in range (0,1) for comparison to |r| to make any sense. Default is 0.8. 
+    cores: int, optional
+        The number of cores to use for multiprocessing. Default is 7.
+    
+    Returns:
+    -------
+    flux: ArrayLike
+        The modified flux array, after any needed changes have been made. If nothing is needed to be changed, or the modification breaks, flux == tess.flux.
+    bkg:
+        The modified background array, after any needed changes have been made. If nothing is needed to be changed, or the modification breaks, bkg == tess.bkg.
+
+    """
     cors = _find_bkg_cor(tess,cores=cores)
     y,x = np.where(cors > limit) 
     flux = deepcopy(tess.flux)
