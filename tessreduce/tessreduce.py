@@ -13,7 +13,7 @@ from PRF import TESS_PRF
 
 from copy import deepcopy
 
-from scipy.ndimage.filters import convolve
+from scipy.ndimage import convolve
 from scipy.ndimage import shift
 
 from sklearn.cluster import OPTICS
@@ -69,13 +69,14 @@ fig_width = fig_width_pt*inches_per_pt  # width in inches
 
 class tessreduce():
 
-	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,reduce=True,
-				 align=True,parallel=True,diff=True,plot=False,corr_correction=True,phot_method='aperture',savename=None,
-				 quality_bitmask='default',verbose=1,cache_dir=None,calibrate=True,harshmask_counts=None,
-				 sourcehunt=True,num_cores=-1,catalogue_path=False,imaging=False):
+	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,
+				 reduce=True,align=True,diff=True,corr_correction=True,calibrate=True,sourcehunt=True,
+				 phot_method='aperture',imaging=False,parallel=True,num_cores=-1,diagnostic_plot=False,plot=True,
+				 savename=None,quality_bitmask='default',cache_dir=None,catalogue_path=False,
+				 prf_path=None,verbose=1):
 
 		"""
-		DESCRIPTION
+		Class for extracting reduced TESS photometry around a target coordinate or event. 
 
 		Parameters
 		----------
@@ -132,38 +133,81 @@ class tessreduce():
 
 		Returns
 		-------
-		None.
+		reduce : bool, optional
+			Perform photometric reduction processes for the target region. The default is True.
+		align : bool, optional
+			Shift images to align stars with a reference frame. The default is True.
+		diff : bool, optional
+			Calculate difference imaging between each frame and a reference frame. The default is True.
+		corr_correction : bool, optional
+			Final correction step that operates on pixels which have high correlation between their lightcurve and the background. The default is True.
+		calibrate : bool, optional
+			Performs photometric calibration on the datacube using PS1 or SkyMapper data. The default is True.
+		sourcehunt : bool, optional
+			Searches for sources in the background and masks them. Prevents asteroids and other transients from being included in the background. The default is True.
+		imaging : bool, optional
+			Retrieves PanSTARRS or SkyMapper photometry of the region. The default is False.
+		parallel : bool, optional
+			Perform computation with parallel processing using 'num_cores'. The default is True.
+		num_cores : int, optional
+			Number of cores to run parallel process on. The default is -1 which is the max.
+		diagnostic_plot : bool, optional
+			During reduction, plot figures which outline various calculation steps, such as the image shifts over time or the zeropoint calculation. The default is False.
+		savename : str, optional
+			Save name for the outputs. The default is None.
+		quality_bitmask : str, optional
+			Parameter for lightkurve download of TESS TPF. The default is 'default'.
+		cache_dir : str, optional
+			Directory to cache files. The default is None.
+		catalogue_path : str, optional
+			Path to required catalogs for when using TESSreduce in offline mode. The default is False.
+		prf_path : str, optional
+			Path to local TESS PRF files. The default is currently a specific location on the OzStar supercomputer.
+		verbose : int, optional
+			Controls the level of verbosity, 0 is none, 1 is verbose. The default is 1.
 
 		"""
 
+		# Field Specific
 		self.ra = ra
 		self.dec = dec 
 		self.name = name
 		self.size = size
-		self.align = align
 		self.sector = sector
-		self.verbose = verbose
-		self.parallel = parallel
+		self.tpf = tpf
+
+		# Reduction Process Specific
+		self.align = align
 		self.calibrate = calibrate
 		self.corr_correction = corr_correction
 		self.diff = diff
-		self.tpf = tpf
+		self.imaging = imaging
+		self.parallel = parallel
+		if type(num_cores) == str:
+			self.num_cores = multiprocessing.cpu_count()
+		else:
+			self.num_cores = num_cores
 		self._assign_phot_method(phot_method)
-		self._harshmask_counts = harshmask_counts
 		self._sourcehunt = sourcehunt
+		self.verbose = verbose
+
+		# Offline Paths 
 		if catalogue_path is None:
 			catalogue_path = os.getcwd()
 		elif catalogue_path is False:
 			catalogue_path = None
 		self._catalogue_path = catalogue_path
 		self.num_cores = num_cores
+		self.imaging = imaging
+		self._prf_path = prf_path
 
 
 		# Plotting
 		self.plot = plot
+		self.diagnostic_plot = diagnostic_plot
 		self.savename = savename
 
-		# calculated 
+		# Calculated 
 		self.mask = None
 		self.shift = None
 		self.bkg = None
@@ -186,7 +230,7 @@ class tessreduce():
 		# light curve units 
 		self.lc_units = 'Counts'
 
-
+		# Generate coordinate information from 'obs_list'
 		if obs_list is not None:
 			if isinstance(obs_list,list):
 				obs_list = np.array(obs_list,dtype=object)
@@ -199,7 +243,19 @@ class tessreduce():
 				self.ra = obs_list['RA'].to_numpy()[0]
 				self.dec = obs_list['DEC'].to_numpy()[0]
 				self.sector = obs_list['Sector'].to_numpy()
+			if isinstance(obs_list,list):
+				obs_list = np.array(obs_list,dtype=object)
+				if len(obs_list.shape) > 1:
+					obs_list = obs_list[obs_list[:,3].astype('bool')][0]
+				self.ra = obs_list[0]
+				self.dec = obs_list[1]
+				self.sector = obs_list[2]
+			elif isinstance(obs_list, pd.DataFrame):
+				self.ra = obs_list['RA'].to_numpy()[0]
+				self.dec = obs_list['DEC'].to_numpy()[0]
+				self.sector = obs_list['Sector'].to_numpy()
 
+		# Generate coordinate information from 'tpf'
 		if tpf is not None:
 			if type(tpf) == str:
 				self.tpf = lk.TessTargetPixelFile(tpf)
@@ -208,76 +264,98 @@ class tessreduce():
 			self.ra = self.tpf.ra
 			self.dec = self.tpf.dec
 			self.size = self.tpf.flux.shape[1]
+			self.sector = self.tpf.sector
+			if self.sector is None:
+				self.sector = 30
 
+		# Retrieve TPF
 		elif self.check_coord():
 			if self.verbose>0:
 				print('getting TPF from TESScut')
-
-			if self._catalogue_path is None:
-				self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
-			else:
-				self.tpf = external_get_TESS()
-
-			self.flux = strip_units(self.tpf.flux)
-			self.wcs  = self.tpf.wcs
+			# if self._catalogue_path is None:
+			self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
+			self._get_gaia()
+			# else:
+			# 	self.tpf = external_get_TESS()
+			# 	self.flux = strip_units(self.tpf.flux)
+			# 	self.wcs  = self.tpf.wcs
 
 		self.ground = ground(ra = self.ra, dec = self.dec)
-		self._get_gaia()
 
 		if reduce:
 			self.reduce()
 
-
 	def check_coord(self):
-		'''
-		DESCRIPTION
+		"""
+		Checks if target coordinate / name input is valid.
 
-	    Returns
-	    -------
-	    bool
-	        DESCRIPTION.
+		Returns
+		-------
+		bool.
 
-	    '''
+		"""
+
 		if ((self.ra is None) | (self.dec is None)) & (self.name is None):
 			return False
 		else:
 			return True
 
 	def _get_gaia(self,maglim=21):
+		"""
+		Downloads a catalogue of stars in the target region from GAIA DR3.
+
+		Parameters
+		----------
+		maglim : int,float
+			Limiting magnitude in GAIA g band of stars to include in catalogue. The default is 21.
+		
+		Assigns
+		-------
+		gaia : DataFrame
+			Catalogue of GAIA sources inside cutout region.
+
+		"""
+		
+		# Get dataframe from Gaia around cutout
 		result = Get_Catalogue(self.tpf, Catalog = 'gaia')
 		result = result[result.Gmag < maglim]
 		result = result.rename(columns={'RA_ICRS': 'ra',
-                               'DE_ICRS': 'dec',
-                               'e_RA_ICRS': 'e_ra',
-                               'e_DE_ICRS': 'e_dec',})
+							   'DE_ICRS': 'dec',
+							   'e_RA_ICRS': 'e_ra',
+							   'e_DE_ICRS': 'e_dec',})
+		
+		# Convert star RA/DEC to pixel values and input into dataframe
 		x,y = self.wcs.all_world2pix(result['ra'].values,result['dec'].values,0)
 		result['x'] = x; result['y'] = y
+
+		# Restrict catalogue to only objects inside cutout
 		ind = (((x > 0) & (y > 0)) & 
 		 	  ((x < (self.flux.shape[2])) & (y < (self.flux.shape[1]))))
 		result = result.iloc[ind]
 
 		self.gaia = result
-		
 
 	def _assign_phot_method(self,phot_method):
-		'''
-		DESCRIPTION
+		"""
+		Assigns reduction photometry extraction method, currently aperture and PSF photometry is supported.
 
 		Parameters
 		----------
-		# phot_method : TYPE
-		# 	DESCRIPTION.
+		phot_method : str
+			Photometry extraction method, either 'aperture' or 'PSF'.
 
 		Raises
 		------
-		# ValueError
-		# 	DESCRIPTION.
+		ValueError
+			If phot_method is not in the above options.
 
-		Returns
+		Assigns
 		-------
-		None.
+		phot_method : str
+			Photometry extraction method.
 
-		'''
+		"""
+
 		if type(phot_method) == str:
 			method = phot_method.lower()
 			if (method == 'psf') | (method == 'aperture'):
@@ -289,43 +367,48 @@ class tessreduce():
 			m = 'phot_mehtod must be a string equal to either "psf", or "aperture".'
 			raise ValueError(m)
 
-	def get_TESS(self,ra=None,dec=None,name=None,Size=None,Sector=None,quality_bitmask='default',cache_dir=None):
-		'''
+	def get_TESS(self,ra=None,dec=None,name=None,size=None,sector=None,quality_bitmask='default',cache_dir=None):
+		"""
 		Use the lightcurve interface with TESScut to get an FFI cutout 
 		of a region around the given coords.
 
 		Parameters
 		----------
-		ra : float64, optional
-			RA of the centre point . The default is None.
-		dec : float64, optional
-			Dec of the centre point. The default is None.
-		name : TYPE, optional
-			DESCRIPTION. The default is None.
-		Size : int64, optional
-			Size of the cutout. The default is None.
-		Sector : int64, optional
+		ra : float, optional
+			RA of the cutout centre. The default is None.
+		dec : float, optional
+			Dec of the cutout centre. The default is None.
+		name : str, optional
+			Name of target event in TNF. The default is None.
+		size : int, optional
+			Size of the cutout (size x size). The default is None.
+		sector : int, optional
 			Sector to download. The default is None.
-		# quality_bitmask : TYPE, optional
-		# 	DESCRIPTION. The default is 'default'.
-		# cache_dir : TYPE, optional
-		# 	DESCRIPTION. The default is None.
+		quality_bitmask : str, optional
+		 	Parameter for Lightkurve download of TESS TPF. The default is 'default'.
+		cache_dir : str, optional
+			Directory to cache files. The default is None.
 
 		Raises
 		------
 		ValueError
-			DESCRIPTION.
+			If download process fails for whatever reason.
 
-		Returns
+		Assigns
 		-------
-		tpf : lightkurve target pixel file
-			tess ffi cutout of the selected region
+		tpf : Lightkurve Target Pixel File
+			Tess FFI cutout of the selected region.
+		flux : np.array
+			Array of flux values stored in tpf.
+		wcs : astropy WCS object
+			World coordinate system information of the cutout.
 
-		'''
+		"""
 		
-		if Sector is None:
-			Sector = self.sector
+		if sector is None:
+			sector = self.sector
 
+		# Find download file from Lightkurve based on coordinate / name
 		if (name is None) & (self.name is None):
 			if (ra is not None) & (dec is not None):
 				c = SkyCoord(ra=float(ra)*u.degree, dec=float(dec) *
@@ -333,84 +416,85 @@ class tessreduce():
 			else:
 				c = SkyCoord(ra=float(self.ra)*u.degree, dec=float(self.dec) *
 								u.degree, frame='icrs')
-			tess = lk.search_tesscut(c,sector=Sector)
+			tess = lk.search_tesscut(c,sector=sector)
 		else:
-			tess = lk.search_tesscut(name,sector=Sector)
-		if Size is None:
-			Size = self.size
+			tess = lk.search_tesscut(name,sector=sector)
+		if size is None:
+			size = self.size
 
-		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=Size,download_dir=cache_dir)
+		# Download 
+		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=size,download_dir=cache_dir)
+
+		# Check to ensure it succeeded
 		if tpf is None:
 			m = 'Failure in TESScut api, not sure why.'
 			raise ValueError(m)
+		
 		self.tpf  = tpf
-		self.flux = strip_units(tpf.flux)
+		self.flux = strip_units(tpf.flux)  # Stripping astropy units so only numbers are returned
 		self.wcs  = tpf.wcs
 
-	def harsh_mask(self):
-		'''
-		DESCRIPTION
-
-		Returns
-		-------
-		None.
-
-		'''
-
-		if self._harshmask_counts is not None:
-			ind = self.ref > self._harshmask_counts
-			self.ref[ind]
-
 	def make_mask(self,catalogue_path=None,maglim=19,scale=1,strapsize=6,useref=False):
-		'''
-		DESCRIPTION
+		"""
+		Generate a source mask for the cutout region from source catalogues.
+		Pixels that are found to include sources will not be included in background calculation.
 
-	    Parameters
-	    ----------
-	    # catalogue_path : TYPE, optional
-	    #     DESCRIPTION. The default is None.
-	    # maglim : float64, optional
-	    #     DESCRIPTION. The default is 19.
-	    # scale : TYPE, optional
-	    #     DESCRIPTION. The default is 1.
-	    # strapsize : TYPE, optional
-	    #     DESCRIPTION. The default is 6.
-	    # useref : TYPE, optional
-	    #     DESCRIPTION. The default is False.
+		Parameters
+		----------
+		catalogue_path : str, optional
+			Local path to source catalogue if using TESSreduce in offline mode. The default is None.
+		maglim : float, optional
+			Limiting magnitude of sources to include in the source mask. The default is 19.
+		scale : float, optional
+			Adjusts how much of each source the mask covers. The default is 1.
+		strapsize : float, optional
+			Width in pixels of the mask for TESS' electrical straps. The default is 6.
+		
+		Options
+		_______
+		useref : bool, optional
+			Generate the mask solely from the reference frame. The default is False.
 
-	    Returns
-	    -------
-	    None.
+		Assigns
+		-------
+		mask : np.array
+			A bitwise source mask for the cutout. Bits are as follows:
+				0 - background
+				1 - catalogue source
+				2 - saturated source
+				4 - strap mask
+				8 - bad pixel (not used)
 
-	    '''
+		"""
 
-		# make a diagnostic plot for mask
 		data = strip_units(self.flux)
+
+		# Generate mask from source catalogue
 		if useref:
 			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize,ref=self.ref)
 		else:
 			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize)
+
+		# Generate sky background as the inverse of mask
 		sky = ((mask & 1)+1 ==1) * 1.
 		sky[sky==0] = np.nan
 		tmp = np.nansum(data*sky,axis=(1,2))
 		tmp[tmp==0] = 1e12 # random big number 
 		ref = data[np.argmin(tmp)] * sky
+
+		# Correct for the electrical straps
 		try:
 			qe = correct_straps(ref,mask,parallel=True)
 		except:
 			qe = correct_straps(ref,mask,parallel=False)
-		#mm = Source_mask(ref * qe * sky)
-		#mm[np.isnan(mm)] = 0
-		#mm = mm.astype(int)
-		#mm = abs(mm-1)
-		#block out center 
+		
+
 		c1 = data.shape[1] // 2
 		c2 = data.shape[2] // 2
 		cmask = np.zeros_like(data[0],dtype=int)
 		cmask[c1,c2] = 1
 		kern = np.ones((5,5))
 		cmask = convolve(cmask,kern)
-		#mm = (mm*1) | cmask
 
 		fullmask = mask | cmask
 		sky = ((fullmask & 1)+1 ==1) * 1.
@@ -424,39 +508,45 @@ class tessreduce():
 			self.mask = fullmask
 		self._mask_cat = cat
 
-	def psf_source_mask(self,mask,sigma=5):
+	def psf_source_mask(self,sigma=5):
 		"""
-	    Parameters
-	    ----------
-	    # mask : TYPE
-	    #     DESCRIPTION.
-	    # sigma : TYPE, optional
-	    #     DESCRIPTION. The default is 5.
+		Generate a source mask by finding PSF like objects in each image.
 
-	    Returns
-	    -------
-	    # TYPE
-	    #     DESCRIPTION.
+		Parameters
+		----------
+		sigma : float, optional
+			Photometric spread of source considered for finding sources. The default is 5.
+
+		Assigns
+		-------
+		prf : TESS PRF Object
+			Pixel response function object for this cutout.
+
+		Returns 
+		-------
+		m : np.array
+			Source bitmask.
+			
 		"""
 
+		# Find PRF for cutout (depends on Sector, Camera, CCD, Pixel Row, Pixel Column)
 		if self._catalogue_path is not None:
-			prf_directory = '/fred/oz335/_local_TESS_PRFs'
 
 			if self.sector < 4:
-				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.sector,
 								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
-								localdatadir=f'{prf_directory}/Sectors1_2_3')
+								localdatadir=f'{self._prf_path}/Sectors1_2_3')
 			else:
-				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.sector,
 								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
-								localdatadir=f'{prf_directory}/Sectors4+')
+								localdatadir=f'{self._prf_path}/Sectors4+')
 		else:
-			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
+			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.sector,
 				   	   		self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
 		
 		self.prf =  prf.locate(5,5,(11,11))
 
-		
+		# Iterate through frames to find PRF like sources
 		data = (self._flux_aligned - self.ref) #* mask
 		if self.parallel:
 			try:
@@ -474,39 +564,47 @@ class tessreduce():
 				m[i] = par_psf_source_mask(data[i],self.prf,sigma)
 		return m * 1.0
 
-	def background(self,calc_qe=True, strap_iso=True,source_hunt=False,gauss_smooth=2,interpolate=True):
-		'''
-		DESCRIPTION
+	def background(self,gauss_smooth=2,calc_qe=True, strap_iso=True,source_hunt=False,interpolate=True):
+		"""
+		Calculate the temporal and spatial variation in the background.
 
 		Parameters
 		----------
-		# calc_qe : TYPE, optional
-		#     DESCRIPTION. The default is True.
-		# strap_iso : TYPE, optional
-		#     DESCRIPTION. The default is True.
-		# source_hunt : TYPE, optional
-		#     DESCRIPTION. The default is False.
-		# gauss_smooth : TYPE, optional
-		#     DESCRIPTION. The default is 2.
-		# interpolate : TYPE, optional
-		#     DESCRIPTION. The default is True.
-		
-		Returns
+		gauss_smooth : float, optional
+			Smoothing factor for the background smoothing. The default is 2.
+
+		Options
 		-------
-		None.
-		'''
+		calc_qe : bool, optional
+			Calculate the quantum efficiency in TESS' electrical straps. The default is True.
+		strap_iso : bool, optional
+			Isolate the electrical straps for calculation. The default is True.
+		source_hunt : bool, optional
+			Using PSF, search for sources in each frame that may not have been masked out by the catalogue source mask. The default is False.
+		interpolate : bool, optional
+			Interpolate over masked out objects when calculating background. The default is True.
+		
+		Assigns
+		-------
+		bkg : np.array
+			Spatially varying background for each frame.
+
+		"""
+
 		if strap_iso:
 			m = (self.mask == 0) * 1.
 		else:
 			m = ((self.mask & 1 == 0) & (self.mask & 2 == 0) ) * 1.
 		m[m==0] = np.nan
 
+		# Find extra sources not found in catalogue mask
 		if source_hunt:
-			sm = self.psf_source_mask(m)
+			sm = self.psf_source_mask()
 			sm[sm==0] = np.nan
 			m = sm * m
 		self._bkgmask = m
 
+		# Calculate the smooth background 
 		if (self.flux.shape[1] > 30) & (self.flux.shape[2] > 30):
 			flux = strip_units(self.flux)
 
@@ -521,6 +619,7 @@ class tessreduce():
 			self.small_background()
 			bkg_smth = self.bkg
 		
+		# Calculate quantum efficiency 
 		if calc_qe:
 			strap = (self.mask == 4) * 1.0
 			strap[strap==0] = np.nan
@@ -538,27 +637,27 @@ class tessreduce():
 			straps[straps==0] = 1
 
 			value = np.nanmedian(straps,axis=1)
-
 			qe = np.ones_like(bkg_smth) * value[:,np.newaxis,:]
 			bkg = bkg_smth * qe
 			self.qe = qe
 		else:
 			bkg = np.array(bkg_smth)
-		self.bkg = bkg 
-
+		self.bkg = bkg
 
 	def small_background(self):
-		'''
-	    DESCRIPTION
+		"""
+		A different background calculation for if the cutout is too small for high quality results using default process.
 
-	    Returns
-	    -------
-	    None.
+		Assigns
+		-------
+		bkg : np.array
+			Spatially varying background for each frame.
 
-	    '''
+		"""
+		
 		bkg = np.zeros_like(self.flux)
 		flux = strip_units(self.flux)
-		lim = 2*np.nanmin(flux,axis=(1,2))#np.nanpercentile(flux,1,axis=(1,2))
+		lim = 2*np.nanmin(flux,axis=(1,2)) #np.nanpercentile(flux,1,axis=(1,2))
 		ind = flux > lim[:,np.newaxis,np.newaxis]
 		flux[ind] = np.nan
 		val = np.nanmedian(flux,axis=(1,2))
@@ -566,19 +665,21 @@ class tessreduce():
 		self.bkg = bkg
 
 	def _bkg_round_3(self,iters=5):
-		'''
-	    DESCRIPTION
+		"""
+		Third background calculation.
 
-	    Parameters
-	    ----------
-	    iters : TYPE, optional
-	        DESCRIPTION. The default is 5.
+		Parameters
+		----------
+		iters : int, optional
+			Number of iterations to clean background. The default is 5.
 
-	    Returns
-	    -------
-	    None
+		Assigns
+		-------
+		bkg : np.array
+			Spatially varying background for each frame.
 
-	    '''
+		"""
+		
 		for i in range(iters):
 			tb = self.bkg * self._bkgmask
 			m = np.nanmedian(tb,axis=(1,2))
@@ -606,23 +707,75 @@ class tessreduce():
 					bkg_3[i] = parallel_bkg3(self.bkg[i],dist_mask[i])
 			self.bkg = np.array(bkg_3)
 
+	def _clip_background(self,sigma=5,ideal_size=90):
+		"""
+		DESCRIPTION
+
+		Parameters
+		----------
+		iters : TYPE, optional
+			DESCRIPTION. The default is 5.
+
+		Returns
+		-------
+		None
+
+		"""
+		
+		if self.parallel:
+			bkg_clip = Parallel(n_jobs=self.num_cores)(delayed(clip_background)(self.bkg[i],self.mask,sigma,ideal_size) 
+													   for i in np.arange(len(self.bkg)))
+		else:
+			bkg_clip = []
+			for i in range(len(dist_mask)):
+				bkg_clip[i] = clip_background(self.bkg[i],self.mask,ideal_size)
+		self.bkg = np.array(bkg_clip)
+
+	def _grad_bkg_clip(self,sigma=3,max_size=1000):
+		"""
+		DESCRIPTION
+
+		Parameters
+		----------
+		iters : TYPE, optional
+			DESCRIPTION. The default is 5.
+
+		Returns
+		-------
+		None
+
+		"""
+		
+		if self.parallel:
+			bkg_clip = Parallel(n_jobs=self.num_cores)(delayed(grad_clip_fill_bkg)(self.bkg[i],sigma,max_size) 
+													   for i in np.arange(len(self.bkg)))
+		else:
+			bkg_clip = []
+			for i in range(len(dist_mask)):
+				bkg_clip[i] = grad_clip_fill_bkg(self.bkg[i],max_size)
+		self.bkg = np.array(bkg_clip)
+
+
 	def get_ref(self,start = None, stop = None):
-		'''
+		"""
 		Get reference image to use for subtraction and mask creation.
 		The image is made from all images with low background light.
 
 		Parameters
 		----------
-		start : TYPE, optional
-			DESCRIPTION. The default is None.
-		stop : TYPE, optional
-			DESCRIPTION. The default is None.
+		start : int, optional
+			First frame to consider for reference determination. The default is None.
+		stop : int, optional
+			Final frame to consider for reference determination. The default is None.
 
-		Returns
+		Assigns
 		-------
-		None.
+		ref : np.array
+			Reference image for the cutout.
+		ref_ind : int
+			Index pointing to which frame was used for reference.
 
-		'''
+		"""
 
 		data = strip_units(self.flux)
 		if (start is None) & (stop is None):
@@ -652,27 +805,29 @@ class tessreduce():
 		self.ref = reference
 		self.ref_ind = ref_ind
 
+	def centroids_shifts_starfind(self,plot=None,savename=None):
+		"""
+		Calculate the centroid shifts of sources for time series images using Starfinding based on TESS PRF.
 
-	def centroids_DAO(self,plot=None,savename=None):
-		'''
-		Calculate the centroid shifts of time series images.
-
-		Parameters
+		Options
 		----------
-		plot : TYPE, optional
-			DESCRIPTION. The default is None.
-		savename : TYPE, optional
-			DESCRIPTION. The default is None.
+		plot : bool, optional
+			Plot a diagnostic figure for the shift calculation. The default is None.
+		savename : str, optional
+			Save name for output. The default is None.
 
-		Returns
+		Assigns
 		-------
-		None.
+		shift : np.array
+			Median x,y shift of sources over the time series.
 
-		'''
+		"""
+
 		if plot is None:
-			plot = self.plot
+			plot = self.diagnostic_plot
 		if savename is None:
 			savename = self.savename
+
 		# hack solution for new lightkurve
 		f = strip_units(self.flux)
 		m = self.ref.copy()
@@ -685,18 +840,14 @@ class tessreduce():
 		
 		finder = StarFinder(2*std,kernel=self.prf,exclude_border=True)
 		s = finder.find_stars(m-med)
-		#daofind = DAOStarFinder(fwhm=2.0, threshold=10.*std,exclude_border=True)
-		#s = daofind(m - med)
+		
 		mx = s['xcentroid']
 		my = s['ycentroid']
 		x_mid = self.flux.shape[2] / 2
 		y_mid = self.flux.shape[1] / 2
-		#ind = #((abs(mx - x_mid) <= 30) & (abs(my - y_mid) <= 30) & 
-		#ind = (abs(mx - x_mid) >= 5) & (abs(my - y_mid) >= 5)
-		#self._dat_sources = s[ind].to_pandas()
+		
 		self._dat_sources = s.to_pandas()
-		#mx = mx[ind]
-		#my = my[ind]
+		
 		if self.parallel:
 			shifts = Parallel(n_jobs=self.num_cores)(
 				delayed(Calculate_shifts)(frame,mx,my,finder) for frame in f)
@@ -713,9 +864,9 @@ class tessreduce():
 		smooth = Smooth_motion(meds,self.tpf)
 		nans = np.nansum(f,axis=(1,2)) ==0
 		smooth[nans] = np.nan
-		self.shift = meds#smooth
+		self.shift = meds #smooth
+		
 		if plot:
-			#meds[meds==0] = np.nan
 			t = self.tpf.time.mjd
 			ind = np.where(np.diff(t) > .5)[0]
 			smooth[ind,:] = np.nan
@@ -724,45 +875,45 @@ class tessreduce():
 			plt.plot(t,smooth[:,1],'-',label='Smoothed row shift')
 			plt.plot(t,meds[:,0],'.',label='Col shift',alpha =0.5)
 			plt.plot(t,smooth[:,0],'-',label='Smoothed col shift')
-			#plt.plot(thing,'+')
 			plt.ylabel('Shift (pixels)',fontsize=15)
 			plt.xlabel('Time (MJD)',fontsize=15)
 			plt.legend()
-			#plt.tight_layout()
 			plt.show()
 			if savename is not None:
 				plt.savefig(savename+'_disp.pdf', bbox_inches = "tight")
 		
 	def fit_shift(self,plot=None,savename=None):
-		'''
-	    Calculate the centroid shifts of time series images.
+		"""
+		Calculate the centroid shifts of sources for time series images 
+		by finding the shifts which minimize the difference between frames and reference.
 
-	    Parameters
-	    ----------
-	    plot : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    savename : TYPE, optional
-	        DESCRIPTION. The default is None.
+		Options
+		----------
+		plot : bool, optional
+			Plot a diagnostic figure for the shift calculation. The default is None.
+		savename : str, optional
+			Save name for output. The default is None.
 
-	    Returns
-	    -------
-	    None.
+		Assigns
+		-------
+		shift : np.array
+			Median x,y shift of sources over the time series.
 
-	    '''
+		"""
 
 		if plot is None:
-			plot = self.plot
+			plot = self.diagnostic_plot
 		if savename is None:
 			savename = self.savename
 		
 		sources = ((self.mask & 1) ==1) * 1.0 - (self.mask & 2)
 		sources[sources<=0] = 0
 
-		f = self.flux #* sources[np.newaxis,:,:]
+		f = self.flux 
 		m = self.ref.copy() * sources
 		m[m==0] = np.nan
-		if self.parallel:
 
+		if self.parallel:
 			shifts = Parallel(n_jobs=self.num_cores)(
 				delayed(difference_shifts)(frame,m) for frame in f)
 			shifts = np.array(shifts)
@@ -771,47 +922,40 @@ class tessreduce():
 			for i in range(len(f)):
 				shifts[i,:] = difference_shifts(f[i],m)
 
-
-		#smooth = Smooth_motion(meds,self.tpf)
-		#nans = np.nansum(f,axis=(1,2)) ==0
-		#smooth[nans] = np.nan
 		if self.shift is not None:
 			self.shift += shifts
 		else:
 			self.shift = shifts
+
 		if plot:
-			#meds[meds==0] = np.nan
 			t = self.tpf.time.mjd
 			ind = np.where(np.diff(t) > .5)[0]
 			shifts[ind,:] = np.nan
 			plt.figure(figsize=(1.5*fig_width,1*fig_width))
 			plt.plot(t,shifts[:,0],'.',label='Row shift',alpha =0.5)
 			plt.plot(t,shifts[:,1],'.',label='Col shift',alpha =0.5)
-
 			plt.ylabel('Shift (pixels)',fontsize=15)
 			plt.xlabel('Time (MJD)',fontsize=15)
 			plt.legend()
-			#plt.tight_layout()
 			plt.show()
 			if savename is not None:
 				plt.savefig(savename+'_disp_corr.pdf', bbox_inches = "tight")
 
-
-
 	def shift_images(self,median=False):
-		'''
-		Shifts data by the values given in offset. Breaks horribly if data is all 0.
+		"""
+		Shifts each target image to the reference using the values given in offset. Breaks horribly if data is all 0.
 
-		Parameters
+		Options
 		----------
-		median : TYPE, optional
-			DESCRIPTION. The default is False.
+		median : bool, optional
+			Shift the reference to the target images using the reverse of the shifts. The default is False.
 
-		Returns
+		Assigns
 		-------
-		None.
+		flux : np.array
+			Array of flux values now shifted to be best alignment.
 
-		'''
+		"""
 
 		shifted = self.flux.copy()
 		nans = ~np.isfinite(shifted)
@@ -821,26 +965,15 @@ class tessreduce():
 				if np.nansum(abs(shifted[i])) > 0:
 					shifted[i] = shift(self.ref,[-self.shift[i,1],-self.shift[i,0]])
 			self.flux -= shifted
+
 		else:
 			for i in range(len(shifted)):
 				if np.nansum(abs(shifted[i])) > 0:
-					#translation = np.float64([[1,0,self.shift[i,0]],[0,1, self.shift[i,1]]])
-					#shifted[i] = cv2.warpAffine(shifted[i], translation, shifted[i].shape[::-1], flags=cv2.INTER_CUBIC,borderValue=0)
 					shifted[i] = shift(shifted[i],[self.shift[i,0],self.shift[i,1]],mode='nearest',order=5)#mode='constant',cval=np.nan)
-			#shifted[0,:] = np.nan
-			#shifted[-1,:] = np.nan
-			#shifted[:,0] = np.nan
-			#shifted[:,-1] = np.nan
 			self.flux = shifted
-			
-
-				#print(psutil.virtual_memory().available * 100 / psutil.virtual_memory().total)
-		#shifted[nans] = np.nan
-
-
-
+		
 	def bin_data(self,lc=None,time_bin=6/24,frames = None):
-		'''
+		"""
 		Bin a light curve to the desired duration specified by bin_size
 
 		Parameters
@@ -857,7 +990,7 @@ class tessreduce():
 		binlc : TYPE
 			DESCRIPTION.
 
-		'''
+		"""
 
 		if lc is None:
 			lc = self.lc
@@ -899,25 +1032,25 @@ class tessreduce():
 
 	def bin_flux(self,flux=None,time_bin=6/24,frames = None):
 		"""
-	    Bin a light curve flux to the desired duration specified by bin_size
+		Bin a light curve flux to the desired duration specified by bin_size
 
-	    Parameters
-	    ----------
-	    flux : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    time_bin : TYPE, optional
-	        DESCRIPTION. The default is 6/24.
-	    frames : TYPE, optional
-	        DESCRIPTION. The default is None.
+		Parameters
+		----------
+		flux : TYPE, optional
+			DESCRIPTION. The default is None.
+		time_bin : TYPE, optional
+			DESCRIPTION. The default is 6/24.
+		frames : TYPE, optional
+			DESCRIPTION. The default is None.
 
-	    Returns
-	    -------
-	    binf : TYPE
-	        DESCRIPTION.
-	    bint : TYPE
-	        DESCRIPTION.
+		Returns
+		-------
+		binf : TYPE
+			DESCRIPTION.
+		bint : TYPE
+			DESCRIPTION.
 
-	    """
+		"""
 
 		if flux is None:
 			flux = self.flux
@@ -951,50 +1084,50 @@ class tessreduce():
 	def diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
 				sky_in=5,sky_out=9,phot_method=None,plot=None,savename=None,mask=None,diff = True):
 		"""
-	    Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
+		Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
 		then it degaults to the centre. Sky flux is calculated with an annulus aperture surrounding 
 		the target aperture and subtracted from the source. The sky aperture undergoes sigma clipping
 		to remove pixels that are poorly subtracted and contain other sources.
 
-	    Parameters
-	    ----------
-	    time : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    x : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    y : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    ra : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    dec : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    tar_ap : TYPE, optional
-	        DESCRIPTION. The default is 3.
-	    sky_in : TYPE, optional
-	        DESCRIPTION. The default is 5.
-	    sky_out : TYPE, optional
-	        DESCRIPTION. The default is 9.
-	    phot_method : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    plot : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    savename : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    mask : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    diff : TYPE, optional
-	        DESCRIPTION. The default is True.
+		Parameters
+		----------
+		time : TYPE, optional
+			DESCRIPTION. The default is None.
+		x : TYPE, optional
+			DESCRIPTION. The default is None.
+		y : TYPE, optional
+			DESCRIPTION. The default is None.
+		ra : TYPE, optional
+			DESCRIPTION. The default is None.
+		dec : TYPE, optional
+			DESCRIPTION. The default is None.
+		tar_ap : TYPE, optional
+			DESCRIPTION. The default is 3.
+		sky_in : TYPE, optional
+			DESCRIPTION. The default is 5.
+		sky_out : TYPE, optional
+			DESCRIPTION. The default is 9.
+		phot_method : TYPE, optional
+			DESCRIPTION. The default is None.
+		plot : TYPE, optional
+			DESCRIPTION. The default is None.
+		savename : TYPE, optional
+			DESCRIPTION. The default is None.
+		mask : TYPE, optional
+			DESCRIPTION. The default is None.
+		diff : TYPE, optional
+			DESCRIPTION. The default is True.
 
-	    Returns
-	    -------
-	    lc : TYPE
-	        DESCRIPTION.
-	    sky : TYPE
-	        DESCRIPTION.
+		Returns
+		-------
+		lc : TYPE
+			DESCRIPTION.
+		sky : TYPE
+			DESCRIPTION.
 
-	    """
+		"""
 		if plot is None:
-			plot = self.plot
+			plot = self.diagnostic_plot
 		if savename is None:
 			savename = self.savename
 		if phot_method is None:
@@ -1056,6 +1189,11 @@ class tessreduce():
 		if phot_method == 'psf':
 			tar = self.psf_photometry(x,y,diff=diff)
 			tar_err = sky_std # still need to work this out
+		nan_ind = np.where(np.nansum(self.flux,axis=(1,2))==0,True,False)
+		nan_ind[self.ref_ind] = False
+		tar[nan_ind] = np.nan
+		tar_err[nan_ind] = np.nan
+
 		#tar[tar_err > 100] = np.nan
 		#sky_med[tar_err > 100] = np.nan
 		if self.tpf is not None:
@@ -1072,27 +1210,27 @@ class tessreduce():
 
 	def dif_diag_plot(self,ap_tar,ap_sky,lc=None,sky=None,data=None):
 		"""
-	    Makes a plot showing the target light curve, sky, and difference image at the brightest point
+		Makes a plot showing the target light curve, sky, and difference image at the brightest point
 		in the target lc.
 
-	    Parameters
-	    ----------
-	    ap_tar : TYPE
-	        DESCRIPTION.
-	    ap_sky : TYPE
-	        DESCRIPTION.
-	    lc : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    sky : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    data : TYPE, optional
-	        DESCRIPTION. The default is None.
+		Parameters
+		----------
+		ap_tar : TYPE
+			DESCRIPTION.
+		ap_sky : TYPE
+			DESCRIPTION.
+		lc : TYPE, optional
+			DESCRIPTION. The default is None.
+		sky : TYPE, optional
+			DESCRIPTION. The default is None.
+		data : TYPE, optional
+			DESCRIPTION. The default is None.
 
-	    Returns
-	    -------
-	    Figure.
+		Returns
+		-------
+		Figure.
 
-	    """
+		"""
 
 		if lc is None:
 			lc = self.lc
@@ -1103,7 +1241,7 @@ class tessreduce():
 		plt.figure(figsize=(3*fig_width,1*fig_width))
 		plt.subplot(121)
 		plt.fill_between(lc[0],sky[1]-sky[2],sky[1]+sky[2],alpha=.5,color='C1')
-		plt.plot(sky[0],sky[1],'C1.',label='Sky')
+		plt.plot(sky[0],sky[1],'C3.',label='Sky')
 		plt.fill_between(lc[0],lc[1]-lc[2],lc[1]+lc[2],alpha=.5,color='C0')
 		plt.plot(lc[0],lc[1],'C0.',label='Target')
 		binned = self.bin_data(lc=lc)
@@ -1434,8 +1572,8 @@ class tessreduce():
 		inds = np.arange(0,len(xpos))
 		if self.parallel:
 			prfs, cutouts = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_initialise)(self.flux,self.tpf.camera,self.tpf.ccd,
-																   						     self.tpf.sector,self.tpf.column,self.tpf.row,
-																						     size,[xpos[i],ypos[i]],time_ind) for i in inds))
+																   							 self.tpf.sector,self.tpf.column,self.tpf.row,
+																							 size,[xpos[i],ypos[i]],time_ind) for i in inds))
 		else:
 			prfs = []
 			cutouts = []
@@ -1462,25 +1600,26 @@ class tessreduce():
 
 	def psf_photometry(self,xPix,yPix,size=5,snap='brightest',ext_shift=True,plot=False,diff=None):
 		"""
-	    Main PSF Photometry function
+		Main PSF Photometry function
 
-	    Parameters
-	    ----------
-	    xPix : TYPE
-	        x pixel location of target region.
-	    yPix : TYPE
-	        y pixel location of target region.
-	    size : int, optional
-	        Size of cutout to use (should be odd). The default is 5.
-	    repFact : TYPE, optional
-	        Super sampling factor for modelling. The default is 10.
-	    snap : TYPE, optional
-	        Determines how psf position is fit.. The default is 'brightest'.
+		Parameters
+		----------
+		xPix : TYPE
+			x pixel location of target region.
+		yPix : TYPE
+			y pixel location of target region.
+		size : int, optional
+			Size of cutout to use (should be odd). The default is 5.
+		repFact : TYPE, optional
+			Super sampling factor for modelling. The default is 10.
+		snap : TYPE, optional
+			Determines how psf position is fit.. The default is 'brightest'.
 			Valid Options:
 				None = each frame's position will be fit and used when fitting for flux
 				'brightest' = the position of the brightest cutout frame will be applied to all subsequent frames
 				int = providing an integer allows for explicit choice of which frame to use as position reference
 				'ref' = use the reference as the position fit point
+<<<<<<< HEAD
 	    ext_shift : TYPE, optional
 	        DESCRIPTION. The default is True.
 	    plot : bool, optional
@@ -1492,8 +1631,21 @@ flux_to_jansky
 	    -------
 	    flux : numpy array
 	        Flux light curve across entire sector..
+=======
+		ext_shift : TYPE, optional
+			DESCRIPTION. The default is True.
+		plot : bool, optional
+			Whether plots will a. The default is False.
+		diff : TYPE, optional
+			DESCRIPTION. The default is None.
 
-	    """
+		Returns
+		-------
+		flux : numpy array
+			Flux light curve across entire sector..
+>>>>>>> upstream/dev
+
+		"""
 		
 		if diff is None:
 			diff = self.diff
@@ -1573,62 +1725,62 @@ flux_to_jansky
 				diff_lc = None,diff=None,verbose=None, tar_ap=3,sky_in=7,sky_out=11,
 				moving_mask=None,mask=None,double_shift=False,corr_correction=None,test_seed=None,imaging=None):
 		"""
-	    Reduce the images from the target pixel file and make a light curve with aperture photometry.
+		Reduce the images from the target pixel file and make a light curve with aperture photometry.
 		This background subtraction method works well on tpfs > 50x50 pixels.
 
-	    Parameters
-	    ----------
-	    aper : None, list or numpy array, optional
-	        Aperature to do photometry on. The default is None.
-	    align : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    parallel : bool, optional
-	        If True parallel processing will be used for background estimation and centroid shifts. The default is None.
-	    calibrate : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    bin_size : int, optional
-	        If > 1 then the lightcurve will be binned by that amount. The default is 0.
-	    plot : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    mask_scale : TYPE, optional
-	        DESCRIPTION. The default is 1.
-	    ref_start : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    ref_stop : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    diff_lc : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    diff : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    verbose : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    tar_ap : TYPE, optional
-	        DESCRIPTION. The default is 3.
-	    sky_in : TYPE, optional
-	        DESCRIPTION. The default is 7.
-	    sky_out : TYPE, optional
-	        DESCRIPTION. The default is 11.
-	    moving_mask : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    mask : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    double_shift : TYPE, optional
-	        DESCRIPTION. The default is False.
-	    corr_correction : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    test_seed : TYPE, optional
-	        DESCRIPTION. The default is None.
+		Parameters
+		----------
+		aper : None, list or numpy array, optional
+			Aperature to do photometry on. The default is None.
+		align : TYPE, optional
+			DESCRIPTION. The default is None.
+		parallel : bool, optional
+			If True parallel processing will be used for background estimation and centroid shifts. The default is None.
+		calibrate : TYPE, optional
+			DESCRIPTION. The default is None.
+		bin_size : int, optional
+			If > 1 then the lightcurve will be binned by that amount. The default is 0.
+		plot : TYPE, optional
+			DESCRIPTION. The default is None.
+		mask_scale : TYPE, optional
+			DESCRIPTION. The default is 1.
+		ref_start : TYPE, optional
+			DESCRIPTION. The default is None.
+		ref_stop : TYPE, optional
+			DESCRIPTION. The default is None.
+		diff_lc : TYPE, optional
+			DESCRIPTION. The default is None.
+		diff : TYPE, optional
+			DESCRIPTION. The default is None.
+		verbose : TYPE, optional
+			DESCRIPTION. The default is None.
+		tar_ap : TYPE, optional
+			DESCRIPTION. The default is 3.
+		sky_in : TYPE, optional
+			DESCRIPTION. The default is 7.
+		sky_out : TYPE, optional
+			DESCRIPTION. The default is 11.
+		moving_mask : TYPE, optional
+			DESCRIPTION. The default is None.
+		mask : TYPE, optional
+			DESCRIPTION. The default is None.
+		double_shift : TYPE, optional
+			DESCRIPTION. The default is False.
+		corr_correction : TYPE, optional
+			DESCRIPTION. The default is None.
+		test_seed : TYPE, optional
+			DESCRIPTION. The default is None.
 
-	    Raises
-	    ------
-	    ValueError
-	        DESCRIPTION.
+		Raises
+		------
+		ValueError
+			DESCRIPTION.
 
-	    Returns
-	    -------
-	    None.
+		Returns
+		-------
+		None.
 
-	    """
+		"""
 		# make reference
 		try:
 			self._update_reduction_params(align, parallel, calibrate, plot, diff_lc, diff, verbose,corr_correction,imaging)
@@ -1662,8 +1814,10 @@ flux_to_jansky
 			# calculate background for each frame
 			if self.verbose > 0:
 				print('calculating background')
+			
 			# calculate the background
 			self.background()
+			
 
 			if np.isnan(self.bkg).all():
 				# check to see if the background worked
@@ -1683,10 +1837,10 @@ flux_to_jansky
 
 			if self.align:
 				if self.verbose > 0:
-					print('Aligning images')
+					print('aligning images')
 				
 				try:
-					#self.centroids_DAO()
+					#self.centroids_shifts_starfind()
 					#if double_shift:
 					#self.shift_images()
 					#self.ref = deepcopy(self.flux[self.ref_ind])
@@ -1696,7 +1850,7 @@ flux_to_jansky
 				except:
 					print('Something went wrong, switching to serial')
 					self.parallel = False
-					#self.centroids_DAO()
+					#self.centroids_shifts_starfind()
 					self.fit_shift()
 					#self.fit_shift()
 				#self.fit_shift()
@@ -1757,20 +1911,20 @@ flux_to_jansky
 					print('background')
 				self.bkg_orig = deepcopy(self.bkg)
 				self.background(calc_qe = False,strap_iso = False,source_hunt=self._sourcehunt,gauss_smooth=1,interpolate=False)
-				self._bkg_round_3()
+				self._grad_bkg_clip()
 				self.flux -= self.bkg
 				if self.corr_correction:
 					if self.verbose > 0:
-						print('Background correlation correction')
+						print('background correlation correction')
 					self.correlation_corrector()
 
 
 			if self.calibrate:
-				print('Field calibration')
+				print('field calibration')
 				self.field_calibrate()
 
 			
-			self.lc, self.sky = self.diff_lc(plot=True,diff=self.diff,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
+			self.lc, self.sky = self.diff_lc(plot=self.plot,diff=self.diff,tar_ap=tar_ap,sky_in=sky_in,sky_out=sky_out)
 
 			if self.imaging:
 				# if self.verbose > 0:
@@ -1789,28 +1943,28 @@ flux_to_jansky
 
 	def make_lc(self,aperture = None,bin_size=0,zeropoint=None,scale='counts',clip = False):
 		"""
-	    Perform aperature photometry on a time series of images
+		Perform aperature photometry on a time series of images
 
-	    Parameters
-	    ----------
-	    aperture : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    bin_size : TYPE, optional
-	        Number of points to average. The default is 0.
-	    zeropoint : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    scale : bool, optional
-	        If True the light curve will be normalised to the median. The default is 'counts'.
+		Parameters
+		----------
+		aperture : TYPE, optional
+			DESCRIPTION. The default is None.
+		bin_size : TYPE, optional
+			Number of points to average. The default is 0.
+		zeropoint : TYPE, optional
+			DESCRIPTION. The default is None.
+		scale : bool, optional
+			If True the light curve will be normalised to the median. The default is 'counts'.
 			Valid options = [counts, magnitude, flux, normalise]
-	    clip : TYPE, optional
-	        DESCRIPTION. The default is False.
+		clip : TYPE, optional
+			DESCRIPTION. The default is False.
 
-	    Returns
-	    -------
+		Returns
+		-------
 		self.lc : array 
 			light curve for the pixels defined by the aperture
 
-	    """
+		"""
 		
 		# hack solution for new lightkurve
 		flux = strip_units(self.flux)
@@ -1911,42 +2065,42 @@ flux_to_jansky
 	def detrend_transient(self,lc=None,err=None,Mask=None,variable=False,sig = 5, 
 						  sig_up = 3, sig_low = 10, tail_length='auto',plot=False):
 		"""
-	    Removes all long term stellar variability, while preserving flares. Input a light curve 
+		Removes all long term stellar variability, while preserving flares. Input a light curve 
 		with shape (2,n) and it should work!
 
-	    Parameters
-	    ----------
-	    lc : numpy array, optional
-	        lightcurve with the shape of (2,n), where the first index is time and the second is 
+		Parameters
+		----------
+		lc : numpy array, optional
+			lightcurve with the shape of (2,n), where the first index is time and the second is 
 			flux. The default is None.
-	    err : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    Mask : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    variable : TYPE, optional
-	        DESCRIPTION. The default is False.
-	    sig : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    sig_up : float64, optional
-	        Upper sigma clip value . The default is 5.
-	    sig_low : float64, optional
-	        Lower sigma clip value. The default is 10.
-	    tail_length : str OR int, optional
+		err : TYPE, optional
+			DESCRIPTION. The default is None.
+		Mask : TYPE, optional
+			DESCRIPTION. The default is None.
+		variable : TYPE, optional
+			DESCRIPTION. The default is False.
+		sig : TYPE, optional
+			DESCRIPTION. The default is None.
+		sig_up : float64, optional
+			Upper sigma clip value . The default is 5.
+		sig_low : float64, optional
+			Lower sigma clip value. The default is 10.
+		tail_length : str OR int, optional
 			Option for setting the buffer zone of points after the peak. If it is 'auto' it 
 			will be determined through functions, but if its an int then it will take the given 
 			value as the buffer tail length for fine tuning. The default is ''.
 
-	    Raises
-	    ------
-	    ValueError
-	        DESCRIPTION.
+		Raises
+		------
+		ValueError
+			DESCRIPTION.
 
-	    Returns
-	    -------
-	    detrend : numpy array
-	        Lightcurve with the stellar trends subtracted.
+		Returns
+		-------
+		detrend : numpy array
+			Lightcurve with the stellar trends subtracted.
 
-	    """
+		"""
 		# Make a smoothing value with a significant portion of the total 
 		
 		if lc is None:
@@ -2053,42 +2207,42 @@ flux_to_jansky
 	def detrend_stellar_var(self,lc=None,err=None,Mask=None,variable=False,sig = None, 
 							sig_up = 5, sig_low = 10, tail_length=''):
 		"""
-	    Removes all long term stellar variability, while preserving flares. Input a light curve 
+		Removes all long term stellar variability, while preserving flares. Input a light curve 
 		with shape (2,n) and it should work!
 
-	    Parameters
-	    ----------
-	    lc : numpy array, optional
-	        lightcurve with the shape of (2,n), where the first index is time and the second is 
+		Parameters
+		----------
+		lc : numpy array, optional
+			lightcurve with the shape of (2,n), where the first index is time and the second is 
 			flux. The default is None.
-	    err : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    Mask : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    variable : TYPE, optional
-	        DESCRIPTION. The default is False.
-	    sig : TYPE, optional
-	        DESCRIPTION. The default is None.
-	    sig_up : float64, optional
-	        Upper sigma clip value . The default is 5.
-	    sig_low : float64, optional
-	        Lower sigma clip value. The default is 10.
-	    tail_length : str OR int, optional
+		err : TYPE, optional
+			DESCRIPTION. The default is None.
+		Mask : TYPE, optional
+			DESCRIPTION. The default is None.
+		variable : TYPE, optional
+			DESCRIPTION. The default is False.
+		sig : TYPE, optional
+			DESCRIPTION. The default is None.
+		sig_up : float64, optional
+			Upper sigma clip value . The default is 5.
+		sig_low : float64, optional
+			Lower sigma clip value. The default is 10.
+		tail_length : str OR int, optional
 			Option for setting the buffer zone of points after the peak. If it is 'auto' it 
 			will be determined through functions, but if its an int then it will take the given 
 			value as the buffer tail length for fine tuning. The default is ''.
 
-	    Raises
-	    ------
-	    ValueError
-	        DESCRIPTION.
+		Raises
+		------
+		ValueError
+			DESCRIPTION.
 
-	    Returns
-	    -------
-	    detrend : numpy array
-	        Lightcurve with the stellar trends subtracted.
+		Returns
+		-------
+		detrend : numpy array
+			Lightcurve with the stellar trends subtracted.
 
-	    """
+		"""
 
 		# Make a smoothing value with a significant portion of the total 
 		if lc is None:
@@ -2172,21 +2326,21 @@ flux_to_jansky
 
 	def bin_interp(self,lc=None,time_bin=6/24):
 		"""
-	    Grabs the binned data and interpolates it to the original time values.
+		Grabs the binned data and interpolates it to the original time values.
 
-	    Parameters
-	    ----------
-	    lc : array, optional
-	        The lightcurve of the target in the form of three rows: mjd, flux, flux error. The default is None.	
-	    time_bin : float, optional
-	        The time (in days) for each bin to be for averaging data. The default is 6/24.
+		Parameters
+		----------
+		lc : array, optional
+			The lightcurve of the target in the form of three rows: mjd, flux, flux error. The default is None.	
+		time_bin : float, optional
+			The time (in days) for each bin to be for averaging data. The default is 6/24.
 
-	    Returns
-	    -------
-	    smooth : array
-	        Binned data in the form of three rows: mjd, flux, flux error.
+		Returns
+		-------
+		smooth : array
+			Binned data in the form of three rows: mjd, flux, flux error.
 
-	    """
+		"""
 		if lc is None:
 			lc = self.lc
 		if lc.shape[0] > lc.shape[1]:
@@ -2200,20 +2354,20 @@ flux_to_jansky
 
 	def detrend_star(self,lc=None):
 		"""
-	    Removes trends, e.g. background or stellar variability from the lightcurve data.
+		Removes trends, e.g. background or stellar variability from the lightcurve data.
 
-	    Parameters
-	    ----------
-	    lc : array, optional
-	        The lightcurve of the target in the form of three rows: mjd, flux, flux error. The default is None.
+		Parameters
+		----------
+		lc : array, optional
+			The lightcurve of the target in the form of three rows: mjd, flux, flux error. The default is None.
 
-	    Returns
-	    -------
-	    detrended : array
-	        The lightcurve data where datapoints with strict gradient changes are ignored and a 
+		Returns
+		-------
+		detrended : array
+			The lightcurve data where datapoints with strict gradient changes are ignored and a 
 			savitsky-savgol filter is then applied to smooth out the data.
 
-	    """
+		"""
 		if lc is None:
 			lc = self.lc
 		if lc.shape[0] > lc.shape[1]:
@@ -2266,13 +2420,13 @@ flux_to_jansky
 		"""
 		if self.dec < -30:
 			if self.verbose > 0:
-				print('Target is below -30 dec, calibrating to SkyMapper photometry.')
+				print('target is below -30 dec, calibrating to SkyMapper photometry.')
 			table = Get_Catalogue(self.tpf,Catalog='skymapper')
 			table = Skymapper_df(table)
 			system = 'skymapper'
 		else:
 			if self.verbose > 0:
-				print('Target is above -30 dec, calibrating to PS1 photometry.')
+				print('target is above -30 dec, calibrating to PS1 photometry.')
 			table = Get_Catalogue(self.tpf,Catalog='ps1')
 			system = 'ps1'
 
@@ -2399,18 +2553,18 @@ flux_to_jansky
 		"""
 
 		if plot is None:
-			plot = self.plot
+			plot = self.diagnostic_plot
 		if savename is None:
 			savename = self.savename
 		if self.dec < -30:
 			if self.verbose > 0:
-				print('Target is below -30 dec, calibrating to SkyMapper photometry.')
+				print('target is below -30 dec, calibrating to SkyMapper photometry.')
 			table = Get_Catalogue(self.tpf,Catalog='skymapper')
 			table = Skymapper_df(table)
 			system = 'skymapper'
 		else:
 			if self.verbose > 0:
-				print('Target is above -30 dec, calibrating to PS1 photometry.')
+				print('target is above -30 dec, calibrating to PS1 photometry.')
 			table = Get_Catalogue(self.tpf,Catalog='ps1')
 			system = 'ps1'
 		x,y = self.wcs.all_world2pix(table.RAJ2000.values,table.DEJ2000.values,0)
