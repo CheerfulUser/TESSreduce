@@ -1487,7 +1487,7 @@ class tessreduce():
 	        Whether plots will a. The default is False.
 	    diff : TYPE, optional
 	        DESCRIPTION. The default is None.
-
+flux_to_jansky
 	    Returns
 	    -------
 	    flux : numpy array
