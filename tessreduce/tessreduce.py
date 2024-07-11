@@ -1785,7 +1785,7 @@ class tessreduce():
 				print('made reference')
 			# make source mask
 			if mask is None:
-				self.make_mask(catalogue_path=self._catalogue_path,maglim=18,strapsize=7,scale=mask_scale)#Source_mask(ref,grid=0)
+				self.make_mask(catalogue_path=self._catalogue_path,maglim=18,strapsize=7,scale=mask_scale)
 				frac = np.nansum((self.mask == 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 				#print('mask frac ',frac)
 				if frac < 0.05:
@@ -1873,7 +1873,7 @@ class tessreduce():
 
 				self.ref -= self.bkg[self.ref_ind]
 				# remake mask
-				self.make_mask(catalogue_path=self._catalogue_path,maglim=18,strapsize=7,scale=mask_scale*.8,useref=True)#Source_mask(ref,grid=0)
+				self.make_mask(catalogue_path=self._catalogue_path,maglim=18,strapsize=7,scale=mask_scale*.8,useref=False)#Source_mask(ref,grid=0)
 				frac = np.nansum((self.mask== 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 				#print('mask frac ',frac)
 				if frac < 0.05:
