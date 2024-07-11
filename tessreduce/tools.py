@@ -8,7 +8,7 @@ def _sigma_mask(data, sigma=3):
 
     Parameters
     ----------
-    data : array
+    data : array_like
             A single image
 
     sigma : float
@@ -16,7 +16,7 @@ def _sigma_mask(data, sigma=3):
 
     Returns
     -------
-    clipped : array
+    clipped : array_like
             A boolean array to mask the original array
     """
     clipped = ~sigma_clip(data, sigma=sigma).mask
@@ -29,12 +29,12 @@ def _strip_units(data):
 
     Parameters:
     ----------
-    data: ArrayLike
-            ArrayLike set of data that may have associated units that want to be removed. Should be able to return something sensible when .values is called.
+    data: array_like
+            array_like set of data that may have associated units that want to be removed. Should be able to return something sensible when .values is called.
 
     Returns:
     -------
-    data: ArrayLike
+    data: array_like
             Same shape as input data, but will not have any units
     """
     if type(data) != np.ndarray:
@@ -48,12 +48,12 @@ def grads_rad(flux):
 
     Parameters:
     ----------
-    flux: ArrayLike
+    flux: array_like
             An array of flux values
 
     Returns:
     -------
-    rad: ArrayLike
+    rad: array_like
             The radius of the fluxes 
     """
     rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
@@ -66,12 +66,12 @@ def grad_flux_rad(flux):
 
     Parameters:
     ----------
-    flux: ArrayLike
+    flux: array_like
             An array of flux values
 
     Returns:
     -------
-    rad: ArrayLike
+    rad: array_like
             The radius of the fluxes 
     """
     rad = np.sqrt(flux**2+np.gradient(flux)**2)
