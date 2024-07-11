@@ -26,7 +26,12 @@ fig_width = fig_width_pt*inches_per_pt  # width in inches
 
 def Save_space(Save):
     """
-    Creates a pathm if it doesn't already exist.
+    Creates a path if it doesn't already exist.
+
+    Parameters
+    ----------
+    Save : str
+        String for the intended save directory
     """
     try:
         if not os.path.exists(Save):
@@ -39,7 +44,22 @@ def Save_space(Save):
 
 def Tonry_clip(Colours,model):
     """
-    Use the Tonry 2012 PS1 splines to sigma clip the observed data.
+    Cuts out stars that do not fall on a stellar locus. This uses the Tonry et al. 2012 PS1 
+    splines as the basis from which distances to the star parameters are measured. Stars
+    that are far from the stellar locus are clipped.
+
+    Parameters
+    ----------
+    Colours : dict
+        Dictionary of color combinations for the model comparisons to real data. 
+    model : array
+        Model to which the observational data are comapred 
+
+    Returns
+    -------
+    ind : array
+        Boolean array of sources that pass the cut.
+
     """
     #tonry = np.loadtxt(os.path.join(dirname,'Tonry_splines.txt'))
     tonry = model
@@ -66,6 +86,18 @@ def Tonry_clip(Colours,model):
 def Tonry_residual(Colours,model):
     """
     Calculate the residuals of the observed data from the Tonry et al 2012 PS1 splines.
+    
+    Parameters
+    ----------
+    Colours : dict
+        Dictionary of color combinations for the model comparisons to real data. 
+    model : array
+        Model to which the observational data are comapred 
+
+    Returns
+    -------
+    min_sum : float
+        Distance residual to the stellar locus, used for minimization.
     """
     tonry = model
     X = 'r-i'
@@ -81,11 +113,31 @@ def Tonry_residual(Colours,model):
     dd = np.sqrt(xx**2 + yy**2)
     # return min values for the observation axis
     mingr = np.nanmin(dd,axis=1)
-    return np.nansum(mingr) #+ np.nansum(miniz)
+    min_sum = np.nansum(mingr) #+ np.nansum(miniz)
+    return min_sum
 
 def Tonry_fit(K,Data,Model,Compare,system='ps1'):
     """
     Wrapper for the residuals function
+    
+    Parameters
+    ----------
+    K : float
+        Extinction value to fit the stellar locus
+    Data : dict
+        Dictionary containing the colour of the catalog
+    Model : array like 
+        Array containing the model values for the colour terms
+    Compare : array like
+        Color combinations to compare against the stellar locus.
+    system : str
+        Photometric system used in the comparison, can be PS1 or SkyMapper
+
+    Returns 
+    -------
+    res : float
+        Residual  of the fit 
+
     """
     Colours = Make_colours(Data,Model,Compare,Extinction = K,Redden=False, 
                             Tonry = True, system=system)
@@ -94,7 +146,28 @@ def Tonry_fit(K,Data,Model,Compare,system='ps1'):
 
 def Tonry_reduce(Data,plot=False,savename=None,system='ps1'):
     '''
-    Uses the Tonry et al. 2012 PS1 splines to fit dust and find all outliers.
+    Uses the stellar locus from Tonry et al. 2012 to fit the local field stars to find the dust extinction
+    and outliers.
+
+    Parameters
+    ----------
+    Data : dataframe
+        Catalog stars in the field
+    Options
+    -------
+    plot : bool
+        Turns on the plotter 
+    savename : str
+        Name to save the figures 
+    system : str
+        Photometric system for the observations 
+
+    Returns
+    -------
+    ebv : float
+        E(B-V) extinction value for the input field.
+    dat : dataframe
+        Source catalog with added index of if source is on the stellar locus
     '''
     data = deepcopy(Data)
     if system.lower() == 'ps1':
@@ -104,7 +177,8 @@ def Tonry_reduce(Data,plot=False,savename=None,system='ps1'):
     compare = np.array([['r-i','g-r']])   
     
     dat = data
-    clips = []
+    #clips = []
+    dat['locus'] = 1
     if len(dat) < 10:
         raise ValueError('No data available')
     for i in range(2):
@@ -112,18 +186,19 @@ def Tonry_reduce(Data,plot=False,savename=None,system='ps1'):
             k0 = 0.01
         else:
             k0 = res.x
-
-        res = minimize(Tonry_fit,k0,args=(dat,tonry,compare,system),method='Nelder-Mead')
+        ind = dat['locus'].values > 0
+        res = minimize(Tonry_fit,k0,args=(dat.iloc[ind],tonry,compare,system),method='Nelder-Mead')
         
-        colours = Make_colours(dat,tonry,compare,Extinction = res.x, Tonry = True,system=system)
+        colours = Make_colours(dat.iloc[ind],tonry,compare,Extinction = res.x, Tonry = True,system=system)
         clip = Tonry_clip(colours,tonry)
-        clips += [clip]
-        dat = dat.iloc[clip]
-        #print('Pass ' + str(i+1) + ': '  + str(res.x[0]))
-    clips[0][clips[0]] = clips[1]
+        #clips += [clip]
+        dat['locus'].iloc[ind] = clip 
+    dat2 = dat.iloc[dat['locus'].values > 0]
+    #print('Pass ' + str(i+1) + ': '  + str(res.x[0]))
+    #clips[0][clips[0]] = clips[1]
     if plot:
-        orig = Make_colours(dat,tonry,compare,Extinction = 0, Tonry = True,system=system)
-        colours = Make_colours(dat,tonry,compare,Extinction = res.x, Tonry = True,system=system)
+        orig = Make_colours(dat2,tonry,compare,Extinction = 0, Tonry = True,system=system)
+        colours = Make_colours(dat2,tonry,compare,Extinction = res.x, Tonry = True,system=system)
         plt.figure(figsize=(1.5*fig_width,1*fig_width))
         #plt.title('Fit to Tonry et al. 2012 PS1 stellar locus')
         plt.plot(orig['obs r-i'].flatten(),orig['obs g-r'].flatten(),'C1+',alpha=0.5,label='Raw')
@@ -137,11 +212,15 @@ def Tonry_reduce(Data,plot=False,savename=None,system='ps1'):
         if savename is not None:
             plt.savefig(savename + '_SLR.pdf', bbox_inches = "tight")
     #clipped_data = data.iloc[clips[0]] 
-    return res.x, dat
+    ebv = res.x
+    return ebv, dat
 
 
 
 def sigma_mask(data,error= None,sigma=3,Verbose= False):
+    """
+    Create a sigma clipped mask for the data.
+    """
     if type(error) == type(None):
         error = np.zeros(len(data))
     
@@ -156,7 +235,21 @@ def sigma_mask(data,error= None,sigma=3,Verbose= False):
 
 def Get_lcs(X,Y,K,Colours,fitfilt = ''):
     """
-    Make the colour combinations
+    Creates colour combinations used for the Tonry functions.
+
+    Parameters
+    ----------
+    X : str
+        Colour combination 1 
+    y : str
+        Colour combination 2
+    K : 
+
+    Colours : dict
+        Dictionary containing the source photometry
+    fitfilt : str
+        Force a filter to be the one that is fitted.
+
     """
     keys = np.array(list(Colours.keys()))
 
@@ -212,8 +305,7 @@ def Dist_tensor(X,Y,K,Colours,fitfilt='',Tensor=False,Plot = False):
     """
     Calculate the distance of sources in colour space from the model stellar locus.
     
-    ------
-    Inputs
+    Parameters 
     ------
     X : str
         string containing the colour combination for the X axis 
@@ -230,7 +322,7 @@ def Dist_tensor(X,Y,K,Colours,fitfilt='',Tensor=False,Plot = False):
     Plot : bool
         if true this makes diagnotic plots
 
-    -------
+    
     Returns
     -------
     residual : float

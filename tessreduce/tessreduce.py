@@ -727,7 +727,7 @@ class tessreduce():
 													   for i in np.arange(len(self.bkg)))
 		else:
 			bkg_clip = []
-			for i in range(len(dist_mask)):
+			for i in range(len(self.bkg)):
 				bkg_clip[i] = clip_background(self.bkg[i],self.mask,ideal_size)
 		self.bkg = np.array(bkg_clip)
 
@@ -751,7 +751,7 @@ class tessreduce():
 													   for i in np.arange(len(self.bkg)))
 		else:
 			bkg_clip = []
-			for i in range(len(dist_mask)):
+			for i in range(len(self.bkg)):
 				bkg_clip[i] = grad_clip_fill_bkg(self.bkg[i],max_size)
 		self.bkg = np.array(bkg_clip)
 
