@@ -146,7 +146,7 @@ def correct_straps(Image, mask, av_size=5, parallel=True):
     Parameters:
     ----------
     Image: array_like
-        The image of concern, should have straps that need
+        The image of concern, should have straps that need the qe calculated.
     mask: array_like
         The mask of objects in the field, to be removed from the data before 
     av_size: int, optional
