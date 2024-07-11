@@ -1,16 +1,13 @@
 from astropy.table import Table
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import interpolate
 from schwimmbad import MultiPool
 from astropy.io import fits
 from astropy.wcs import WCS
 import matplotlib.path as pat
-from copy import deepcopy
 from scipy.ndimage import  rotate
 from astropy.convolution import Gaussian2DKernel
 from scipy import signal
-
 
 
 def pix2coord(x, y, mywcs):
