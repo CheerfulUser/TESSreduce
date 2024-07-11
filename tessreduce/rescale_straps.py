@@ -19,14 +19,15 @@ def grad_clip(data, box_size=100):
 
     Parameters:
     ----------
-        data : array_like
+        data: array_like
             1d array of the data to clip.
-        box_size : int, optional 
+        box_size: int, optional 
             Integer defining the box size to clip over. Default value is 100. 
 
     Returns:
     -------
-        gradind : bool
+        gradind: array_like of bools
+            The mask of large gradients  
 
     """
     gradind = np.zeros_like(data)
@@ -116,6 +117,7 @@ def calc_strap_factor(i, breaks, size, av_size, normals, data):
     -------
     qe: array_like
         The quantum efficency of the strap. Same shape as data.
+
     """
     qe = np.ones_like(data) * 1. * np.nan
     b = int(breaks[i])
@@ -156,6 +158,7 @@ def correct_straps(Image, mask, av_size=5, parallel=True):
     -------
     qe: array_like
         The quantum efficeny of the strap. Same shape as Image.
+
     """
     data = deepcopy(Image)
     mask = deepcopy(mask)
