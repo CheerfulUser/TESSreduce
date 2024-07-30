@@ -90,6 +90,11 @@ The main variables that TESSreduce assigns during the reduction can be accessed 
 
 There are a lot of other functions burried in TESSreduce, so if you want some guidence on how to do a specific analysis contact me at: ryan.ridden@canterbury.ac.nz
 
+# Example reductions
+
+We include a few notebooks for some possible reductions and science cases in the examples folder. 
+
+
 
 # Citing TESSreduce
 
