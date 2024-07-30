@@ -1,9 +1,7 @@
 import numpy as np
 from copy import deepcopy
 from scipy.interpolate import interp1d
-from scipy.signal import savgol_filter
 from astropy.stats import sigma_clip
-from astropy.io import fits
 import multiprocessing
 from joblib import Parallel, delayed
 
