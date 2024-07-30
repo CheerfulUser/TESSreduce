@@ -52,6 +52,20 @@ golden_mean = (np.sqrt(5)-1.0)/2.0		 # Aesthetic ratio
 fig_width = fig_width_pt*inches_per_pt  # width in inches
 
 def strip_units(data):
+	"""
+    Removes the units off of data that was not in a NDarray, such as an astropy table. Returns an NDarray that has no units 
+
+    Parameters:
+    ----------
+    data: ArrayLike
+            ArrayLike set of data that may have associated units that want to be removed. Should be able to return something sensible when .values is called.
+
+    Returns:
+    -------
+    data: ArrayLike
+            Same shape as input data, but will not have any units
+    """
+	
 	if type(data) != np.ndarray:
 		data = data.value
 	return data
@@ -399,13 +413,37 @@ def smooth_zp(zp,time):
 
 	return smoothed, err
 
-
-
 def grads_rad(flux):
-	rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
-	return rad
+    """
+    Calculates the radius of the flux from the gradient of the flux, and the double gradient of the flux.  
+
+    Parameters:
+    ----------
+    flux: ArrayLike
+            An array of flux values
+
+    Returns:
+    -------
+    rad: ArrayLike
+            The radius of the fluxes 
+    """
+    rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
+    return rad
 
 def grad_flux_rad(flux):
+	"""
+    Calculates the radius of the flux from the gradient of the flux.  
+
+    Parameters:
+    ----------
+    flux: ArrayLike
+            An array of flux values
+
+    Returns:
+    -------
+    rad: ArrayLike
+            The radius of the fluxes 
+    """
 	rad = np.sqrt(flux**2+np.gradient(flux)**2)
 	return rad
 
@@ -680,11 +718,6 @@ def external_save_TESS(ra,dec,sector,size=90,save_path=None,quality_bitmask='def
 	if tpf is None:
 		m = 'Failure in TESScut api, not sure why.'
 		raise ValueError(m)
-	
-	# else:
-	# 	if save_path is None:
-	# 		save_path = os.getcwd()
-	# 	os.system(f'mv {tpf.path} {save_path}')
 
 def external_get_TESS():
 

@@ -195,7 +195,7 @@ def _calc_bkg_std(data,coord,d=6):
 
 def multi_correlation_cor(tess,limit=0.8,cores=7):
     """
-    Corrects for correlation coefficents larger than limit. If the flux and the background of tess are correlated (absolute value of correlation coefficent, |r|) to a level higher than limit, a fit to minimize this coefficent is performed, and the new background and flux values are returned
+    Corrects for correlation coefficents larger than limit. If the flux and the background of tess are correlated (absolute value of correlation coefficent, |r|) to a level higher than limit, a fit to minimize this coefficent is preformed, and the new background and flux values are returned
 
     Parameters:
     ----------

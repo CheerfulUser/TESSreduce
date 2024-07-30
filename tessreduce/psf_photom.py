@@ -1,8 +1,8 @@
 import numpy as np
 from skimage.util.shape import view_as_windows
 from scipy.optimize import minimize
-from tqdm import tqdm
 from scipy.ndimage import shift
+
 """
 PSF photometry class repurposed from Starkiller by Hugh Roxburgh
 https://github.com/CheerfulUser/starkiller

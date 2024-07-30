@@ -16,15 +16,15 @@ from copy import deepcopy
 from scipy.ndimage import convolve
 from scipy.ndimage import shift
 
-from sklearn.cluster import OPTICS
-
 from scipy.signal import savgol_filter
-
 
 from scipy.interpolate import interp1d
 
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import sigma_clip
+from astropy.coordinates import SkyCoord
+from astropy import units as u
+from astropy.time import Time
 
 import multiprocessing
 from joblib import Parallel, delayed
@@ -38,8 +38,6 @@ from .lastpercent import *
 from .psf_photom import create_psf
 from .helpers import *
 from .cat_mask import Cat_mask
-
-#from .syndiff import PS1_scene
 
 # turn off runtime warnings (lots from logic on nans)
 import warnings
@@ -55,12 +53,6 @@ with warnings.catch_warnings():
 
 # set the package directory so we can load in a file later
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
-
-
-from astropy.coordinates import SkyCoord
-from astropy import units as u
-from astropy.time import Time
-
 
 fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
 inches_per_pt = 1.0/72.27			   # Convert pt to inches
@@ -100,40 +92,6 @@ class tessreduce():
 		Options
 		-------
 		reduce : bool, optional
-			DESCRIPTION. The default is True.
-		align : bool, optional
-			DESCRIPTION. The default is True.
-		parallel : TYPE, optional
-			DESCRIPTION. The default is True.
-		diff : bool, optional
-			DESCRIPTION. The default is True.
-		plot : bool, optional
-			DESCRIPTION. The default is False.
-		corr_correction : bool, optional
-			Final correction step that operates on pixels which have high correlation between their lightcurve and the background. The default is True.
-		
-		savename : str, optional
-			Save name for the outputs. The default is None.
-		quality_bitmask : str, optional
-			Change the . The default is 'default'.
-		verbose : int, optional
-			Controls the level of verbosity, 0 is none, 1 is verbose. The default is 1.
-		cache_dir : str, optional
-			Directory to cache files. The default is None.
-		calibrate : bool, optional
-			Performs photometric calibration on the datacube using PS1 or SkyMapper data. The default is True.
-		harshmask_counts : TYPE, optional
-			DESCRIPTION. The default is None.
-		sourcehunt : bool, optional
-			Searches for sources in the background and masks them. Prevents asteroids and other transients from being included in the background. The default is True.
-		num_cores : int, optional
-			Number of cores to run parallel process on. The default is -1 which is the max.
-		catalogue_path : str, optional
-			Path to required catalogs for when using TESSreduce in offline mode. The default is None.
-
-		Returns
-		-------
-		reduce : bool, optional
 			Perform photometric reduction processes for the target region. The default is True.
 		align : bool, optional
 			Shift images to align stars with a reference frame. The default is True.
@@ -153,6 +111,8 @@ class tessreduce():
 			Number of cores to run parallel process on. The default is -1 which is the max.
 		diagnostic_plot : bool, optional
 			During reduction, plot figures which outline various calculation steps, such as the image shifts over time or the zeropoint calculation. The default is False.
+		plot : bool, optional
+			During reduction, plot resulting light curve. The default is True.
 		savename : str, optional
 			Save name for the outputs. The default is None.
 		quality_bitmask : str, optional
@@ -200,7 +160,6 @@ class tessreduce():
 		self.num_cores = num_cores
 		self.imaging = imaging
 		self._prf_path = prf_path
-
 
 		# Plotting
 		self.plot = plot
@@ -272,13 +231,8 @@ class tessreduce():
 		elif self.check_coord():
 			if self.verbose>0:
 				print('getting TPF from TESScut')
-			# if self._catalogue_path is None:
 			self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
 			self._get_gaia()
-			# else:
-			# 	self.tpf = external_get_TESS()
-			# 	self.flux = strip_units(self.tpf.flux)
-			# 	self.wcs  = self.tpf.wcs
 
 		self.ground = ground(ra = self.ra, dec = self.dec)
 
@@ -451,7 +405,7 @@ class tessreduce():
 			Width in pixels of the mask for TESS' electrical straps. The default is 6.
 		
 		Options
-		_______
+		-------
 		useref : bool, optional
 			Generate the mask solely from the reference frame. The default is False.
 
@@ -727,7 +681,7 @@ class tessreduce():
 													   for i in np.arange(len(self.bkg)))
 		else:
 			bkg_clip = []
-			for i in range(len(dist_mask)):
+			for i in range(len(self.bkg)):
 				bkg_clip[i] = clip_background(self.bkg[i],self.mask,ideal_size)
 		self.bkg = np.array(bkg_clip)
 
@@ -751,7 +705,7 @@ class tessreduce():
 													   for i in np.arange(len(self.bkg)))
 		else:
 			bkg_clip = []
-			for i in range(len(dist_mask)):
+			for i in range(len(self.bkg)):
 				bkg_clip[i] = grad_clip_fill_bkg(self.bkg[i],max_size)
 		self.bkg = np.array(bkg_clip)
 
