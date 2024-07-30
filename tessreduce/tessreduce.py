@@ -1082,7 +1082,7 @@ class tessreduce():
 		return binf, bint
 
 	def diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
-				sky_in=5,sky_out=9,phot_method=None,plot=None,savename=None,mask=None,diff = True):
+				sky_in=5,sky_out=9,phot_method=None,psf_snap=None,plot=None,savename=None,mask=None,diff = True):
 		"""
 		Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
 		then it degaults to the centre. Sky flux is calculated with an annulus aperture surrounding 
@@ -1187,7 +1187,10 @@ class tessreduce():
 			tar -= sky_med * tar_ap**2
 			tar_err = sky_std * tar_ap**2
 		if phot_method == 'psf':
-			tar = self.psf_photometry(x,y,diff=diff)
+			if psf_snap is None:
+				psf_snap = 'brightest'
+
+			tar = self.psf_photometry(x,y,diff=diff,snap=psf_snap)
 			tar_err = sky_std # still need to work this out
 		nan_ind = np.where(np.nansum(self.flux,axis=(1,2))==0,True,False)
 		nan_ind[self.ref_ind] = False
@@ -2583,7 +2586,7 @@ class tessreduce():
 		x,y = self.wcs.all_world2pix(d.RAJ2000.values,d.DEJ2000.values,0)
 		d['col'] = x
 		d['row'] = y
-		pos_ind = (3 < x) & (x < self.ref.shape[1]-3) & (3 < y) & (y < self.ref.shape[0]-3)
+		pos_ind = (5 < x) & (x < self.ref.shape[1]-5) & (5 < y) & (y < self.ref.shape[0]-5)
 		d = d.iloc[pos_ind]
 		
 
