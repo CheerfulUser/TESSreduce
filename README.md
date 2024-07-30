@@ -38,16 +38,22 @@ sector = 2
 tess = tr.tessreduce(ra=ra,dec=dec,sector=sector)
 ```
 
+If you have a downloaded TPF you can load that directly into tessreduce.
+```python
+tess = tr.tessreduce(tpf='file')
+```
+
+
 # Photometry method
 
 TESSreduce can perform aperture and PSF photometry. The photometry method used is set by the `phot_method` option which can either be `aperture` or `psf`. In general the PSF method appears to be more robust, however, there are cases where aperture still provides a better lightcurve. The default method is `aperture`. Using the example above we can use different photometry methods as follows.
 
-```
+```python
 tess = tr.tessreduce(obs_list=obs,phot_method='psf') # runs PSF photometry for reduction
 tess = tr.tessreduce(obs_list=obs,phot_method='aperture') # runs aperture photometry for reduction
 ```
 You can also define the photometry method when creating a lightcurve with `diff_lc` as follows.
-```
+```python
 lc, sky = tess.diff_lc(phot_method='psf')
 ```
 
