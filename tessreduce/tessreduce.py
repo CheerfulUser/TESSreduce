@@ -108,7 +108,7 @@ class tessreduce():
 		parallel : bool, optional
 			Perform computation with parallel processing using 'num_cores'. The default is True.
 		num_cores : int, optional
-			Number of cores to run parallel process on. The default is -1 which is the max.
+			Number of cores to run parallel process on. The default is -1 which uses max system cores.
 		diagnostic_plot : bool, optional
 			During reduction, plot figures which outline various calculation steps, such as the image shifts over time or the zeropoint calculation. The default is False.
 		plot : bool, optional
@@ -663,12 +663,12 @@ class tessreduce():
 
 	def _clip_background(self,sigma=5,ideal_size=90):
 		"""
-		DESCRIPTION
+		Performs sigma clip on the background and recomputes clipped points.
 
 		Parameters
 		----------
-		iters : TYPE, optional
-			DESCRIPTION. The default is 5.
+		sigma : float, optional
+			Number of sigma to cut background. The default is 5.
 
 		Returns
 		-------
@@ -687,17 +687,19 @@ class tessreduce():
 
 	def _grad_bkg_clip(self,sigma=3,max_size=1000):
 		"""
-		DESCRIPTION
+		Performs sigma clip on the background based on gradients and recomputes clipped points.
 
 		Parameters
 		----------
-		iters : TYPE, optional
-			DESCRIPTION. The default is 5.
+		sigma : float, optional
+			Number of sigma to cut background. The default is 3.
+		max_size: int, optional
+			Maximum allowable size of a region to be clipped.
 
-		Returns
+		Assigns
 		-------
-		None
-
+		bkg : np.array
+			Assigns the recomputed tess background.
 		"""
 		
 		if self.parallel:
@@ -761,6 +763,7 @@ class tessreduce():
 
 	def centroids_shifts_starfind(self,plot=None,savename=None):
 		"""
+		Depricated.
 		Calculate the centroid shifts of sources for time series images using Starfinding based on TESS PRF.
 
 		Options
@@ -1172,16 +1175,16 @@ class tessreduce():
 
 		Parameters
 		----------
-		ap_tar : TYPE
-			DESCRIPTION.
-		ap_sky : TYPE
-			DESCRIPTION.
-		lc : TYPE, optional
-			DESCRIPTION. The default is None.
-		sky : TYPE, optional
-			DESCRIPTION. The default is None.
-		data : TYPE, optional
-			DESCRIPTION. The default is None.
+		ap_tar : array
+			Aperture to perform photometry on.
+		ap_sky : array
+			Aperture to perform sky photometry on.
+		lc : array, optional
+			Light curve of the target to plot. If None, then the assigned lc is used. The default is None.
+		sky : array, optional
+			Light curve of the sky. The default is None.
+		data : array, optional
+			Array of images to use in creating the light curve. The default is None.
 
 		Returns
 		-------
@@ -1243,21 +1246,16 @@ class tessreduce():
 
 		Parameters
 		----------
-		lc : TYPE, optional
-			DESCRIPTION. The default is None.
-		ax : TYPE, optional
-			DESCRIPTION. The default is None.
-		ground : TYPE, optional
-			DESCRIPTION. The default is False.
-		time_bin : TYPE, optional
-			DESCRIPTION. The default is 6/24.
-		xlims : TYPE, optional
-			DESCRIPTION. The default is None.
-
-		Raises
-		------
-		ValueError
-			DESCRIPTION.
+		lc : array, optional
+			light curve to plot. The default is None.
+		ax : matplotlib axes, optional
+			axes to plot onto. The default is None.
+		ground : Bool, optional
+			If True, then ZTF data will be plotted alongside TESS. The default is False.
+		time_bin : float, optional
+			Length of time in days to bin data . The default is 6/24.
+		xlims : list, optional
+			List of x limits to add to the plot. The default is None.
 
 		Returns
 		-------
@@ -1344,10 +1342,10 @@ class tessreduce():
 
 		Parameters
 		----------
-		filename : TYPE
-			DESCRIPTION.
-		time_bin : TYPE, optional
-			DESCRIPTION. The default is None.
+		filename : str
+			Name for the saved file.
+		time_bin : float, optional
+			Timeframe in days to bin the TESS data. The default is None.
 
 		Returns
 		-------
@@ -1372,10 +1370,10 @@ class tessreduce():
 
 		Parameters
 		----------
-		lc : TYPE, optional
-			DESCRIPTION. The default is None.
-		flux_unit : TYPE, optional
-			DESCRIPTION. The default is None.
+		lc : array, optional
+			Light curve to convert. The default is None.
+		flux_unit : str, optional
+			Flux units of the light curve. The default is None.
 			Valid options:
 				counts
 				mjy
@@ -1383,8 +1381,8 @@ class tessreduce():
 
 		Returns
 		-------
-		light : TYPE
-			DESCRIPTION.
+		light : lightkurve object
+			The input lightcurve wrapped in the lightkurve format.
 
 		"""
 		if lc is None:
@@ -1414,26 +1412,26 @@ class tessreduce():
 
 		Parameters
 		----------
-		align : TYPE
-			DESCRIPTION.
-		parallel : TYPE
-			DESCRIPTION.
-		calibrate : TYPE
-			DESCRIPTION.
-		plot : TYPE
-			DESCRIPTION.
-		diff_lc : TYPE
-			DESCRIPTION.
-		diff : TYPE
-			DESCRIPTION.
-		verbose : TYPE
-			DESCRIPTION.
-		corr_correction : TYPE
-			DESCRIPTION.
+		align : Bool
+			Trigger alignment procedure.
+		parallel : Bool
+			Run in parallel.
+		calibrate : Bool
+			Calibrate the data.
+		plot : Bool
+			plot the lightcurve.
+		diff_lc : Bool
+			Create the differenced light curve .
+		diff : Bool
+			Run difference imaging.
+		verbose : int
+			Set verbosity.
+		corr_correction : Bool
+			Run the background correlation correction step .
 
-		Returns
+		Assigns
 		-------
-		None.
+		input options
 
 		"""
 		if align is not None:
@@ -1603,19 +1601,6 @@ class tessreduce():
 				'ref' = use the reference as the position fit point
 		ext_shift : array_like, optional
 			External shift in the pixel positions. The default is True.
-<<<<<<< HEAD
-	    ext_shift : TYPE, optional
-	        DESCRIPTION. The default is True.
-	    plot : bool, optional
-	        Whether plots will a. The default is False.
-	    diff : TYPE, optional
-	        DESCRIPTION. The default is None.
-flux_to_jansky
-	    Returns
-	    -------
-	    flux : numpy array
-	        Flux light curve across entire sector..
-=======
 		ext_shift : TYPE, optional
 			DESCRIPTION. The default is True.
 		plot : bool, optional
@@ -1626,8 +1611,7 @@ flux_to_jansky
 		Returns
 		-------
 		flux : array_like
-			Flux light curve across entire sector..
->>>>>>> upstream/dev
+			Flux light curve across entire sector.
 
 		"""
 		
@@ -2308,7 +2292,7 @@ flux_to_jansky
 			# interpolate the smoothed data over the missing time values
 			f1 = interp1d(section[0,finite], smooth, kind='linear',fill_value='extrapolate')
 			trends[break_inds[i]:break_inds[i+1]] = f1(section[0])
-		# huzzah, we now have a trend that should remove stellar variability, excluding flares.
+		# We now have a trend that should remove stellar variability, excluding flares.
 		detrend = deepcopy(lc)
 		detrend[1,:] = lc[1,:] - trends
 		return detrend
