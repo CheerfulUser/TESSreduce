@@ -79,13 +79,13 @@ tess.plotter()
 # Extracting key variables 
 
 The main variables that TESSreduce assigns during the reduction can be accessed as follows:
-- flux: tess.flux 
-- background: tess.bkg
-- reference: tess.ref
-- reference index: tess.ref_ind
-- lightcurve: tess.lc
-- Mask: tess.mask
-- Source catalog: tess.cat
+- flux: `tess.flux `
+- background: `tess.bkg`
+- reference: `tess.ref`
+- reference index: `tess.ref_ind`
+- lightcurve: `tess.lc`
+- Mask: `tess.mask`
+- Source catalog: `tess.cat`
 
 
 There are a lot of other functions burried in TESSreduce, so if you want some guidence on how to do a specific analysis contact me at: ryan.ridden@canterbury.ac.nz
