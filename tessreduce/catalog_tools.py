@@ -4,7 +4,6 @@ import matplotlib.pyplot as plt
 import lightkurve as lk
 from astropy.io import fits
 from astropy.wcs import WCS
-from astropy.coordinates import SkyCoord
 from astropy.coordinates import SkyCoord, Angle
 from copy import deepcopy
 import pandas as pd
@@ -36,23 +35,25 @@ def Get_Catalogue(tpf, Catalog = 'gaia'):
 	c1 = SkyCoord(tpf.ra, tpf.dec, frame='icrs', unit='deg')
 	# Use pixel scale for query size	
 	pix_scale = 21.0
+	rad = Angle(np.max(tpf.shape[1:]) * pix_scale + 60, "arcsec")
 	# We are querying with a diameter as the radius, overfilling by 2x.
 	from astroquery.vizier import Vizier
 	Vizier.ROW_LIMIT = -1
 	if Catalog == 'gaia':
 		catalog = "I/345/gaia2"
 	elif Catalog == 'dist':
-		catalog = "I/350/gaiaedr3"
+		catalog = "I/355/gaiadr3"
 	elif Catalog == 'ps1':
 		catalog = "II/349/ps1"
 	elif Catalog == 'skymapper':
-		catalog = 'II/358/smss'
+		#catalog = 'II/358/smss'
+		result = _get_skymapper(c1,rad)
 	else:
 		raise ValueError(f"{catalog} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
 	if Catalog == 'gaia':
 		result = Vizier.query_region(c1, catalog=[catalog],
 							 		 radius=Angle(np.max(tpf.shape[1:]) * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
-	else:
+	elif Catalog == 'ps1':
 		result = Vizier.query_region(c1, catalog=[catalog],
 									 radius=Angle(np.max(tpf.shape[1:]) * pix_scale + 60, "arcsec"))
 
@@ -63,9 +64,31 @@ def Get_Catalogue(tpf, Catalog = 'gaia'):
 		raise no_targets_found_message
 	elif len(result) == 0:
 		raise no_targets_found_message
-	result = result[catalog].to_pandas()
+	if Catalog != 'skymapper':
+		result = result[catalog].to_pandas()
 	
 	return result 
+
+
+def _get_skymapper(coord,rad):
+	query = f'https://skymapper.anu.edu.au/sm-cone/public/query?RA={coord.ra.value}&DEC={coord.dec.value}&SR={np.round(rad.deg,3)}&RESPONSEFORMAT=CSV'
+	sm = pd.read_csv(query)
+	if len(sm) > 0:
+		keep = ['object_id','raj2000','dej2000','u_psf', 'e_u_psf',
+				'v_psf', 'e_v_psf','g_psf', 'e_g_psf','r_psf', 
+				'e_r_psf','i_psf', 'e_i_psf','z_psf', 'e_z_psf']
+		sm = sm[keep]
+		sm = sm.rename(columns={'raj2000':'RAJ2000','dej2000':'DEJ2000','u_psf':'umag',
+								'v_psf':'vmag','g_psf':'gmag','r_psf':'rmag',
+								'i_psf':'imag','z_psf':'zmag',
+								'e_u_psf':'e_umag','e_v_psf':'e_vmag','e_g_psf':'e_gmag',
+								'e_r_psf':'e_rmag','e_i_psf':'e_imag','e_z_psf':'e_zmag'})
+		sm = SM_to_TESS_mag(sm)
+	else:
+		sm = None
+	return sm
+
+
 
 def Get_Catalogue_External(ra,dec,size,Catalog = 'gaia'):
 	"""

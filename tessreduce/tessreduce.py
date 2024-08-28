@@ -2531,7 +2531,7 @@ class tessreduce():
 			if self.verbose > 0:
 				print('target is below -30 dec, calibrating to SkyMapper photometry.')
 			table = Get_Catalogue(self.tpf,Catalog='skymapper')
-			table = Skymapper_df(table)
+			#table = Skymapper_df(table)
 			system = 'skymapper'
 		else:
 			if self.verbose > 0:
@@ -2555,14 +2555,14 @@ class tessreduce():
 			tflux = self.flux
 			
 
-		ind = (table.imag.values < 19) & (table.imag.values > 14)
+		ind = (table.tmag.values < 19) & (table.imag.values > 14)
 		tab = table.iloc[ind]
 		
 		e, dat = Tonry_reduce(tab,plot=plot,savename=savename,system=system)
 		self.ebv = e[0]
 
 		gr = (dat.gmag - dat.rmag).values
-		ind = (gr < 1) & (dat.imag.values < 17)
+		ind = (gr < 1) & (dat.imag.values < 15)
 		d = dat.iloc[ind]
 		
 		x,y = self.wcs.all_world2pix(d.RAJ2000.values,d.DEJ2000.values,0)
