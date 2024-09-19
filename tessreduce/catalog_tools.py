@@ -104,10 +104,10 @@ def Get_Catalogue_External(ra,dec,size,Catalog = 'gaia'):
 		raise ValueError(f"{catalog} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
 	if Catalog == 'gaia':
 		result = Vizier.query_region(c1, catalog=[catalog],
-							 		 radius=Angle(size * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
+							 		 radius=Angle(size * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'},cache=False)
 	else:
 		result = Vizier.query_region(c1, catalog=[catalog],
-									 radius=Angle(size * pix_scale + 60, "arcsec"))
+									 radius=Angle(size * pix_scale + 60, "arcsec"),cache=False)
 
 	no_targets_found_message = ValueError('Either no sources were found in the query region '
 										  'or Vizier is unavailable')
