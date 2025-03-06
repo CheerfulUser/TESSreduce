@@ -66,6 +66,9 @@ def Get_Catalogue(tpf, Catalog = 'gaia'):
 		raise no_targets_found_message
 	if Catalog != 'skymapper':
 		result = result[catalog].to_pandas()
+	if Catalog == 'ps1':
+		result = result[np.isfinite(result.rmag) & np.isfinite(result.imag)]
+		result = PS1_to_TESS_mag(result)
 	
 	return result 
 
