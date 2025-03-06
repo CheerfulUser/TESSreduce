@@ -1,42 +1,71 @@
 import os
+import requests
+import json
+from copy import deepcopy
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 
-from photutils.detection import StarFinder
+from PIL import Image
+from io import BytesIO
 
-from copy import deepcopy
 from scipy.ndimage import shift
 from scipy.ndimage import gaussian_filter
-from scipy.ndimage.filters import convolve
-from skimage.restoration import inpaint
-
+from scipy.ndimage import convolve
+from scipy.ndimage import label
 from scipy.signal import savgol_filter
 from scipy.interpolate import interp1d
 from scipy.interpolate import griddata
 from scipy.optimize import minimize
+from scipy.signal import fftconvolve
+from sklearn.cluster import OPTICS
+from sklearn.preprocessing import PolynomialFeatures
+from sklearn.linear_model import LinearRegression
+from sklearn.pipeline import make_pipeline
+from skimage.restoration import inpaint
 
-from PRF import TESS_PRF
 
+from astropy.table import Table
 from astropy.stats import sigma_clipped_stats
 from astropy.stats import sigma_clip
+from astropy.coordinates import SkyCoord
+from astropy.io import fits
+from astropy import units as u
+from astropy.time import Time
+import lightkurve as lk
+from photutils.detection import StarFinder
 
+from PRF import TESS_PRF
 from tess_stars2px import tess_stars2px_function_entry as focal_plane
 from tabulate import tabulate
 
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
-from astropy.coordinates import SkyCoord
-from astropy import units as u
-from astropy.time import Time
-import lightkurve as lk
-
 from .psf_photom import create_psf
 
-import requests
-import json
+
+
+fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
+inches_per_pt = 1.0/72.27			   # Convert pt to inches
+golden_mean = (np.sqrt(5)-1.0)/2.0		 # Aesthetic ratio
+fig_width = fig_width_pt*inches_per_pt  # width in inches
 
 def strip_units(data):
+	"""
+    Removes the units off of data that was not in a NDarray, such as an astropy table. Returns an NDarray that has no units 
+
+    Parameters:
+    ----------
+    data: ArrayLike
+            ArrayLike set of data that may have associated units that want to be removed. Should be able to return something sensible when .values is called.
+
+    Returns:
+    -------
+    data: ArrayLike
+            Same shape as input data, but will not have any units
+    """
+	
 	if type(data) != np.ndarray:
 		data = data.value
 	return data
@@ -137,6 +166,7 @@ def unknown_mask(image):
 
 
 def parallel_bkg3(data,mask):
+	data = deepcopy(data)
 	data[mask] = np.nan
 	estimate = inpaint.inpaint_biharmonic(data,mask)
 	return estimate
@@ -383,13 +413,37 @@ def smooth_zp(zp,time):
 
 	return smoothed, err
 
-
-
 def grads_rad(flux):
-	rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
-	return rad
+    """
+    Calculates the radius of the flux from the gradient of the flux, and the double gradient of the flux.  
+
+    Parameters:
+    ----------
+    flux: ArrayLike
+            An array of flux values
+
+    Returns:
+    -------
+    rad: ArrayLike
+            The radius of the fluxes 
+    """
+    rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
+    return rad
 
 def grad_flux_rad(flux):
+	"""
+    Calculates the radius of the flux from the gradient of the flux.  
+
+    Parameters:
+    ----------
+    flux: ArrayLike
+            An array of flux values
+
+    Returns:
+    -------
+    rad: ArrayLike
+            The radius of the fluxes 
+    """
 	rad = np.sqrt(flux**2+np.gradient(flux)**2)
 	return rad
 
@@ -404,8 +458,8 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True, df = False):
 	------
 	name : str
 		catalog name
-	time : str
-		reference time to use, can be either disc, or max
+	time : str or float
+		reference time to use, accepted string values are disc, or max. Float times are assumed to be MJD.
 	buffer : float
 		overlap buffer time in days 
 	
@@ -471,12 +525,16 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True, df = False):
 		new_ind = [i for i in ind if i < len(sec_times)]
 
 		secs = sec_times.iloc[new_ind]
-		if (time.lower() == 'disc') | (time.lower() == 'discovery'):
-			disc_start = secs['mjd_start'].values - disc_t.mjd
-			disc_end = secs['mjd_end'].values - disc_t.mjd
-		elif (time.lower() == 'max') | (time.lower() == 'peak'):
-			disc_start = secs['mjd_start'].values - max_t.mjd
-			disc_end = secs['mjd_end'].values - max_t.mjd
+		if type(time) == str:
+			if (time.lower() == 'disc') | (time.lower() == 'discovery'):
+				disc_start = secs['mjd_start'].values - disc_t.mjd
+				disc_end = secs['mjd_end'].values - disc_t.mjd
+			elif (time.lower() == 'max') | (time.lower() == 'peak'):
+				disc_start = secs['mjd_start'].values - max_t.mjd
+				disc_end = secs['mjd_end'].values - max_t.mjd
+		else:
+			disc_start = secs['mjd_start'].values - time
+			disc_end = secs['mjd_end'].values - time
 
 		covers = []
 		differences = []
@@ -634,29 +692,32 @@ def par_psf_flux(image,prf,shift=[0,0]):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
 	prf.psf_flux(image,ext_shift=shift)
-	return prf.flux
+	return prf.flux, prf.eflux
 
-def par_psf_full(cutout,prf,shift=[0,0],xlim=2,ylim=2):
+def par_psf_full(cutout,prf,shift=[0,0],xlim=0.5,ylim=0.5):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
 	prf.psf_position(cutout,ext_shift=shift,limx=xlim,limy=ylim)
 	prf.psf_flux(cutout)
 	pos = [prf.source_x, prf.source_y]
-	return prf.flux, pos
+	return prf.flux, prf.eflux, pos
 
 
-def external_save_TESS(ra,dec,sector,size=90,quality_bitmask='default',cache_dir=None):
+def external_save_TESS(ra,dec,sector,size=90,save_path=None,quality_bitmask='default',cache_dir=None):
+
+	if save_path is None:
+		save_path = os.getcwd()
 
 	c = SkyCoord(ra=float(ra)*u.degree, dec=float(dec) * u.degree, frame='icrs')
 	tess = lk.search_tesscut(c,sector=sector)
-	tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=size,download_dir=cache_dir)
+	tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=size,download_dir=save_path,cache_dir=cache_dir)
+	
+	os.system(f'mv {tpf.path} {save_path}')
+	os.system(f'rm -r {save_path}/tesscut')
 
 	if tpf is None:
 		m = 'Failure in TESScut api, not sure why.'
 		raise ValueError(m)
-	
-	else:
-		os.system(f'mv {tpf.path} {os.getcwd()}')
 
 def external_get_TESS():
 
@@ -668,12 +729,16 @@ def external_get_TESS():
 			if not found:
 				target = thing
 			else:
-				print('Too Many tpfs here!')
-	tpf = lk.TessTargetPixelFile(target)
+
+				e = 'Too Many tpfs here!'
+				raise FileNotFoundError(e)
+	if target is not None:
+		tpf = lk.TessTargetPixelFile(target)
+	else:
+		e = 'No available local TPF found!'
+		raise FileNotFoundError(e)
+	
 	return tpf
-
-
-
 
 def sig_err(data,err=None,sig=5,maxiter=10):
 	if sig is None:
@@ -695,7 +760,7 @@ def sig_err(data,err=None,sig=5,maxiter=10):
 		mask = np.isnan(clipped)
 	else:
 		mask = sigma_clip(data,sigma_upper=sig,sigma_lower=10).mask
-	return mask
+	return mask	
 
 
 def Identify_masks(Obj):
@@ -773,88 +838,11 @@ def Multiple_day_breaks(lc):
 	-------
 	removed_flux - 3d array
 	"""
-	ind = np.where(~np.isnan(lc[1]))[0]
+	ind = np.where(~np.isnan(lc[1]))[0] 
 	breaks = np.array([np.where(np.diff(lc[0][ind]) > .5)[0] +1])
 	breaks = np.insert(breaks,0,0)
 	breaks = np.append(breaks,len(lc[0]))
 	return breaks
-
-
-
-### Serious source mask
-from .catalog_tools import *
-from sklearn.cluster import OPTICS
-def Cat_mask(tpf,maglim=19,scale=1,strapsize=3,badpix=None,ref=None,sigma=3):
-	"""
-	Make a source mask from the PS1 and Gaia catalogs.
-
-	------
-	Inputs
-	------
-	tpf : lightkurve target pixel file
-		tpf of the desired region
-	maglim : float
-		magnitude limit in PS1 i band  and Gaia G band for sources.
-	scale : float
-		scale factor for default mask size 
-	strapsize : int
-		size of the mask for TESS straps 
-	badpix : str
-		not implemented correctly, so just ignore! 
-
-	-------
-	Returns
-	-------
-	total mask : bitmask
-		a bitwise mask for the given tpf. Bits are as follows:
-		0 - background
-		1 - catalogue source
-		2 - saturated source
-		4 - strap mask
-		8 - bad pixel (not used)
-	"""
-	from .cat_mask import Big_sat, gaia_auto_mask, ps1_auto_mask, Strap_mask
-	wcs = tpf.wcs
-	image = tpf.flux[100]
-	image = strip_units(image)
-	gp,gm = Get_Gaia(tpf,magnitude_limit=maglim)
-	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm]).T,columns=['x','y','mag'])
-	#if tpf.dec > -30:
-	#	pp,pm = Get_PS1(tpf,magnitude_limit=maglim)
-	#	ps1   = pd.DataFrame(np.array([pp[:,0],pp[:,1],pm]).T,columns=['x','y','mag'])
-	#	mp  = ps1_auto_mask(ps1,image,scale)
-	#else:
-	#	mp = {}
-	#	mp['all'] = np.zeros_like(image)
-	
-	sat = Big_sat(gaia,image,scale)
-	if ref is None:
-		mg  = gaia_auto_mask(gaia,image,scale)
-		mask = (mg['all'] > 0).astype(int) * 1 # assign 1 bit
-	else:
-		mg = np.zeros_like(ref,dtype=int)
-		mean, med, std = sigma_clipped_stats(ref)
-		lim = med + sigma * std
-		ind = ref > lim
-		mg[ind] = 1
-		mask = (mg > 0).astype(int) * 1 # assign 1 bit
-	
-
-	sat = (np.nansum(sat,axis=0) > 0).astype(int) * 2 # assign 2 bit 
-	#mask = ((mg['all']+mp['all']) > 0).astype(int) * 1 # assign 1 bit
-	
-	if strapsize > 0: 
-		strap = Strap_mask(image,tpf.column,strapsize).astype(int) * 4 # assign 4 bit 
-	else:
-		strap = np.zeros_like(image,dtype=int)
-	if badpix is not None:
-		bp = cat_mask.Make_bad_pixel_mask(badpix, file)
-		totalmask = mask | sat | strap | bp
-	else:
-		totalmask = mask | sat | strap
-	
-	return totalmask, gaia
-
 
 #### CLUSTERING 
 
@@ -895,3 +883,302 @@ def Cluster_cut(lc,err=None,sig=3,smoothing=True,buffer=48*2):
 	mask = np.nansum(segments[overlap],axis=0)>0 
 	mask = convolve(mask,np.ones(buffer)) > 0
 	return mask
+
+
+def _Get_images(ra,dec,filters):
+	
+	"""Query ps1filenames.py service to get a list of images"""
+	
+	service = "https://ps1images.stsci.edu/cgi-bin/ps1filenames.py"
+	url = f"{service}?ra={ra}&dec={dec}&filters={filters}"
+	table = Table.read(url, format='ascii')
+	return table
+
+def _Get_url(ra, dec, size, filters, color=False):
+	
+	"""Get URL for images in the table"""
+	
+	table = _Get_images(ra,dec,filters=filters)
+	url = (f"https://ps1images.stsci.edu/cgi-bin/fitscut.cgi?"
+		   f"ra={ra}&dec={dec}&size={size}&format=jpg")
+   
+	# sort filters from red to blue
+	flist = ["yzirg".find(x) for x in table['filter']]
+	table = table[np.argsort(flist)]
+	if color:
+		if len(table) > 3:
+			# pick 3 filters
+			table = table[[0,len(table)//2,len(table)-1]]
+		for i, param in enumerate(["red","green","blue"]):
+			url = url + "&{}={}".format(param,table['filename'][i])
+	else:
+		urlbase = url + "&red="
+		url = []
+		for filename in table['filename']:
+			url.append(urlbase+filename)
+	return url
+
+def _Get_im(ra, dec, size,color):
+	
+	"""Get color image at a sky position"""
+
+	if color:
+		url = _Get_url(ra,dec,size=size,filters='grz',color=True)
+		r = requests.get(url)
+	else:
+		url = _Get_url(ra,dec,size=size,filters='i')
+		r = requests.get(url[0])
+	im = Image.open(BytesIO(r.content))
+	return im
+
+def _Panstarrs_phot(ra,dec,size):
+
+	grey_im = _Get_im(ra,dec,size=size*4,color=False)
+	colour_im = _Get_im(ra,dec,size=size*4,color=True)
+
+	plt.rcParams.update({'font.size':12})
+	plt.figure(1,figsize=(3*fig_width,1*fig_width))
+	plt.subplot(121)
+	plt.imshow(grey_im,origin="lower",cmap="gray")
+	plt.title('PS1 i')
+	plt.xlabel('px (0.25")')
+	plt.ylabel('px (0.25")')
+	plt.subplot(122)
+	plt.title('PS1 grz')
+	plt.imshow(colour_im,origin="lower")
+	plt.xlabel('px (0.25")')
+	plt.ylabel('px (0.25")')
+
+
+def _Skymapper_phot(ra,dec,size):
+	"""
+	Gets g,r,i from skymapper.
+	"""
+
+	size /= 3600
+
+	url = f"https://api.skymapper.nci.org.au/public/siap/dr2/query?POS={ra},{dec}&SIZE={size}&BAND=g,r,i&FORMAT=GRAPHIC&VERB=3"
+	table = Table.read(url, format='ascii')
+
+	# sort filters from red to blue
+	flist = ["irg".find(x) for x in table['col3']]
+	table = table[np.argsort(flist)]
+
+	if len(table) > 3:
+		# pick 3 filters
+		table = table[[0,len(table)//2,len(table)-1]]
+
+	plt.rcParams.update({'font.size':12})
+	plt.figure(1,figsize=(3*fig_width,1*fig_width))
+
+	plt.subplot(131)
+	url = table[2][3]
+	r = requests.get(url)
+	im = Image.open(BytesIO(r.content))
+	plt.imshow(im,origin="upper",cmap="gray")
+	plt.title('SkyMapper g')
+	plt.xlabel('px (1.1")')
+
+	plt.subplot(132)
+	url = table[1][3]
+	r = requests.get(url)
+	im = Image.open(BytesIO(r.content))
+	plt.title('SkyMapper r')
+	plt.imshow(im,origin="upper",cmap="gray")
+	plt.xlabel('px (1.1")')
+
+	plt.subplot(133)
+	url = table[0][3]
+	r = requests.get(url)
+	im = Image.open(BytesIO(r.content))
+	plt.title('SkyMapper i')
+	plt.imshow(im,origin="upper",cmap="gray")
+	plt.xlabel('px (1.1")')
+
+def event_cutout(coords,size=50,phot=None):
+
+	if phot is None:
+		if coords[1] > -10:
+			phot = 'PS1'
+		else:
+			phot = 'SkyMapper'
+		
+	if phot == 'PS1':
+		_Panstarrs_phot(coords[0],coords[1],size)
+
+	elif phot.lower() == 'skymapper':
+		_Skymapper_phot(coords[0],coords[1],size)
+
+	else:
+		print('Photometry name invalid.')
+
+def Extract_fits(pixelfile):
+	"""
+	Quickly extract fits
+	"""
+	try:
+		hdu = fits.open(pixelfile)
+		return hdu
+	except OSError:
+		print('OSError ',pixelfile)
+		return
+
+def regional_stats_mask(image,size=90,sigma=3,iters=10):
+	if size < 30:
+		print('!!! Region size is small !!!')
+	sx, sy = image.shape
+	X, Y = np.ogrid[0:sx, 0:sy]
+	regions = sy//size * (X//size) + Y//size
+	max_reg = np.max(regions)
+
+	clip = np.zeros_like(image)
+	for i in range(max_reg+1):
+		rx,ry = np.where(regions == i)
+		m,me, s = sigma_clipped_stats(image[ry,rx],maxiters=iters)
+		cut_ind = np.where((image[rx,ry] >= me+sigma*s) | (image[rx,ry] <= me-sigma*s))
+		clip[rx[cut_ind],ry[cut_ind]] = 1
+	return clip
+
+
+
+def subdivide_region(flux,ideal_size=90):
+	sx, sy = flux.shape
+	valid = np.arange(0,101)
+	ystep = valid[np.where(sy / valid == sy // valid)[0]]
+	xstep = valid[np.where(sx / valid == sx // valid)[0]]
+
+	ysteps = ystep[np.argmin((abs((sy / ystep) - ideal_size)))].astype(int)
+	xsteps = xstep[np.argmin((abs((sx / xstep) - ideal_size)))].astype(int)
+	ystep = sy//ystep[np.argmin((abs((sy / ystep) - ideal_size)))].astype(int)
+	xstep = sx//xstep[np.argmin((abs((sx / xstep) - ideal_size)))].astype(int)
+
+	regions = np.zeros_like(flux)
+	counter = 0
+	for i in range(ysteps):
+		for j in range(xsteps):
+			regions[i*ystep:(i+1)*ystep,j*xstep:(j+1)*xstep] = counter
+			counter += 1
+			
+	max_reg = np.max(regions)
+	return regions, max_reg, ystep, xstep
+
+def Surface_names2model(names):
+	# C[i] * X^n * Y^m
+	return ' + '.join([
+				f"C[{i}]*{n.replace(' ','*')}"
+				for i,n in enumerate(names)])
+
+def clip_background(bkg,mask,sigma=3,kern_size=5):
+	regions, max_reg, ystep, xstep = subdivide_region(bkg)
+	b2 = deepcopy(bkg)
+	for j in range(2):
+		for region in range(int(max_reg)):
+			ry,rx = np.where(regions == region)
+			y = ry.reshape(ystep,xstep)
+			x = rx.reshape(ystep,xstep)
+			sm = abs((mask & 1)-1)[y,x] * 1.0
+			sm[sm==0] = np.nan
+			cut = b2[y,x]
+			if j > 0:
+				masked = cut * sm
+			else:
+				masked = cut
+			xx = x.reshape(-1,1)
+			yy = y.reshape(-1,1)
+			zz = masked.reshape(-1,1)
+			ind = np.where(np.isfinite(zz))
+			order = 6
+			model = make_pipeline(PolynomialFeatures(degree=order),
+										 LinearRegression(fit_intercept=False))
+			model.fit(np.c_[xx[ind], yy[ind]], zz[ind])
+			m = Surface_names2model(model[0].get_feature_names_out(['X', 'Y']))
+			C = model[1].coef_.T  # coefficients
+			r2 = model.score(np.c_[xx[ind], yy[ind]], zz[ind])  # R-squared
+			ZZ = model.predict(np.c_[x.flatten(), y.flatten()]).reshape(x.shape)
+			diff = cut - ZZ
+			m,me, s = sigma_clipped_stats(diff,maxiters=10)
+			ind_arr = (diff >= (me+sigma*s)) | (diff <= (me-sigma*s))
+			ind_arr = fftconvolve(ind_arr,np.ones((kern_size,kern_size)),mode='same')
+			ind_arr = ind_arr > 0.8
+			cut_ind = np.where(ind_arr)
+			bkg2 = deepcopy(cut)
+			bkg2[cut_ind] = ZZ[cut_ind]
+			#bkg2 = ZZ
+			b2[y,x] = bkg2
+	return b2
+
+def grad_clip_fill_bkg(bkg,sigma=3,max_size=1000):
+	a,b = np.gradient(bkg)
+	c = np.nanmax([abs(a),abs(b)],axis=0)
+	a_mean,a_med,a_std = sigma_clipped_stats(abs(a),maxiters=10)
+	b_mean,b_med,b_std = sigma_clipped_stats(abs(b),maxiters=10)
+	bp = (abs(b) - b_med) > 3*b_std
+	bp = fftconvolve(bp,np.ones((3,3)),mode='same') > 0.8
+	ap = (abs(a) - a_med) > 3*a_std
+	ap = fftconvolve(ap,np.ones((3,3)),mode='same') > 0.8
+
+	b_labeled, b_objects = label(bp) 
+	a_labeled, a_objects = label(ap) 
+
+	b_obj_size = []
+	for i in range(b_objects):
+		b_obj_size += [np.sum(b_labeled==i)]
+	b_obj_size = np.array(b_obj_size)
+
+	a_obj_size = []
+	for i in range(a_objects):
+		a_obj_size += [np.sum(a_labeled==i)]
+	a_obj_size = np.array(a_obj_size)
+
+	for i in range(a_objects):
+		if (a_obj_size[i] >= max_size) | (a_obj_size[i] <= 9):
+			a_labeled[a_labeled==i] = 0
+
+	for i in range(b_objects):
+		if (b_obj_size[i] >= max_size) | (b_obj_size[i] <= 9):
+			b_labeled[b_labeled==i] = 0
+			
+			
+	overlap = (a_labeled>0) & (b_labeled>0)
+	y,x = np.where(overlap)
+
+
+	good_a = np.unique(a_labeled[y,x])
+	good_b = np.unique(b_labeled[y,x])
+
+	a_ratio = []
+	for ind in good_a:
+		eh = a_labeled == ind
+		eh2 = eh * overlap
+		ratio = np.sum(eh2) / np.sum(eh)
+		a_ratio += [ratio]
+	a_ratio = np.array(a_ratio)
+		
+		
+	b_ratio = []
+	for ind in good_b:
+		eh = b_labeled == ind 
+		eh2 = eh * overlap
+		ratio = np.sum(eh2) / np.sum(eh)
+		b_ratio += [ratio]
+	b_ratio = np.array(b_ratio)
+
+
+	for i in good_a[a_ratio<0.2]: 
+		a_labeled[a_labeled==i] = 0
+	for i in good_b[b_ratio<0.2]: 
+		b_labeled[b_labeled==i] = 0
+	c = (a_labeled + b_labeled) > 0
+
+	c_labeled, c_objects = label(c==0) 
+	for i in range(c_objects):
+		if np.sum(c_labeled==i) < 10:
+			c[c_labeled==i] = 1
+	
+	#points = fftconvolve(c,np.ones((5,5)),mode='same')
+	points = c>0#oints > 0.8
+	data = deepcopy(bkg)
+	data[points] = np.nan
+	estimate = inpaint.inpaint_biharmonic(data,points)
+	return estimate
+

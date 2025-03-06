@@ -11,6 +11,8 @@ from shutil import rmtree
 
 from setuptools import find_packages, setup, Command
 
+version = exec(open('tessreduce/__version__.py').read())
+
 # Package meta-data.
 NAME = 'tessreduce'
 DESCRIPTION = 'Reduce TESS target pixel files.'
@@ -18,7 +20,7 @@ URL = 'https://github.com/CheerfulUser/TESSreduce'
 EMAIL = 'ryanridden@gmail.com'
 AUTHOR ='Ryan Ridden-Harper'
 REQUIRES_PYTHON = '>=3.9.0'
-VERSION = '1.0.0'
+VERSION = version
 
 # What packages are required for this module to be executed?
 REQUIRED = ['lightkurve>=2.0.0',

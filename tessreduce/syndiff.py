@@ -1,33 +1,75 @@
 from astropy.table import Table
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy import interpolate
 from schwimmbad import MultiPool
 from astropy.io import fits
 from astropy.wcs import WCS
 import matplotlib.path as pat
-from copy import deepcopy
 from scipy.ndimage import  rotate
 from astropy.convolution import Gaussian2DKernel
 from scipy import signal
 
 
-
 def pix2coord(x, y, mywcs):
 	"""
-	Calculates RA and DEC from the pixel coordinates
+	Calculates RA and DEC from the given pixel coordinates
+
+	Parameters:
+	----------
+	x: float
+		The x coordiante to be changed into a world coordinate
+	y: float
+		The y coordiante to be changed into a world coordinate
+	mywcs: astropy.wcs.WCS
+		The World Coordinate System to be used for the conversion.
+	
+	Returns:
+	-------
+	world_coords: NDArray shape(2,)
+		An array with RA and DEC point, calculated from the given x and y points and the WCS
 	"""
 	wx, wy = mywcs.all_pix2world(x, y, 0)
-	return np.array([float(wx), float(wy)])
+	world_coords = np.array([float(wx), float(wy)])
+	return world_coords
 
-def coord2pix(x, y, mywcs):
+def coord2pix(ra, dec, mywcs):
 	"""
-	Calculates RA and DEC from the pixel coordinates
+	Calculates the pixel coordinates from the RA and DEC values given
+
+	Parameters:
+	ra: ArrayLike, shape(N,)
+		The RA value to be changed into pixel coordinates
+	dec:  ArrayLike, shape(N,)
+		The DEC value to be changed into pixel coordinates
+	mywcs: astropy.wcs.WCS
+		The World Coordinate System to be used for the conversion.
+
+	Returns:
+	-------
+	pixel_coords:  NDarray, shape(2,)
+		An NDarray of the x and y coordinate, calculated from the given RA and DEC values and the WCS
 	"""
-	wx, wy = mywcs.all_world2pix(x, y, 0)
-	return np.array([float(wx), float(wy)])
+	wx, wy = mywcs.all_world2pix(ra, dec, 0)
+	pixel_coords = np.array([float(wx), float(wy)])
+	return pixel_coords
 
 def Get_TESS_corners(TESS,PS1_wcs):
+	"""
+	Calculates the corners of pixels in a tessreduce object that has its' own WCS and the corresponding corners of pixels in a different WCS.
+
+	Parameters:
+	----------
+	TESS: TESSreduce object
+		The object to get the corner from
+	PS1_wcs: astropy.wcs.WCS
+		The World Coordinate System to be used for any conversion between the new image 
+
+	Returns:
+	-------
+	ps_corners: NDArray
+		The corners of all the pixels in the PS1_wcs frame of reference 
+	"""
+
 	y,x = TESS.flux.shape[1:]
 	# include the top corners for the last pixels
 	x += 1; y += 1
@@ -45,6 +87,20 @@ def Get_TESS_corners(TESS,PS1_wcs):
 	return ps_corners
 
 def PS1_image_to_TESS(image,ebv = 0):
+	"""
+	?
+	Parameters:
+	----------
+	image: TYPE
+		DESCRIPTION
+	ebv: float, default 0
+		The extinction of the image
+
+	Returns:
+	-------
+	tess: TYPE
+		DESCRIPTION
+	"""
 	zp = 25
 	#gr = (PS1.gmag - PS1.rmag).values
 	
