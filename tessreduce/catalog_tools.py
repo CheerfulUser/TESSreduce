@@ -2,11 +2,8 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 import lightkurve as lk
-from scipy import interpolate
 from astropy.io import fits
 from astropy.wcs import WCS
-from astropy.coordinates import SkyCoord
-from astropy import units as u
 from astropy.coordinates import SkyCoord, Angle
 from copy import deepcopy
 import pandas as pd
@@ -38,23 +35,25 @@ def Get_Catalogue(tpf, Catalog = 'gaia'):
 	c1 = SkyCoord(tpf.ra, tpf.dec, frame='icrs', unit='deg')
 	# Use pixel scale for query size	
 	pix_scale = 21.0
+	rad = Angle(np.max(tpf.shape[1:]) * pix_scale + 60, "arcsec")
 	# We are querying with a diameter as the radius, overfilling by 2x.
 	from astroquery.vizier import Vizier
 	Vizier.ROW_LIMIT = -1
 	if Catalog == 'gaia':
 		catalog = "I/345/gaia2"
 	elif Catalog == 'dist':
-		catalog = "I/350/gaiaedr3"
+		catalog = "I/355/gaiadr3"
 	elif Catalog == 'ps1':
 		catalog = "II/349/ps1"
 	elif Catalog == 'skymapper':
-		catalog = 'II/358/smss'
+		#catalog = 'II/358/smss'
+		result = _get_skymapper(c1,rad)
 	else:
 		raise ValueError(f"{catalog} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
 	if Catalog == 'gaia':
 		result = Vizier.query_region(c1, catalog=[catalog],
 							 		 radius=Angle(np.max(tpf.shape[1:]) * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
-	else:
+	elif Catalog == 'ps1':
 		result = Vizier.query_region(c1, catalog=[catalog],
 									 radius=Angle(np.max(tpf.shape[1:]) * pix_scale + 60, "arcsec"))
 
@@ -65,9 +64,34 @@ def Get_Catalogue(tpf, Catalog = 'gaia'):
 		raise no_targets_found_message
 	elif len(result) == 0:
 		raise no_targets_found_message
-	result = result[catalog].to_pandas()
+	if Catalog != 'skymapper':
+		result = result[catalog].to_pandas()
+	if Catalog == 'ps1':
+		result = result[np.isfinite(result.rmag) & np.isfinite(result.imag)]
+		result = PS1_to_TESS_mag(result)
 	
 	return result 
+
+
+def _get_skymapper(coord,rad):
+	query = f'https://skymapper.anu.edu.au/sm-cone/public/query?RA={coord.ra.value}&DEC={coord.dec.value}&SR={np.round(rad.deg,3)}&RESPONSEFORMAT=CSV'
+	sm = pd.read_csv(query)
+	if len(sm) > 0:
+		keep = ['object_id','raj2000','dej2000','u_psf', 'e_u_psf',
+				'v_psf', 'e_v_psf','g_psf', 'e_g_psf','r_psf', 
+				'e_r_psf','i_psf', 'e_i_psf','z_psf', 'e_z_psf']
+		sm = sm[keep]
+		sm = sm.rename(columns={'raj2000':'RAJ2000','dej2000':'DEJ2000','u_psf':'umag',
+								'v_psf':'vmag','g_psf':'gmag','r_psf':'rmag',
+								'i_psf':'imag','z_psf':'zmag',
+								'e_u_psf':'e_umag','e_v_psf':'e_vmag','e_g_psf':'e_gmag',
+								'e_r_psf':'e_rmag','e_i_psf':'e_imag','e_z_psf':'e_zmag'})
+		sm = SM_to_TESS_mag(sm)
+	else:
+		sm = None
+	return sm
+
+
 
 def Get_Catalogue_External(ra,dec,size,Catalog = 'gaia'):
 	"""
@@ -106,10 +130,10 @@ def Get_Catalogue_External(ra,dec,size,Catalog = 'gaia'):
 		raise ValueError(f"{catalog} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
 	if Catalog == 'gaia':
 		result = Vizier.query_region(c1, catalog=[catalog],
-							 		 radius=Angle(size * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
+							 		 radius=Angle(size * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'},cache=False)
 	else:
 		result = Vizier.query_region(c1, catalog=[catalog],
-									 radius=Angle(size * pix_scale + 60, "arcsec"))
+									 radius=Angle(size * pix_scale + 60, "arcsec"),cache=False)
 
 	no_targets_found_message = ValueError('Either no sources were found in the query region '
 										  'or Vizier is unavailable')
@@ -274,7 +298,7 @@ def SM_to_TESS_mag(SM,ebv = 0):
 
 
 
-def Get_PS1(tpf, magnitude_limit = 18, Offset = 10):
+def Get_PS1(tpf, magnitude_limit = 20, Offset = 10):
 	"""
 	Get the coordinates and mag of all PS1 sources in the field of view.
 
@@ -303,8 +327,8 @@ def Get_PS1(tpf, magnitude_limit = 18, Offset = 10):
 	coords = tpf.wcs.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
 	Tessmag = result['tmag'].values
 	#Jmag = result['Jmag']
-	ind = (((coords[:,0] >= -10) & (coords[:,1] >= -10)) & 
-		   ((coords[:,0] < (tpf.shape[1] + 10)) & (coords[:,1] < (tpf.shape[2] + 10))))
+	ind = (((coords[:,0] >= -Offset) & (coords[:,1] >= -Offset)) & 
+		   ((coords[:,0] < (tpf.shape[1] + Offset)) & (coords[:,1] < (tpf.shape[2] + Offset))))
 	coords = coords[ind]
 	Tessmag = Tessmag[ind]
 	#Jmag = Jmag[ind]
@@ -467,29 +491,6 @@ def Reformat_df(df):
 	new_df.columns = new_cols
 	
 	return new_df
-
-# def external_save_cat(radec,size,cutCornerPx,image_path,save_path,maglim):
-	
-# 	file = Extract_fits(image_path)
-# 	wcsItem = WCS(file[1].header)
-# 	file.close()
-	
-# 	ra = radec[0]
-# 	dec = radec[1]
-
-# 	# gp,gm, source = Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit=maglim)
-# 	gp,gm, source = Get_Gaia_External(ra,dec,cutCornerPx,size,wcsItem,magnitude_limit=maglim)
-# 	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm,source]).T,columns=['ra','dec','mag','Source'])
-
-# 	gaia.to_csv(f'{save_path}/local_gaia_cat.csv',index=False)
-
-# def external_save_cat(tpf,save_path,maglim):
-	
-# 	tpf = lk.TessTargetPixelFile(tpf)
-# 	gp,gm, source = Get_Gaia_External(tpf,magnitude_limit=maglim)
-# 	gaia  = pd.DataFrame(np.array([gp[:,0],gp[:,1],gm,source]).T,columns=['ra','dec','mag','Source'])
-
-# 	gaia.to_csv(f'{save_path}/local_gaia_cat.csv',index=False)
 
 def external_save_cat(tpf,save_path,maglim):
 

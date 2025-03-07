@@ -52,6 +52,20 @@ golden_mean = (np.sqrt(5)-1.0)/2.0		 # Aesthetic ratio
 fig_width = fig_width_pt*inches_per_pt  # width in inches
 
 def strip_units(data):
+	"""
+    Removes the units off of data that was not in a NDarray, such as an astropy table. Returns an NDarray that has no units 
+
+    Parameters:
+    ----------
+    data: ArrayLike
+            ArrayLike set of data that may have associated units that want to be removed. Should be able to return something sensible when .values is called.
+
+    Returns:
+    -------
+    data: ArrayLike
+            Same shape as input data, but will not have any units
+    """
+	
 	if type(data) != np.ndarray:
 		data = data.value
 	return data
@@ -399,13 +413,37 @@ def smooth_zp(zp,time):
 
 	return smoothed, err
 
-
-
 def grads_rad(flux):
-	rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
-	return rad
+    """
+    Calculates the radius of the flux from the gradient of the flux, and the double gradient of the flux.  
+
+    Parameters:
+    ----------
+    flux: ArrayLike
+            An array of flux values
+
+    Returns:
+    -------
+    rad: ArrayLike
+            The radius of the fluxes 
+    """
+    rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
+    return rad
 
 def grad_flux_rad(flux):
+	"""
+    Calculates the radius of the flux from the gradient of the flux.  
+
+    Parameters:
+    ----------
+    flux: ArrayLike
+            An array of flux values
+
+    Returns:
+    -------
+    rad: ArrayLike
+            The radius of the fluxes 
+    """
 	rad = np.sqrt(flux**2+np.gradient(flux)**2)
 	return rad
 
@@ -628,7 +666,7 @@ def par_psf_source_mask(data,prf,sigma=5):
 	return m
 
 
-def par_psf_initialise(flux,camera,ccd,sector,column,row,cutoutSize,loc,time_ind=None,ref=False):
+def par_psf_initialise(flux,camera,ccd,sector,column,row,cutoutSize,loc,time_ind=None,ref=False,ffi=False):
 	"""
 	For gathering the cutouts and PRF base.
 	"""
@@ -639,14 +677,28 @@ def par_psf_initialise(flux,camera,ccd,sector,column,row,cutoutSize,loc,time_ind
 		loc[0] = int(loc[0]+0.5)
 	if (type(loc[1]) == float) | (type(loc[1]) == np.float64) |  (type(loc[1]) == np.float32):
 		loc[1] = int(loc[1]+0.5)
-	col = column - int(flux.shape[2]/2-1) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
-	row = row - int(flux.shape[1]/2-1) + loc[1] 
-		
-	prf = TESS_PRF(camera,ccd,sector,col,row) # initialise psf kernel
+	if ffi:
+		col = column
+	else:
+		col = column - int(flux.shape[2]/2-1) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
+		row = row - int(flux.shape[1]/2-1) + loc[1] 
+	try:
+		prf = TESS_PRF(camera,ccd,sector,col,row) # initialise psf kernel
+	except:
+		return np.nan
 	if ref:
 		cutout = (flux+ref)[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 	else:
-		cutout = flux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+		if ffi:
+			cutout = flux[loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+			prf = create_psf(prf,cutoutSize)
+			try:
+				flux,pos = par_psf_full(cutout,prf,xlim=0.5,ylim=0.5)
+			except:
+				flux = np.nan
+			return flux
+		else:
+			cutout = flux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 	prf = create_psf(prf,cutoutSize)
 	return prf, cutout
 
@@ -654,15 +706,15 @@ def par_psf_flux(image,prf,shift=[0,0]):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
 	prf.psf_flux(image,ext_shift=shift)
-	return prf.flux
+	return prf.flux, prf.eflux
 
-def par_psf_full(cutout,prf,shift=[0,0],xlim=2,ylim=2):
+def par_psf_full(cutout,prf,shift=[0,0],xlim=0.5,ylim=0.5):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
 	prf.psf_position(cutout,ext_shift=shift,limx=xlim,limy=ylim)
 	prf.psf_flux(cutout)
 	pos = [prf.source_x, prf.source_y]
-	return prf.flux, pos
+	return prf.flux, prf.eflux, pos
 
 
 def external_save_TESS(ra,dec,sector,size=90,save_path=None,quality_bitmask='default',cache_dir=None):
@@ -680,11 +732,6 @@ def external_save_TESS(ra,dec,sector,size=90,save_path=None,quality_bitmask='def
 	if tpf is None:
 		m = 'Failure in TESScut api, not sure why.'
 		raise ValueError(m)
-	
-	# else:
-	# 	if save_path is None:
-	# 		save_path = os.getcwd()
-	# 	os.system(f'mv {tpf.path} {save_path}')
 
 def external_get_TESS():
 

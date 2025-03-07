@@ -25,7 +25,7 @@ obs = tr.sn_lookup('sn2018fub')
 ```
 
 ```python
-tess = tr.tessreduce(obs_list=obs,plot=False)
+tess = tr.tessreduce(obs_list=obs)
 ```
 ![plot](./figs/fub.png)
 
@@ -38,6 +38,26 @@ sector = 2
 tess = tr.tessreduce(ra=ra,dec=dec,sector=sector)
 ```
 
+If you have a downloaded TPF you can load that directly into tessreduce.
+```python
+tess = tr.tessreduce(tpf='file')
+```
+
+
+# Photometry method
+
+TESSreduce can perform aperture and PSF photometry. The photometry method used is set by the `phot_method` option which can either be `aperture` or `psf`. In general the PSF method appears to be more robust, however, there are cases where aperture still provides a better lightcurve. The default method is `aperture`. Using the example above we can use different photometry methods as follows.
+
+```python
+tess = tr.tessreduce(obs_list=obs,phot_method='psf') # runs PSF photometry for reduction
+tess = tr.tessreduce(obs_list=obs,phot_method='aperture') # runs aperture photometry for reduction
+```
+You can also define the photometry method when creating a lightcurve with `diff_lc` as follows.
+```python
+lc, sky = tess.diff_lc(phot_method='psf')
+```
+
+The PRF photometry method uses the TESS_PRF package which can be found here: https://github.com/keatonb/TESS_PRF
 
 # Flux calibration
 
@@ -56,7 +76,25 @@ tess.plotter()
 ![plot](./figs/fub_cal.png)
 
 
-There are a lot of other functions burried in TESSreduce which currently aren't well documented, so for more information contact me at: ryan.ridden@canterbury.ac.nz
+# Extracting key variables 
+
+The main variables that TESSreduce assigns during the reduction can be accessed as follows:
+- flux: `tess.flux `
+- background: `tess.bkg`
+- reference: `tess.ref`
+- reference index: `tess.ref_ind`
+- lightcurve: `tess.lc`
+- Mask: `tess.mask`
+- Source catalog: `tess.cat`
+
+
+TESS data can be complicated, and there are a lot of other functions burried in TESSreduce, so if you want some guidence on how to do a specific analysis contact me at: ryan.ridden@canterbury.ac.nz
+
+# Example reductions
+
+We include a few notebooks for some possible reductions and science cases in the examples folder. 
+
+
 
 # Citing TESSreduce
 
