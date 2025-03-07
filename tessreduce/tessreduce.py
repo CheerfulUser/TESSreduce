@@ -1670,7 +1670,8 @@ class tessreduce():
 					flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i]) for i in inds))
 				else:
 					for i in range(len(cutouts)):
-						flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
+						flux += [par_psf_flux(cutouts[i],base,self.shift[i])[0]]
+						eflux += [par_psf_flux(cutouts[i],base,self.shift[i])[1]]
 			if plot:
 				plt.figure()
 				plt.plot(flux)
@@ -2641,10 +2642,6 @@ class tessreduce():
 		if self.phot_method == 'aperture':
 			flux[~eind] = np.nan
 		
-		print(type(flux))
-		print(flux.shape)
-		print(type(d.tmag.values))
-		print(d.tmag.values.shape)
 		#calculate the zeropoint
 		zp = d.tmag.values[:,np.newaxis] + 2.5*np.log10(flux) 
   		# zp = d.tmag.values[:, np.newaxis, np.newaxis]  + 2.5*np.log10(flux) 
