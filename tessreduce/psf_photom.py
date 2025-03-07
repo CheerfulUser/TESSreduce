@@ -225,7 +225,7 @@ class create_psf():
         mask = np.zeros_like(self.psf)
         mask[self.psf > np.nanpercentile(self.psf,90)] = 1
         f0 = np.nansum(image*mask)
-        print(f0)
+        # print(f0)
         #bkg = np.nanmedian(image[~mask.astype(bool)])
         #image = image - bkg
 
