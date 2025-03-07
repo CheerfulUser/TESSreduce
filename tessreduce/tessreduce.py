@@ -1669,10 +1669,13 @@ class tessreduce():
 					inds = np.arange(len(cutouts))
 					flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i]) for i in inds))
 				else:
+					print('Non-parallell')
 					for i in range(len(cutouts)):
 						flux += [par_psf_flux(cutouts[i],base,self.shift[i])[0]]
 						eflux += [par_psf_flux(cutouts[i],base,self.shift[i])[1]]
-			if plot:
+			
+			print('Test1:', len(flux))
+   			if plot:
 				plt.figure()
 				plt.plot(flux)
 				plt.ylabel('Flux')
@@ -1692,6 +1695,7 @@ class tessreduce():
 				ax.plot(flux)
 				ax.set_ylabel('Flux')
 		flux = np.array(flux)
+		print('Test2:', flux.shape)
 		eflux = np.array(eflux)
 		return flux, eflux
 
