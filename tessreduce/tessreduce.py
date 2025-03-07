@@ -1673,9 +1673,11 @@ class tessreduce():
 					for i in range(len(cutouts)):
 						flux += [par_psf_flux(cutouts[i],base,self.shift[i])[0]]
 						eflux += [par_psf_flux(cutouts[i],base,self.shift[i])[1]]
-			
+      
+						if i == 10:
+							print('Extra test:', len(par_psf_flux(cutouts[i],base,self.shift[i])[0]))
 			print('Test1:', len(flux))
-   			if plot:
+			if plot:
 				plt.figure()
 				plt.plot(flux)
 				plt.ylabel('Flux')
