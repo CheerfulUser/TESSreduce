@@ -2641,9 +2641,13 @@ class tessreduce():
 		if self.phot_method == 'aperture':
 			flux[~eind] = np.nan
 		
-
+		print(type(flux))
+		print(flux.shape)
+		print(type(d.tmag.values))
+		print(d.tmag.values.shape)
 		#calculate the zeropoint
 		zp = d.tmag.values[:,np.newaxis] + 2.5*np.log10(flux) 
+  		# zp = d.tmag.values[:, np.newaxis, np.newaxis]  + 2.5*np.log10(flux) 
 		if len(zp) == 0:
 			zp = np.array([20.44])
 		
