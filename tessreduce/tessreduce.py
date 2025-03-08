@@ -1673,10 +1673,6 @@ class tessreduce():
 					for i in range(len(cutouts)):
 						flux += [par_psf_flux(cutouts[i],base,self.shift[i])[0]]
 						eflux += [par_psf_flux(cutouts[i],base,self.shift[i])[1]]
-      
-						if i == 10:
-							print('Extra test:', len(par_psf_flux(cutouts[i],base,self.shift[i])[0]))
-			print('Test1:', len(flux))
 			if plot:
 				plt.figure()
 				plt.plot(flux)
@@ -1697,7 +1693,7 @@ class tessreduce():
 				ax.plot(flux)
 				ax.set_ylabel('Flux')
 		flux = np.array(flux)
-		print('Test2:', flux.shape)
+		# print('New flux shape:', flux.shape)
 		eflux = np.array(eflux)
 		return flux, eflux
 
@@ -2630,7 +2626,8 @@ class tessreduce():
 			if self.phot_method == 'aperture':
 				flux += [np.nansum(tflux*mask,axis=(1,2))]
 			elif self.phot_method == 'psf':
-				flux += [self.psf_photometry(xPix=xx,yPix=yy,snap='ref',diff=False)]
+				flux += [self.psf_photometry(xPix=xx,yPix=yy,snap='ref',diff=False)[0]]
+				e_flux += [self.psf_photometry(xPix=xx,yPix=yy,snap='ref',diff=False)[1]]
 			m2 = np.zeros_like(self.ref)
 			m2[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
 			m2 = convolve(m2,np.ones((7,7))) - convolve(m2,np.ones((5,5)))
