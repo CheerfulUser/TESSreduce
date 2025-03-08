@@ -1617,6 +1617,7 @@ class tessreduce():
 		if diff is None:
 			diff = self.diff
 		flux = []
+		eflux = []
 
 		# if isinstance(xPix,(list,np.ndarray)):
 		# 	self.moving_psf_phot() 
@@ -1669,8 +1670,10 @@ class tessreduce():
 					inds = np.arange(len(cutouts))
 					flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i]) for i in inds))
 				else:
+					print('Non-parallell')
 					for i in range(len(cutouts)):
-						flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
+						flux += [par_psf_flux(cutouts[i],base,self.shift[i])[0]]
+						eflux += [par_psf_flux(cutouts[i],base,self.shift[i])[1]]
 			if plot:
 				plt.figure()
 				plt.plot(flux)
@@ -1691,6 +1694,7 @@ class tessreduce():
 				ax.plot(flux)
 				ax.set_ylabel('Flux')
 		flux = np.array(flux)
+		# print('New flux shape:', flux.shape)
 		eflux = np.array(eflux)
 		return flux, eflux
 
@@ -2623,7 +2627,8 @@ class tessreduce():
 			if self.phot_method == 'aperture':
 				flux += [np.nansum(tflux*mask,axis=(1,2))]
 			elif self.phot_method == 'psf':
-				flux += [self.psf_photometry(xPix=xx,yPix=yy,snap='ref',diff=False)]
+				flux += [self.psf_photometry(xPix=xx,yPix=yy,snap='ref',diff=False)[0]]
+				eflux += [self.psf_photometry(xPix=xx,yPix=yy,snap='ref',diff=False)[1]]
 			m2 = np.zeros_like(self.ref)
 			m2[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
 			m2 = convolve(m2,np.ones((7,7))) - convolve(m2,np.ones((5,5)))
@@ -2641,9 +2646,9 @@ class tessreduce():
 		if self.phot_method == 'aperture':
 			flux[~eind] = np.nan
 		
-
 		#calculate the zeropoint
 		zp = d.tmag.values[:,np.newaxis] + 2.5*np.log10(flux) 
+  		# zp = d.tmag.values[:, np.newaxis, np.newaxis]  + 2.5*np.log10(flux) 
 		if len(zp) == 0:
 			zp = np.array([20.44])
 		
