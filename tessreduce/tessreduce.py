@@ -1617,6 +1617,7 @@ class tessreduce():
 		if diff is None:
 			diff = self.diff
 		flux = []
+		eflux = []
 
 		# if isinstance(xPix,(list,np.ndarray)):
 		# 	self.moving_psf_phot() 
