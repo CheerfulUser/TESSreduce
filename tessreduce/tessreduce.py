@@ -2628,7 +2628,7 @@ class tessreduce():
 				flux += [np.nansum(tflux*mask,axis=(1,2))]
 			elif self.phot_method == 'psf':
 				flux += [self.psf_photometry(xPix=xx,yPix=yy,snap='ref',diff=False)[0]]
-				e_flux += [self.psf_photometry(xPix=xx,yPix=yy,snap='ref',diff=False)[1]]
+				eflux += [self.psf_photometry(xPix=xx,yPix=yy,snap='ref',diff=False)[1]]
 			m2 = np.zeros_like(self.ref)
 			m2[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
 			m2 = convolve(m2,np.ones((7,7))) - convolve(m2,np.ones((5,5)))
