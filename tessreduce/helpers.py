@@ -702,10 +702,10 @@ def par_psf_initialise(flux,camera,ccd,sector,column,row,cutoutSize,loc,time_ind
 	prf = create_psf(prf,cutoutSize)
 	return prf, cutout
 
-def par_psf_flux(image,prf,shift=[0,0]):
+def par_psf_flux(image,prf,shift=[0,0],bkg_poly_order=3,kernel=None):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
-	prf.psf_flux(image,ext_shift=shift)
+	prf.psf_flux(image,ext_shift=shift,poly_order=bkg_poly_order,kernel=kernel)
 	return prf.flux, prf.eflux
 
 def par_psf_full(cutout,prf,shift=[0,0],xlim=0.5,ylim=0.5):

@@ -2,6 +2,7 @@ import numpy as np
 from skimage.util.shape import view_as_windows
 from scipy.optimize import minimize
 from scipy.ndimage import shift
+from scipy.signal import fftconvolve
 
 """
 PSF photometry class repurposed from Starkiller by Hugh Roxburgh
@@ -125,7 +126,7 @@ class create_psf():
         residual = np.nansum(diff)
         return np.exp(residual)
     
-    def psf_position(self,image,limx=1,limy=1,ext_shift=[0,0]):
+    def psf_position(self,image,limx=1.5,limy=1.5,ext_shift=[0,0]):
         """
         Finds the optimal psf fit
         
@@ -158,7 +159,7 @@ class create_psf():
         res = minimize(self.minimize_position, coeff, args=(normimage,ext_shift), method='Powell',bounds=lims)
         self.psf_fit = res
 
-    def minimize_psf_flux(self,coeff,image,surface=True,order=2):
+    def minimize_psf_flux(self,coeff,image,surface=True,order=2,kernel=None):
 
         """
         
@@ -189,10 +190,13 @@ class create_psf():
             s = polynomial_surface(xx,yy,plane_coeff,order)
         else:
             s = 0
+        if kernel is not None:
+            self.psf = fftconvolve(self.psf, kernel, mode='same')
+
         res = np.nansum((image - self.psf*coeff[0] - s)**2)
         return res
 
-    def psf_flux(self,image,ext_shift=None,surface=True,poly_order=3):
+    def psf_flux(self,image,ext_shift=None,surface=True,poly_order=3,kernel=None):
 
         """
         
@@ -225,7 +229,6 @@ class create_psf():
         mask = np.zeros_like(self.psf)
         mask[self.psf > np.nanpercentile(self.psf,90)] = 1
         f0 = np.nansum(image*mask)
-        print(f0)
         #bkg = np.nanmedian(image[~mask.astype(bool)])
         #image = image - bkg
 
@@ -236,7 +239,7 @@ class create_psf():
         else:
             initial = f0
         
-        res = minimize(self.minimize_psf_flux,initial,args=(image,surface,poly_order),method='BFGS')
+        res = minimize(self.minimize_psf_flux,initial,args=(image,surface,poly_order,kernel),method='BFGS')
         error = np.sqrt(np.diag(res['hess_inv']))
         self.res = res
         self.flux = res.x[0]

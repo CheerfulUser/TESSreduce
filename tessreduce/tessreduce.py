@@ -38,6 +38,7 @@ from .lastpercent import *
 from .psf_photom import create_psf
 from .helpers import *
 from .cat_mask import Cat_mask
+from .delta_function_fitting import parallel_delta_diff
 
 # turn off runtime warnings (lots from logic on nans)
 import warnings
@@ -62,7 +63,7 @@ fig_width = fig_width_pt*inches_per_pt  # width in inches
 class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,
-				 reduce=True,align=True,diff=True,corr_correction=True,calibrate=True,sourcehunt=True,
+				 reduce=True,align=True,diff=True,corr_correction=True,kernel_match=False,calibrate=True,sourcehunt=True,
 				 phot_method='aperture',imaging=False,parallel=True,num_cores=-1,diagnostic_plot=False,plot=True,
 				 savename=None,quality_bitmask='default',cache_dir=None,catalogue_path=False,
 				 prf_path=None,verbose=1):
@@ -141,6 +142,7 @@ class tessreduce():
 		self.calibrate = calibrate
 		self.corr_correction = corr_correction
 		self.diff = diff
+		self.kernel_match = kernel_match
 		self.imaging = imaging
 		self.parallel = parallel
 		if type(num_cores) == str:
@@ -171,6 +173,7 @@ class tessreduce():
 		self.shift = None
 		self.bkg = None
 		self.flux = None
+		self.delta_kernel = None
 		self.ref = None
 		self.ref_ind = None
 		self.wcs = None	
@@ -1039,7 +1042,8 @@ class tessreduce():
 		return binf, bint
 
 	def diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
-				sky_in=5,sky_out=9,phot_method=None,psf_snap='brightest',plot=None,savename=None,mask=None,diff = True):
+				sky_in=5,sky_out=9,phot_method=None,psf_snap='brightest',
+				bkg_poly_order=3,plot=None,savename=None,mask=None,diff = True):
 		"""
 		Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
 		then it degaults to the centre. Sky flux is calculated with an annulus aperture surrounding 
@@ -1147,7 +1151,7 @@ class tessreduce():
 			if psf_snap is None:
 				psf_snap = 'brightest'
 
-			tar, tar_err = self.psf_photometry(x,y,diff=diff,snap=psf_snap)
+			tar, tar_err = self.psf_photometry(x,y,diff=diff,snap=psf_snap,bkg_poly_order=bkg_poly_order)
 		nan_ind = np.where(np.nansum(self.flux,axis=(1,2))==0,True,False)
 		nan_ind[self.ref_ind] = False
 		tar[nan_ind] = np.nan
@@ -1577,7 +1581,7 @@ class tessreduce():
 		pos[0,:] += xpos; pos[1,:] += ypos
 		return flux, pos
 
-	def psf_photometry(self,xPix,yPix,size=7,snap='brightest',ext_shift=True,plot=False,diff=None):
+	def psf_photometry(self,xPix,yPix,size=7,snap='brightest',ext_shift=True,plot=False,diff=None,bkg_poly_order=3):
 		"""
 		Main PSF Photometry function
 
@@ -1667,7 +1671,10 @@ class tessreduce():
 						_, cutouts = self._psf_initialise(size,(xPix,yPix),ref=False)
 				if self.parallel:
 					inds = np.arange(len(cutouts))
-					flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i]) for i in inds))
+					if self.delta_kernel is not None:
+						flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i],bkg_poly_order,self.delta_kernel[i]) for i in inds))
+					else:
+						flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i],bkg_poly_order) for i in inds))
 				else:
 					for i in range(len(cutouts)):
 						flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
@@ -1680,12 +1687,15 @@ class tessreduce():
 		elif type(snap) == int:	   # each cutout has position snapped to 'snap' frame fit position (snap is integer)
 			base = create_psf(prf,size)
 			base.psf_position(cutouts[snap])
-			for cutout in cutouts:
-				PSF = create_psf(prf,size)
-				PSF.source_x = base.source_x
-				PSF.source_y = base.source_y
-				PSF.psf_flux(cutout)
-				flux.append(PSF.flux)
+			if self.parallel:
+				inds = np.arange(len(cutouts))
+				if self.delta_kernel is not None:
+					flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i],bkg_poly_order,self.delta_kernel[i]) for i in inds))
+				else:
+					flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i],bkg_poly_order) for i in inds))
+			else:
+				for i in range(len(cutouts)):
+					flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
 			if plot:
 				fig,ax = plt.subplots(ncols=1,figsize=(12,4))
 				ax.plot(flux)
@@ -1693,6 +1703,27 @@ class tessreduce():
 		flux = np.array(flux)
 		eflux = np.array(eflux)
 		return flux, eflux
+
+
+	def kernel_matching(self,size=7,diff=True):
+		if diff:
+			flux = deepcopy(self.flux + self.ref)
+		else:
+			flux = deepcopy(self.flux)
+		mask = self.mask == 1 
+
+		if self.parallel:
+			d, kernel = zip(*Parallel(n_jobs=self.num_cores)(delayed(parallel_delta_diff)(frame,self.ref,mask,size) for frame in flux))
+		else:
+			d = []
+			kernel = []
+			for frame in flux:
+				tmp = parallel_delta_diff(frame,self.ref,mask,size)
+				d += [tmp[0]]
+				kernel += [tmp[1]]
+		d = np.array(d)
+		self.delta_kernel = np.array(kernel)
+		self.flux = d
 
 
 	def reduce(self, aper = None, align = None, parallel = None, calibrate=None,
@@ -1838,6 +1869,8 @@ class tessreduce():
 					self.flux[np.nansum(self.tpf.flux.value,axis=(1,2))==0] = np.nan
 					if self.verbose > 0:
 						print('images shifted')
+					#if self.kernel_match:
+					#	self.kernel_matching(diff=False)
 
 			if self.diff:
 				if self.verbose > 0:
@@ -1892,7 +1925,10 @@ class tessreduce():
 					if self.verbose > 0:
 						print('background correlation correction')
 					self.correlation_corrector()
-
+				if self.kernel_match:
+					self.kernel_matching(diff=self.diff)
+					if self.verbose > 0:
+						print('kernels matched')
 
 			if self.calibrate:
 				print('field calibration')
