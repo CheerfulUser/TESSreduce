@@ -123,8 +123,8 @@ class create_psf():
 
         # -- calculate residuals -- #
         diff = abs(image - self.psf)
-        residual = np.nansum(diff)
-        return np.exp(residual)
+        residual = np.nansum(diff**2)
+        return residual#np.exp(residual)
     
     def psf_position(self,image,limx=1.5,limy=1.5,ext_shift=[0,0]):
         """
@@ -157,6 +157,7 @@ class create_psf():
         
         # -- Optimize -- #
         res = minimize(self.minimize_position, coeff, args=(normimage,ext_shift), method='Powell',bounds=lims)
+        print(res.x)
         self.psf_fit = res
 
     def minimize_psf_flux(self,coeff,image,surface=True,order=2,kernel=None):
