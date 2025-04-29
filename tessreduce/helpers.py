@@ -221,6 +221,8 @@ def Smooth_bkg(data, gauss_smooth=2, interpolate=False, extrapolate=True):
 				# end inpaint
 				estimate = inpaint.inpaint_biharmonic(data,mask)
 				#estimate = signal.fftconvolve(estimate,self.prf,mode='same')
+				if np.nanmedian(estimate) < 20:
+					gauss_smooth = gauss_smooth * 3
 				estimate = gaussian_filter(estimate,gauss_smooth)
 		else:
 			estimate = np.zeros_like(data) * np.nan	
@@ -284,7 +286,10 @@ def image_sub(theta, image, ref):
 	#translation = np.float64([[1,0,dx],[0,1, dy]])
 	#s = cv2.warpAffine(image, translation, image.shape[::-1], flags=cv2.INTER_CUBIC,borderValue=0)
 	diff = (ref-s)**2
-	return np.nansum(diff[5:-5,5:-5])
+	if image.shape[0] > 50:
+		return np.nansum(diff[10:-11,10:-11])
+	else:
+		return np.nansum(diff[5:-6,5:-6])
 
 def difference_shifts(image,ref):
 	"""

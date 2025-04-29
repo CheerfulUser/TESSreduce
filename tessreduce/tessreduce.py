@@ -66,7 +66,7 @@ class tessreduce():
 				 reduce=True,align=True,diff=True,corr_correction=True,kernel_match=False,calibrate=True,sourcehunt=True,
 				 phot_method='aperture',imaging=False,parallel=True,num_cores=-1,diagnostic_plot=False,plot=True,
 				 savename=None,quality_bitmask='default',cache_dir=None,catalogue_path=False,
-				 prf_path=None,verbose=1):
+				 shift_method='difference',prf_path=None,verbose=1):
 
 		"""
 		Class for extracting reduced TESS photometry around a target coordinate or event. 
@@ -152,6 +152,7 @@ class tessreduce():
 		self._assign_phot_method(phot_method)
 		self._sourcehunt = sourcehunt
 		self.verbose = verbose
+		self._shift_method = shift_method
 
 		# Offline Paths 
 		if catalogue_path is None:
@@ -450,7 +451,7 @@ class tessreduce():
 		c2 = data.shape[2] // 2
 		cmask = np.zeros_like(data[0],dtype=int)
 		cmask[c1,c2] = 1
-		kern = np.ones((5,5))
+		kern = np.ones((3,3))
 		cmask = convolve(cmask,kern)
 
 		fullmask = mask | cmask
@@ -751,7 +752,9 @@ class tessreduce():
 
 		ind = self.tpf.quality[start:stop] == 0
 		d = deepcopy(data[start:stop])[ind]
-		summed = np.nansum(d,axis=(1,2))
+		summed = np.nanmedian(d,axis=(1,2))
+		summed[summed <=0] = 1e5
+		lim = np.argmin(summed)
 		lim = np.percentile(summed[np.isfinite(summed)],5)
 		summed[summed>lim] = 0
 		inds = np.where(ind)[0]
@@ -857,7 +860,7 @@ class tessreduce():
 		Assigns
 		-------
 		shift : np.array
-			Median x,y shift of sources over the time series.
+			x,y shift of sources over the time series.
 
 		"""
 
@@ -868,6 +871,7 @@ class tessreduce():
 		
 		sources = ((self.mask & 1) ==1) * 1.0 - (self.mask & 2)
 		sources[sources<=0] = 0
+		sources[self.mask.shape[0]-3:self.mask.shape[0]+4,self.mask.shape[1]-3:self.mask.shape[1]+4] = 0
 
 		f = self.flux 
 		m = self.ref.copy() * sources
@@ -881,6 +885,8 @@ class tessreduce():
 			shifts = np.zeros((len(f),2)) * np.nan
 			for i in range(len(f)):
 				shifts[i,:] = difference_shifts(f[i],m)
+
+		shifts = Smooth_motion(shifts,self.tpf)
 
 		if self.shift is not None:
 			self.shift += shifts
@@ -900,6 +906,22 @@ class tessreduce():
 			plt.show()
 			if savename is not None:
 				plt.savefig(savename+'_disp_corr.pdf', bbox_inches = "tight")
+
+	def plot_shifts(self,savename=None):
+		t = self.tpf.time.mjd
+		shifts = self.shift
+		ind = np.where(np.diff(t) > .5)[0]
+		shifts[ind,:] = np.nan
+		plt.figure(figsize=(1.5*fig_width,1*fig_width))
+		plt.plot(t,shifts[:,0],'.',label='Row shift',alpha =0.5)
+		plt.plot(t,shifts[:,1],'.',label='Col shift',alpha =0.5)
+		plt.ylabel('Shift (pixels)',fontsize=15)
+		plt.xlabel('Time (MJD)',fontsize=15)
+		plt.legend()
+		plt.show()
+		plt.tight_layout()
+		if savename is not None:
+			plt.savefig(savename+'_alignment.pdf', bbox_inches = "tight")
 
 	def shift_images(self,median=False):
 		"""
@@ -1655,7 +1677,7 @@ class tessreduce():
 					prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
 					bkg = self.bkg[:,int(yPix),int(xPix)]
 					#lowbkg = bkg < np.nanpercentile(bkg,16)
-					weight = np.nansum(cutouts[:,int(yPix)-1:int(yPix)+2,int(xPix)-1:int(xPix)+2],axis=(1,2)) / bkg
+					weight = np.abs(np.nansum(cutouts[:,int(yPix)-1:int(yPix)+2,int(xPix)-1:int(xPix)+2],axis=(1,2))) / bkg
 					weight[np.isnan(weight)] = 0
 					ind = np.argmax(abs(weight))
 					#ind = np.where(cutouts==np.nanmax(cutouts))[0][0]
@@ -1669,6 +1691,9 @@ class tessreduce():
 					base.psf_position(ref)
 					if diff:
 						_, cutouts = self._psf_initialise(size,(xPix,yPix),ref=False)
+				elif snap == 'fixed':
+					prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
+					base = create_psf(prf,size)
 				if self.parallel:
 					inds = np.arange(len(cutouts))
 					if self.delta_kernel is not None:
@@ -1846,20 +1871,26 @@ class tessreduce():
 					print('aligning images')
 				
 				try:
-					#self.centroids_shifts_starfind()
+					if self._shift_method  == 'centroid':
+						self.centroids_shifts_starfind()
+					elif self._shift_method == 'difference':
+						self.fit_shift()
+					else:
+						m = f'Shift method {self._shift_method} is not supported, choose from:\ncentroid\ndifference'
+						raise ValueError(m)
 					#if double_shift:
 					#self.shift_images()
 					#self.ref = deepcopy(self.flux[self.ref_ind])
-					self.fit_shift()
+					
 					#self.shift_images()
 					
 				except:
 					print('Something went wrong, switching to serial')
 					self.parallel = False
-					#self.centroids_shifts_starfind()
-					self.fit_shift()
-					#self.fit_shift()
-				#self.fit_shift()
+					if self._shift_method  == 'centroid':
+						self.centroids_shifts_starfind()
+					elif self._shift_method == 'minimize':
+						self.fit_shift()
 			else:
 				self.shift = np.zeros((len(self.flux),2))
 			

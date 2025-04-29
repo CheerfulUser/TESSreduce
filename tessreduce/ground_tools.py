@@ -90,7 +90,7 @@ class ground():
         self.ps1 = None
 
 
-    def get_sn_name(self):
+    def __old_get_sn_name(self):
         """
         If coordinates are known then get the transient name from OSC
         """
@@ -105,6 +105,35 @@ class ground():
         except:
             self.sn_name = list(d.keys())[0]
             return
+
+    def get_sn_name(self):
+        ra = self.ra
+        dec = self.dec
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36'}
+            url = f'https://www.wis-tns.org/search?&reported_within_last_value=&reported_within_last_units=days&unclassified_at=0&classified_sne=0&classified_tde=0&include_frb=1&name=&name_like=0&isTNS_AT=all&public=all&unreal=no&ra={ra}&decl={dec}&radius=10&coords_unit=arcsec&reporting_groupid%5B%5D=&groupid%5B%5D=&classifier_groupid%5B%5D=&objtype%5B%5D=&at_type%5B%5D=&discovery_date_start=&discovery_date_end=&discovery_mag_min=&discovery_mag_max=&internal_name=&discoverer=&classifier=&spectra_count=&redshift_min=&redshift_max=&hostname=&ext_catid=&ra_range_min=&ra_range_max=&decl_range_min=&decl_range_max=&discovery_instrument%5B%5D=&classification_instrument%5B%5D=&associated_groups%5B%5D=&official_discovery=0&official_classification=0&auto_classification_algorithm%5B%5D=&auto_classification_objtypeid%5B%5D=&auto_classification_prob=&at_rep_remarks=&class_rep_remarks=&frb_repeat=&frb_repeater_of_objid=&frb_measured_redshift=0&frb_dm_range_min=&frb_dm_range_max=&frb_rm_range_min=&frb_rm_range_max=&frb_snr_range_min=&frb_snr_range_max=&frb_flux_range_min=&frb_flux_range_max=&num_page=50&display%5Bredshift%5D=1&display%5Bhostname%5D=1&display%5Bhost_redshift%5D=1&display%5Bsource_group_name%5D=1&display%5Bclassifying_source_group_name%5D=1&display%5Bdiscovering_instrument_name%5D=0&display%5Bclassifing_instrument_name%5D=0&display%5Bprograms_name%5D=0&display%5Binternal_name%5D=1&display%5BisTNS_AT%5D=0&display%5Bpublic%5D=1&display%5Bend_pop_period%5D=0&display%5Bspectra_count%5D=1&display%5Bdiscoverymag%5D=1&display%5Bdiscmagfilter%5D=1&display%5Bdiscoverydate%5D=1&display%5Bdiscoverer%5D=1&display%5Bremarks%5D=0&display%5Bsources%5D=0&display%5Bbibcode%5D=0&display%5Bext_catalogs%5D=0&display%5Bunreal%5D=0&display%5Brepeater_of_objid%5D=0&display%5Bdm%5D=0&display%5Bgalactic_max_dm%5D=0&display%5Bbarycentric_event_time%5D=0&display%5Bpublic_webpage%5D=0'
+            search = requests.get(url, headers=headers)
+
+            name = search.text.split('<td class="cell-name"><a href="https://www.wis-tns.org/object/')[1].split('>')[1].split('<')[0].split(' ')[1]
+            self.sn_name = name
+            url = f'https://www.wis-tns.org/object/{name}' # hard coding in that the event is in the 2000s
+            
+            result = requests.get(url, headers=headers)
+
+            n = result.text.split('<td class="cell-internal_name">')[1:]
+            names = []
+            for i in range(len(n)):
+                names 
+                if '</td>\n                      <td class="cell-groups">' in n[i]:
+                    names += [n[i].split('</td>')[0]]
+                    
+            names = list(set(names))
+            self.cat_names = names
+        except:
+            print('No reported transients within 10arcsec of coordinates')
+            self.sn_name = None
+            self.cat_names = None
+
 
     def alias(self,catalog='ztf'):
         """
@@ -148,7 +177,9 @@ class ground():
         """
         if self.sn_name is None:
             self.get_sn_name()
-        ztf_name = self.alias(catalog='ztf')
+        for name in self.cat_names:
+            if 'ZTF' in name:
+                ztf_name = name
         if ztf_name is not None:
             self.ztf = get_ztf(ztf_name)
         return

@@ -126,7 +126,7 @@ class create_psf():
         residual = np.nansum(diff**2)
         return residual#np.exp(residual)
     
-    def psf_position(self,image,limx=1.5,limy=1.5,ext_shift=[0,0]):
+    def psf_position(self,image,limx=0.5,limy=0.5,ext_shift=[0,0]):
         """
         Finds the optimal psf fit
         
