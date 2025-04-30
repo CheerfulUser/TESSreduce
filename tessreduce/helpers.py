@@ -276,8 +276,8 @@ def Calculate_shifts(data,mx,my,finder):
 			shifts[1,indo] = mx[indo] - x[ind]
 			shifts[0,indo] = my[indo] - y[ind]
 		else:
-			shifts[0,indo] = np.nan
-			shifts[1,indo] = np.nan
+			shifts[0,:] = np.nan
+			shifts[1,:] = np.nan
 	return shifts
 
 def image_sub(theta, image, ref):
