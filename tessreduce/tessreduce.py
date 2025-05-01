@@ -17,7 +17,7 @@ from scipy.ndimage import convolve
 from scipy.ndimage import shift
 
 from scipy.signal import savgol_filter
-
+from scipy.stats import pearsonr
 from scipy.interpolate import interp1d
 
 from astropy.stats import sigma_clipped_stats
@@ -1063,6 +1063,24 @@ class tessreduce():
 			bint = np.array(points)
 		return binf, bint
 
+	def check_trend(self,lc=None,limit=0.6):
+		if lc is None:
+			lc = self.lc[1]
+		#print('!!!! ',lc.shape)
+		finite = np.isfinite(lc) & np.isfinite(self.shift[:,0]) & np.isfinite(self.shift[:,1])
+		p1 = pearsonr(lc[finite],self.shift[finite,0])[0]
+		p2 = pearsonr(lc[finite],self.shift[finite,1])[0]
+		if (abs(p1) > limit) | (abs(p2) > limit):
+			if p1 > p2:
+				m = 'x shift'
+				p = p1
+			else:
+				m = 'y shift'
+				p = p2
+			print(f'High correlation between lc and {m}: {np.round(p,2)}')
+		return np.max([p1,p2])
+
+
 	def diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
 				sky_in=5,sky_out=9,phot_method=None,psf_snap='brightest',
 				bkg_poly_order=3,plot=None,savename=None,mask=None,diff = True):
@@ -1191,6 +1209,8 @@ class tessreduce():
 			plt.show()
 			if savename is not None:
 				plt.savefig(savename + '_diff_diag.pdf', bbox_inches = "tight")
+
+		p = self.check_trend(lc=lc[1])
 		return lc, sky
 
 	def dif_diag_plot(self,ap_tar,ap_sky,lc=None,sky=None,data=None):
