@@ -130,10 +130,10 @@ def Get_Catalogue_External(ra,dec,size,Catalog = 'gaia'):
 		raise ValueError(f"{catalog} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
 	if Catalog == 'gaia':
 		result = Vizier.query_region(c1, catalog=[catalog],
-							 		 radius=Angle(size * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
+							 		 radius=Angle(size * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'},cache=False)
 	else:
 		result = Vizier.query_region(c1, catalog=[catalog],
-									 radius=Angle(size * pix_scale + 60, "arcsec"))
+									 radius=Angle(size * pix_scale + 60, "arcsec"),cache=False)
 
 	no_targets_found_message = ValueError('Either no sources were found in the query region '
 										  'or Vizier is unavailable')
@@ -298,7 +298,7 @@ def SM_to_TESS_mag(SM,ebv = 0):
 
 
 
-def Get_PS1(tpf, magnitude_limit = 18, Offset = 10):
+def Get_PS1(tpf, magnitude_limit = 20, Offset = 10):
 	"""
 	Get the coordinates and mag of all PS1 sources in the field of view.
 
@@ -327,8 +327,8 @@ def Get_PS1(tpf, magnitude_limit = 18, Offset = 10):
 	coords = tpf.wcs.all_world2pix(radecs, 0) ## TODO, is origin supposed to be zero or one?
 	Tessmag = result['tmag'].values
 	#Jmag = result['Jmag']
-	ind = (((coords[:,0] >= -10) & (coords[:,1] >= -10)) & 
-		   ((coords[:,0] < (tpf.shape[1] + 10)) & (coords[:,1] < (tpf.shape[2] + 10))))
+	ind = (((coords[:,0] >= -Offset) & (coords[:,1] >= -Offset)) & 
+		   ((coords[:,0] < (tpf.shape[1] + Offset)) & (coords[:,1] < (tpf.shape[2] + Offset))))
 	coords = coords[ind]
 	Tessmag = Tessmag[ind]
 	#Jmag = Jmag[ind]

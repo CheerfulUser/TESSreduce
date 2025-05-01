@@ -2,6 +2,7 @@ import numpy as np
 from skimage.util.shape import view_as_windows
 from scipy.optimize import minimize
 from scipy.ndimage import shift
+from scipy.signal import fftconvolve
 
 """
 PSF photometry class repurposed from Starkiller by Hugh Roxburgh
@@ -33,6 +34,17 @@ def downSample2d(arr,sf):
         isf2 = 1.0/(sf*sf)    # scalefactor
         windows = view_as_windows(arr, (sf,sf), step = sf)  # automatically scale down
         return windows.sum(3).sum(2)*isf2
+
+def polynomial_surface(x, y, coeffs, order=2):
+    """Evaluate an n-order polynomial surface."""
+    z = np.zeros_like(x,dtype=float)
+    ind = 0
+    for i in range(order + 1):
+        for j in range(order + 1 - i):
+            z += coeffs[ind] * (x ** i) * (y ** j)
+            ind += 1
+    return z
+
 
 class create_psf():
     def __init__(self,prf,size):
@@ -111,10 +123,10 @@ class create_psf():
 
         # -- calculate residuals -- #
         diff = abs(image - self.psf)
-        residual = np.nansum(diff)
-        return np.exp(residual)
+        residual = np.nansum(diff**2)
+        return residual#np.exp(residual)
     
-    def psf_position(self,image,limx=1,limy=1,ext_shift=[0,0]):
+    def psf_position(self,image,limx=0.5,limy=0.5,ext_shift=[0,0]):
         """
         Finds the optimal psf fit
         
@@ -145,9 +157,10 @@ class create_psf():
         
         # -- Optimize -- #
         res = minimize(self.minimize_position, coeff, args=(normimage,ext_shift), method='Powell',bounds=lims)
+        print(res.x)
         self.psf_fit = res
 
-    def minimize_psf_flux(self,coeff,image):
+    def minimize_psf_flux(self,coeff,image,surface=True,order=2,kernel=None):
 
         """
         
@@ -170,10 +183,21 @@ class create_psf():
             flux residual of psf relative to image
         
         """
-        res = np.nansum(abs(image - self.psf*coeff[0]))
+        if surface:
+            x = np.arange(image.shape[1])
+            y = np.arange(image.shape[0])
+            yy,xx = np.meshgrid(y,x)
+            plane_coeff = coeff[1:]
+            s = polynomial_surface(xx,yy,plane_coeff,order)
+        else:
+            s = 0
+        if kernel is not None:
+            self.psf = fftconvolve(self.psf, kernel, mode='same')
+
+        res = np.nansum((image - self.psf*coeff[0] - s)**2)
         return res
 
-    def psf_flux(self,image,ext_shift=None):
+    def psf_flux(self,image,ext_shift=None,surface=True,poly_order=3,kernel=None):
 
         """
         
@@ -204,13 +228,31 @@ class create_psf():
         if ext_shift is not None:
             self.source(ext_shift=ext_shift)
         mask = np.zeros_like(self.psf)
-        mask[self.psf > np.nanpercentile(self.psf,70)] = 1
+        mask[self.psf > np.nanpercentile(self.psf,90)] = 1
         f0 = np.nansum(image*mask)
-        bkg = np.nanmedian(image[~mask.astype(bool)])
-        image = image - bkg
-        
-        #f0 = np.nansum(image)
+        #bkg = np.nanmedian(image[~mask.astype(bool)])
+        #image = image - bkg
 
-        res = minimize(self.minimize_psf_flux,f0,args=(image),method='Nelder-Mead')
+        if surface:
+            num_coeffs = (poly_order + 1) * (poly_order + 2) // 2
+            initial = np.zeros(num_coeffs + 1)
+            initial[0] = f0
+        else:
+            initial = f0
+        
+        res = minimize(self.minimize_psf_flux,initial,args=(image,surface,poly_order,kernel),method='BFGS')
+        error = np.sqrt(np.diag(res['hess_inv']))
+        self.res = res
         self.flux = res.x[0]
-        self.image_residual = image - self.psf*self.flux
+        self.eflux = error[0]
+        
+        if surface:
+            x = np.arange(image.shape[1])
+            y = np.arange(image.shape[0])
+            yy,xx = np.meshgrid(y,x)
+            plane_coeff = res.x[1:]
+            s = polynomial_surface(xx,yy,plane_coeff,poly_order)
+        else:
+            s = image * 0
+        self.surface = s
+        self.image_residual = image - self.psf*self.flux - s

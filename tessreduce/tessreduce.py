@@ -17,7 +17,7 @@ from scipy.ndimage import convolve
 from scipy.ndimage import shift
 
 from scipy.signal import savgol_filter
-
+from scipy.stats import pearsonr
 from scipy.interpolate import interp1d
 
 from astropy.stats import sigma_clipped_stats
@@ -38,6 +38,7 @@ from .lastpercent import *
 from .psf_photom import create_psf
 from .helpers import *
 from .cat_mask import Cat_mask
+from .delta_function_fitting import parallel_delta_diff
 
 # turn off runtime warnings (lots from logic on nans)
 import warnings
@@ -62,10 +63,10 @@ fig_width = fig_width_pt*inches_per_pt  # width in inches
 class tessreduce():
 
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,
-				 reduce=True,align=True,diff=True,corr_correction=True,calibrate=True,sourcehunt=True,
+				 reduce=True,align=True,diff=True,corr_correction=True,kernel_match=False,calibrate=True,sourcehunt=True,
 				 phot_method='aperture',imaging=False,parallel=True,num_cores=-1,diagnostic_plot=False,plot=True,
 				 savename=None,quality_bitmask='default',cache_dir=None,catalogue_path=False,
-				 prf_path=None,verbose=1):
+				 shift_method='difference',prf_path=None,verbose=1):
 
 		"""
 		Class for extracting reduced TESS photometry around a target coordinate or event. 
@@ -141,6 +142,7 @@ class tessreduce():
 		self.calibrate = calibrate
 		self.corr_correction = corr_correction
 		self.diff = diff
+		self.kernel_match = kernel_match
 		self.imaging = imaging
 		self.parallel = parallel
 		if type(num_cores) == str:
@@ -150,6 +152,7 @@ class tessreduce():
 		self._assign_phot_method(phot_method)
 		self._sourcehunt = sourcehunt
 		self.verbose = verbose
+		self._shift_method = shift_method
 
 		# Offline Paths 
 		if catalogue_path is None:
@@ -171,6 +174,7 @@ class tessreduce():
 		self.shift = None
 		self.bkg = None
 		self.flux = None
+		self.delta_kernel = None
 		self.ref = None
 		self.ref_ind = None
 		self.wcs = None	
@@ -447,7 +451,7 @@ class tessreduce():
 		c2 = data.shape[2] // 2
 		cmask = np.zeros_like(data[0],dtype=int)
 		cmask[c1,c2] = 1
-		kern = np.ones((5,5))
+		kern = np.ones((3,3))
 		cmask = convolve(cmask,kern)
 
 		fullmask = mask | cmask
@@ -456,7 +460,7 @@ class tessreduce():
 		masked = ref*sky
 		mean,med,std = sigma_clipped_stats(masked)# assume sources weight the mean above the bkg
 		if useref is False:
-			m_second = (masked > mean).astype(int)
+			m_second = (masked > mean+2*std).astype(int)
 			self.mask = fullmask | m_second
 		else:
 			self.mask = fullmask
@@ -748,7 +752,9 @@ class tessreduce():
 
 		ind = self.tpf.quality[start:stop] == 0
 		d = deepcopy(data[start:stop])[ind]
-		summed = np.nansum(d,axis=(1,2))
+		summed = np.nanmedian(d,axis=(1,2))
+		summed[summed <=0] = 1e5
+		lim = np.argmin(summed)
 		lim = np.percentile(summed[np.isfinite(summed)],5)
 		summed[summed>lim] = 0
 		inds = np.where(ind)[0]
@@ -839,7 +845,7 @@ class tessreduce():
 			if savename is not None:
 				plt.savefig(savename+'_disp.pdf', bbox_inches = "tight")
 		
-	def fit_shift(self,plot=None,savename=None):
+	def fit_shift(self,smooth=True,plot=None,savename=None):
 		"""
 		Calculate the centroid shifts of sources for time series images 
 		by finding the shifts which minimize the difference between frames and reference.
@@ -854,7 +860,7 @@ class tessreduce():
 		Assigns
 		-------
 		shift : np.array
-			Median x,y shift of sources over the time series.
+			x,y shift of sources over the time series.
 
 		"""
 
@@ -865,6 +871,7 @@ class tessreduce():
 		
 		sources = ((self.mask & 1) ==1) * 1.0 - (self.mask & 2)
 		sources[sources<=0] = 0
+		sources[self.mask.shape[0]-3:self.mask.shape[0]+4,self.mask.shape[1]-3:self.mask.shape[1]+4] = 0
 
 		f = self.flux 
 		m = self.ref.copy() * sources
@@ -878,6 +885,8 @@ class tessreduce():
 			shifts = np.zeros((len(f),2)) * np.nan
 			for i in range(len(f)):
 				shifts[i,:] = difference_shifts(f[i],m)
+
+		shifts = Smooth_motion(shifts,self.tpf)
 
 		if self.shift is not None:
 			self.shift += shifts
@@ -897,6 +906,22 @@ class tessreduce():
 			plt.show()
 			if savename is not None:
 				plt.savefig(savename+'_disp_corr.pdf', bbox_inches = "tight")
+
+	def plot_shifts(self,savename=None):
+		t = self.tpf.time.mjd
+		shifts = self.shift
+		ind = np.where(np.diff(t) > .5)[0]
+		shifts[ind,:] = np.nan
+		plt.figure(figsize=(1.5*fig_width,1*fig_width))
+		plt.plot(t,shifts[:,0],'.',label='Row shift',alpha =0.5)
+		plt.plot(t,shifts[:,1],'.',label='Col shift',alpha =0.5)
+		plt.ylabel('Shift (pixels)',fontsize=15)
+		plt.xlabel('Time (MJD)',fontsize=15)
+		plt.legend()
+		plt.show()
+		plt.tight_layout()
+		if savename is not None:
+			plt.savefig(savename+'_alignment.pdf', bbox_inches = "tight")
 
 	def shift_images(self,median=False):
 		"""
@@ -1038,8 +1063,27 @@ class tessreduce():
 			bint = np.array(points)
 		return binf, bint
 
+	def check_trend(self,lc=None,limit=0.6):
+		if lc is None:
+			lc = self.lc[1]
+		#print('!!!! ',lc.shape)
+		finite = np.isfinite(lc) & np.isfinite(self.shift[:,0]) & np.isfinite(self.shift[:,1])
+		p1 = pearsonr(lc[finite],self.shift[finite,0])[0]
+		p2 = pearsonr(lc[finite],self.shift[finite,1])[0]
+		if (abs(p1) > limit) | (abs(p2) > limit):
+			if p1 > p2:
+				m = 'x shift'
+				p = p1
+			else:
+				m = 'y shift'
+				p = p2
+			print(f'High correlation between lc and {m}: {np.round(p,2)}')
+		return np.max([p1,p2])
+
+
 	def diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
-				sky_in=5,sky_out=9,phot_method=None,psf_snap=None,plot=None,savename=None,mask=None,diff = True):
+				sky_in=5,sky_out=9,phot_method=None,psf_snap='brightest',
+				bkg_poly_order=3,plot=None,savename=None,mask=None,diff = True):
 		"""
 		Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
 		then it degaults to the centre. Sky flux is calculated with an annulus aperture surrounding 
@@ -1147,8 +1191,7 @@ class tessreduce():
 			if psf_snap is None:
 				psf_snap = 'brightest'
 
-			tar = self.psf_photometry(x,y,diff=diff,snap=psf_snap)
-			tar_err = sky_std # still need to work this out
+			tar, tar_err = self.psf_photometry(x,y,diff=diff,snap=psf_snap,bkg_poly_order=bkg_poly_order)
 		nan_ind = np.where(np.nansum(self.flux,axis=(1,2))==0,True,False)
 		nan_ind[self.ref_ind] = False
 		tar[nan_ind] = np.nan
@@ -1166,6 +1209,8 @@ class tessreduce():
 			plt.show()
 			if savename is not None:
 				plt.savefig(savename + '_diff_diag.pdf', bbox_inches = "tight")
+
+		p = self.check_trend(lc=lc[1])
 		return lc, sky
 
 	def dif_diag_plot(self,ap_tar,ap_sky,lc=None,sky=None,data=None):
@@ -1578,7 +1623,7 @@ class tessreduce():
 		pos[0,:] += xpos; pos[1,:] += ypos
 		return flux, pos
 
-	def psf_photometry(self,xPix,yPix,size=5,snap='brightest',ext_shift=True,plot=False,diff=None):
+	def psf_photometry(self,xPix,yPix,size=7,snap='brightest',ext_shift=True,plot=False,diff=None,bkg_poly_order=3):
 		"""
 		Main PSF Photometry function
 
@@ -1620,49 +1665,64 @@ class tessreduce():
 		flux = []
 
 		# if isinstance(xPix,(list,np.ndarray)):
-		# 	self.moving_psf_phot()
+		# 	self.moving_psf_phot() 
 
-		# else:
-		if snap == None:  # if no snap, each cutout has their position fitted and considered during flux fitting
-			prf, cutouts = self._psf_initialise(size,(xPix,yPix))   # gather base PRF and the array of cutouts data
-			xShifts = []
-			yShifts = []
-			for cutout in tqdm(cutouts):
-				PSF = create_psf(prf,size)
-				PSF.psf_position(cutout)
-				PSF.psf_flux(cutout)
-				flux.append(PSF.flux)
-				yShifts.append(PSF.source_y)
-				xShifts.append(PSF.source_x)
-			if plot:
-				fig,ax = plt.subplots(ncols=3,figsize=(12,4))
-				ax[0].plot(flux)
-				ax[0].set_ylabel('Flux')
-				ax[1].plot(xShifts,marker='.',linestyle=' ')
-				ax[1].set_ylabel('xShift')
-				ax[2].plot(yShifts,marker='.',linestyle=' ')
-				ax[2].set_ylabel('yShift')
-
-		elif type(snap) == str:
-			if snap == 'brightest': # each cutout has position snapped to brightest frame fit position
+		if type(snap) == str:
+			if snap == 'all': 
 				prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
-				ind = np.where(cutouts==np.nanmax(cutouts))[0][0]
-				ref = cutouts[ind]
-				base = create_psf(prf,size)
-				base.psf_position(ref,ext_shift=self.shift[ind])
-			elif snap == 'ref':
-				prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=True)   # gather base PRF and the array of cutouts data
-				ref = cutouts[self.ref_ind]
-				base = create_psf(prf,size)
-				base.psf_position(ref)
-				if diff:
-					_, cutouts = self._psf_initialise(size,(xPix,yPix),ref=False)
-			if self.parallel:
 				inds = np.arange(len(cutouts))
-				flux = Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i]) for i in inds)
+				base = create_psf(prf,size)
+				flux, eflux, pos = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_full)(cutouts[i],base,self.shift[i]) for i in inds))
+
+				#prf, cutouts = self._psf_initialise(size,(xPix,yPix))   # gather base PRF and the array of cutouts data
+				#xShifts = []
+				#yShifts = []
+				#for cutout in tqdm(cutouts):
+				#	PSF = create_psf(prf,size)
+				#	PSF.psf_position(cutout)
+				#	PSF.psf_flux(cutout)
+				#	flux.append(PSF.flux)
+				#	yShifts.append(PSF.source_y)
+				#	xShifts.append(PSF.source_x)
+				#if plot:
+				#	fig,ax = plt.subplots(ncols=3,figsize=(12,4))
+				#	ax[0].plot(flux)
+				#	ax[0].set_ylabel('Flux')
+				#	ax[1].plot(xShifts,marker='.',linestyle=' ')
+				#	ax[1].set_ylabel('xShift')
+				#	ax[2].plot(yShifts,marker='.',linestyle=' ')
+				#	ax[2].set_ylabel('yShift')
 			else:
-				for i in range(len(cutouts)):
-					flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
+				if snap == 'brightest': # each cutout has position snapped to brightest frame fit position
+					prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
+					bkg = self.bkg[:,int(yPix),int(xPix)]
+					#lowbkg = bkg < np.nanpercentile(bkg,16)
+					weight = np.abs(np.nansum(cutouts[:,int(yPix)-1:int(yPix)+2,int(xPix)-1:int(xPix)+2],axis=(1,2))) / bkg
+					weight[np.isnan(weight)] = 0
+					ind = np.argmax(abs(weight))
+					#ind = np.where(cutouts==np.nanmax(cutouts))[0][0]
+					ref = cutouts[ind]
+					base = create_psf(prf,size)
+					base.psf_position(ref,ext_shift=self.shift[ind])
+				elif snap == 'ref':
+					prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=True)   # gather base PRF and the array of cutouts data
+					ref = cutouts[self.ref_ind]
+					base = create_psf(prf,size)
+					base.psf_position(ref)
+					if diff:
+						_, cutouts = self._psf_initialise(size,(xPix,yPix),ref=False)
+				elif snap == 'fixed':
+					prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
+					base = create_psf(prf,size)
+				if self.parallel:
+					inds = np.arange(len(cutouts))
+					if self.delta_kernel is not None:
+						flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i],bkg_poly_order,self.delta_kernel[i]) for i in inds))
+					else:
+						flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i],bkg_poly_order) for i in inds))
+				else:
+					for i in range(len(cutouts)):
+						flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
 			if plot:
 				plt.figure()
 				plt.plot(flux)
@@ -1672,18 +1732,43 @@ class tessreduce():
 		elif type(snap) == int:	   # each cutout has position snapped to 'snap' frame fit position (snap is integer)
 			base = create_psf(prf,size)
 			base.psf_position(cutouts[snap])
-			for cutout in cutouts:
-				PSF = create_psf(prf,size)
-				PSF.source_x = base.source_x
-				PSF.source_y = base.source_y
-				PSF.psf_flux(cutout)
-				flux.append(PSF.flux)
+			if self.parallel:
+				inds = np.arange(len(cutouts))
+				if self.delta_kernel is not None:
+					flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i],bkg_poly_order,self.delta_kernel[i]) for i in inds))
+				else:
+					flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i],bkg_poly_order) for i in inds))
+			else:
+				for i in range(len(cutouts)):
+					flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
 			if plot:
 				fig,ax = plt.subplots(ncols=1,figsize=(12,4))
 				ax.plot(flux)
 				ax.set_ylabel('Flux')
 		flux = np.array(flux)
-		return flux
+		eflux = np.array(eflux)
+		return flux, eflux
+
+
+	def kernel_matching(self,size=7,diff=True):
+		if diff:
+			flux = deepcopy(self.flux + self.ref)
+		else:
+			flux = deepcopy(self.flux)
+		mask = self.mask == 1 
+
+		if self.parallel:
+			d, kernel = zip(*Parallel(n_jobs=self.num_cores)(delayed(parallel_delta_diff)(frame,self.ref,mask,size) for frame in flux))
+		else:
+			d = []
+			kernel = []
+			for frame in flux:
+				tmp = parallel_delta_diff(frame,self.ref,mask,size)
+				d += [tmp[0]]
+				kernel += [tmp[1]]
+		d = np.array(d)
+		self.delta_kernel = np.array(kernel)
+		self.flux = d
 
 
 	def reduce(self, aper = None, align = None, parallel = None, calibrate=None,
@@ -1806,20 +1891,26 @@ class tessreduce():
 					print('aligning images')
 				
 				try:
-					#self.centroids_shifts_starfind()
+					if self._shift_method  == 'centroid':
+						self.centroids_shifts_starfind()
+					elif self._shift_method == 'difference':
+						self.fit_shift()
+					else:
+						m = f'Shift method {self._shift_method} is not supported, choose from:\ncentroid\ndifference'
+						raise ValueError(m)
 					#if double_shift:
 					#self.shift_images()
 					#self.ref = deepcopy(self.flux[self.ref_ind])
-					self.fit_shift()
+					
 					#self.shift_images()
 					
 				except:
 					print('Something went wrong, switching to serial')
 					self.parallel = False
-					#self.centroids_shifts_starfind()
-					self.fit_shift()
-					#self.fit_shift()
-				#self.fit_shift()
+					if self._shift_method  == 'centroid':
+						self.centroids_shifts_starfind()
+					elif self._shift_method == 'minimize':
+						self.fit_shift()
 			else:
 				self.shift = np.zeros((len(self.flux),2))
 			
@@ -1829,6 +1920,8 @@ class tessreduce():
 					self.flux[np.nansum(self.tpf.flux.value,axis=(1,2))==0] = np.nan
 					if self.verbose > 0:
 						print('images shifted')
+					#if self.kernel_match:
+					#	self.kernel_matching(diff=False)
 
 			if self.diff:
 				if self.verbose > 0:
@@ -1883,7 +1976,10 @@ class tessreduce():
 					if self.verbose > 0:
 						print('background correlation correction')
 					self.correlation_corrector()
-
+				if self.kernel_match:
+					self.kernel_matching(diff=self.diff)
+					if self.verbose > 0:
+						print('kernels matched')
 
 			if self.calibrate:
 				print('field calibration')
@@ -2555,7 +2651,7 @@ class tessreduce():
 			tflux = self.flux
 			
 
-		ind = (table.tmag.values < 19) & (table.imag.values > 14)
+		ind = (table.imag.values < 19) & (table.imag.values > 14)
 		tab = table.iloc[ind]
 		
 		e, dat = Tonry_reduce(tab,plot=plot,savename=savename,system=system)

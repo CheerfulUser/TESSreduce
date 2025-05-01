@@ -221,6 +221,8 @@ def Smooth_bkg(data, gauss_smooth=2, interpolate=False, extrapolate=True):
 				# end inpaint
 				estimate = inpaint.inpaint_biharmonic(data,mask)
 				#estimate = signal.fftconvolve(estimate,self.prf,mode='same')
+				if np.nanmedian(estimate) < 20:
+					gauss_smooth = gauss_smooth * 3
 				estimate = gaussian_filter(estimate,gauss_smooth)
 		else:
 			estimate = np.zeros_like(data) * np.nan	
@@ -274,8 +276,8 @@ def Calculate_shifts(data,mx,my,finder):
 			shifts[1,indo] = mx[indo] - x[ind]
 			shifts[0,indo] = my[indo] - y[ind]
 		else:
-			shifts[0,indo] = np.nan
-			shifts[1,indo] = np.nan
+			shifts[0,:] = np.nan
+			shifts[1,:] = np.nan
 	return shifts
 
 def image_sub(theta, image, ref):
@@ -284,7 +286,10 @@ def image_sub(theta, image, ref):
 	#translation = np.float64([[1,0,dx],[0,1, dy]])
 	#s = cv2.warpAffine(image, translation, image.shape[::-1], flags=cv2.INTER_CUBIC,borderValue=0)
 	diff = (ref-s)**2
-	return np.nansum(diff[5:-5,5:-5])
+	if image.shape[0] > 50:
+		return np.nansum(diff[10:-11,10:-11])
+	else:
+		return np.nansum(diff[5:-6,5:-6])
 
 def difference_shifts(image,ref):
 	"""
@@ -341,6 +346,12 @@ def Smooth_motion(Centroids,tpf):
 
 	"""
 	smoothed = np.zeros_like(Centroids) * np.nan
+	skernel = int(len(tpf.flux) * 0.2) #simple way of making the smoothing window 10% of the duration
+	skernel = skernel // 2 +1
+	print('!!! skernel '+ str(skernel))
+	#skernel = 25
+	if skernel < 25:
+		skernel = 25
 	try:
 		try:
 			split = np.where(np.diff(tpf.time.mjd) > 0.5)[0][0] + 1
@@ -349,11 +360,11 @@ def Smooth_motion(Centroids,tpf):
 			ind1 = np.where(ind1 != 0)[0]
 			ind2 = np.nansum(tpf.flux[split:],axis=(1,2))
 			ind2 = np.where(ind2 != 0)[0] + split
-			smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],25,3)
-			smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],25,3)
+			smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],skernel,3)
+			smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],skernel,3)
 
-			smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],25,3)
-			smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],25,3)
+			smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],skernel,3)
+			smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],skernel,3)
 		except:
 			split = np.where(np.diff(tpf.time.mjd) > 0.5)[0][0] + 1
 			# ugly, but who cares
@@ -361,15 +372,15 @@ def Smooth_motion(Centroids,tpf):
 			ind1 = np.where(ind1 != 0)[0]
 			ind2 = np.nansum(tpf.flux[split:],axis=(1,2))
 			ind2 = np.where(ind2 != 0)[0] + split
-			smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],11,3)
-			smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],11,3)
+			smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],skernel//2+1,3)
+			smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],skernel//2+1,3)
 
-			smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],11,3)
-			smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],11,3)
+			smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],skernel//2+1,3)
+			smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],skernel//2+1,3)
 
 	except IndexError:
-		smoothed[:,0] = savgol_filter(Centroids[:,0],25,3)		
-		smoothed[:,1] = savgol_filter(Centroids[:,1],25,3)
+		smoothed[:,0] = savgol_filter(Centroids[:,0],skernel,3)		
+		smoothed[:,1] = savgol_filter(Centroids[:,1],skernel,3)
 	return smoothed
 
 
@@ -702,19 +713,19 @@ def par_psf_initialise(flux,camera,ccd,sector,column,row,cutoutSize,loc,time_ind
 	prf = create_psf(prf,cutoutSize)
 	return prf, cutout
 
-def par_psf_flux(image,prf,shift=[0,0]):
+def par_psf_flux(image,prf,shift=[0,0],bkg_poly_order=3,kernel=None):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
-	prf.psf_flux(image,ext_shift=shift)
-	return prf.flux
+	prf.psf_flux(image,ext_shift=shift,poly_order=bkg_poly_order,kernel=kernel)
+	return prf.flux, prf.eflux
 
-def par_psf_full(cutout,prf,shift=[0,0],xlim=2,ylim=2):
+def par_psf_full(cutout,prf,shift=[0,0],xlim=0.5,ylim=0.5):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
 	prf.psf_position(cutout,ext_shift=shift,limx=xlim,limy=ylim)
 	prf.psf_flux(cutout)
 	pos = [prf.source_x, prf.source_y]
-	return prf.flux, pos
+	return prf.flux, prf.eflux, pos
 
 
 def external_save_TESS(ra,dec,sector,size=90,save_path=None,quality_bitmask='default',cache_dir=None):
