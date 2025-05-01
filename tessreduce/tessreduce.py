@@ -845,7 +845,7 @@ class tessreduce():
 			if savename is not None:
 				plt.savefig(savename+'_disp.pdf', bbox_inches = "tight")
 		
-	def fit_shift(self,plot=None,savename=None):
+	def fit_shift(self,smooth=True,plot=None,savename=None):
 		"""
 		Calculate the centroid shifts of sources for time series images 
 		by finding the shifts which minimize the difference between frames and reference.

@@ -346,6 +346,12 @@ def Smooth_motion(Centroids,tpf):
 
 	"""
 	smoothed = np.zeros_like(Centroids) * np.nan
+	skernel = int(len(tpf.flux) * 0.2) #simple way of making the smoothing window 10% of the duration
+	skernel = skernel // 2 +1
+	print('!!! skernel '+ str(skernel))
+	#skernel = 25
+	if skernel < 25:
+		skernel = 25
 	try:
 		try:
 			split = np.where(np.diff(tpf.time.mjd) > 0.5)[0][0] + 1
@@ -354,11 +360,11 @@ def Smooth_motion(Centroids,tpf):
 			ind1 = np.where(ind1 != 0)[0]
 			ind2 = np.nansum(tpf.flux[split:],axis=(1,2))
 			ind2 = np.where(ind2 != 0)[0] + split
-			smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],25,3)
-			smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],25,3)
+			smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],skernel,3)
+			smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],skernel,3)
 
-			smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],25,3)
-			smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],25,3)
+			smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],skernel,3)
+			smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],skernel,3)
 		except:
 			split = np.where(np.diff(tpf.time.mjd) > 0.5)[0][0] + 1
 			# ugly, but who cares
@@ -366,15 +372,15 @@ def Smooth_motion(Centroids,tpf):
 			ind1 = np.where(ind1 != 0)[0]
 			ind2 = np.nansum(tpf.flux[split:],axis=(1,2))
 			ind2 = np.where(ind2 != 0)[0] + split
-			smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],11,3)
-			smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],11,3)
+			smoothed[ind1,0] = savgol_filter(Centroids[ind1,0],skernel//2+1,3)
+			smoothed[ind2,0] = savgol_filter(Centroids[ind2,0],skernel//2+1,3)
 
-			smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],11,3)
-			smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],11,3)
+			smoothed[ind1,1] = savgol_filter(Centroids[ind1,1],skernel//2+1,3)
+			smoothed[ind2,1] = savgol_filter(Centroids[ind2,1],skernel//2+1,3)
 
 	except IndexError:
-		smoothed[:,0] = savgol_filter(Centroids[:,0],25,3)		
-		smoothed[:,1] = savgol_filter(Centroids[:,1],25,3)
+		smoothed[:,0] = savgol_filter(Centroids[:,0],skernel,3)		
+		smoothed[:,1] = savgol_filter(Centroids[:,1],skernel,3)
 	return smoothed
 
 
