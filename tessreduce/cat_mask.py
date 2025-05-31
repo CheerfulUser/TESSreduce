@@ -105,10 +105,15 @@ def gaia_auto_mask(table,Image,scale=1):
     mags = [[18,17],[17,16],[16,15],[15,14],[14,13.5],[13.5,12],[12,10],[10,9],[9,8],[8,7]]
     size = (np.array([3,4,5,6,7,8,10,14,16,18])*scale).astype(int)
     for i, mag in enumerate(mags):
-        m = ((magim > mag[1]) & (magim <= mag[0])) * 1.
-        k = np.ones((size[i],size[i]))
-        conv = fftconvolve(m, k,mode='same')#.astype(int)
-        masks[str(mag[0])] = (conv >.1) * 1.
+        ind = (m > mag[1]) & (m <= mag[0])
+        magim = np.zeros_like(image)
+        magim[y[ind],x[ind]] = 1.
+        if size[i] >0:
+            k = np.ones((size[i],size[i]))
+            conv = fftconvolve(magim, k,mode='same')#.astype(int)
+            masks[str(mag[0])] = (conv >.1) * 1.
+        else:
+            conv = magim
     masks['all'] = np.zeros_like(image,dtype=float)
     for key in masks:
         masks['all'] += masks[key]

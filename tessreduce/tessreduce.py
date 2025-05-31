@@ -223,6 +223,7 @@ class tessreduce():
 			if type(tpf) == str:
 				self.tpf = lk.TessTargetPixelFile(tpf)
 			self.flux = strip_units(self.tpf.flux)
+			self.flux[np.isnan(self.flux)] = 0
 			self.wcs = self.tpf.wcs
 			self.ra = self.tpf.ra
 			self.dec = self.tpf.dec
@@ -390,6 +391,7 @@ class tessreduce():
 		
 		self.tpf  = tpf
 		self.flux = strip_units(tpf.flux)  # Stripping astropy units so only numbers are returned
+		self.flux[np.isnan(self.flux)] = 0
 		self.wcs  = tpf.wcs
 
 	def make_mask(self,catalogue_path=None,maglim=19,scale=1,strapsize=6,useref=False):
@@ -522,7 +524,28 @@ class tessreduce():
 				m[i] = par_psf_source_mask(data[i],self.prf,sigma)
 		return m * 1.0
 
-	def background(self,gauss_smooth=2,calc_qe=True, strap_iso=True,source_hunt=False,interpolate=True):
+	def _calc_qe(self,flux,bkg_smth):
+		'''
+		Calculate the effective quantum efficiency enhancement of the detector from scattered light.
+		'''
+		norm = (flux + bkg_smth) / bkg_smth
+		straps = norm * ((self.mask & 4)>0)
+
+		straps[straps==0] = np.nan
+		m,med,std = sigma_clipped_stats(straps,axis=(1,2),maxiters=10,mask_value=np.nan)
+		masks = straps < (med + 2*std)[:,np.newaxis,np.newaxis]
+		m = (np.nansum(masks,axis=0) > 0) * 1.
+		m[m==0] = np.nan
+		ratio = flux / bkg_smth * m
+		qe_1d = np.nanpercentile(ratio,10,axis=1)
+		qe = np.ones_like(norm)
+		qe[:,:,:] = qe_1d[:,np.newaxis,:]
+		qe[np.isnan(qe)] = 1
+		qe[qe<1] = 1
+
+		return qe
+
+	def background(self,gauss_smooth=2,calc_qe=True,strap_iso=True,source_hunt=False,interpolate=True,rerun_negative=False):
 		"""
 		Calculate the temporal and spatial variation in the background.
 
@@ -569,6 +592,24 @@ class tessreduce():
 			bkg_smth = np.zeros_like(flux) * np.nan
 			if self.parallel:
 				bkg_smth = Parallel(n_jobs=self.num_cores)(delayed(Smooth_bkg)(frame,gauss_smooth,interpolate) for frame in flux*m)
+				if rerun_negative:
+					over_sub = (deepcopy(self.flux) - bkg_smth) < -0.5
+					over_sub = np.nansum(over_sub,axis=0) > 0
+					self.over_sub = over_sub
+					print('overshape ',over_sub.shape)
+					print('m ',m.shape)
+					strap_mask = (self.mask & 4) > 0
+					if strap_iso:
+						over_sub[strap_mask] = 0
+					if source_hunt:
+						m[:,over_sub[:,:]] = 1
+					else:
+						m[over_sub] = 1
+					self._bkgmask = m
+					bkg_smth = Parallel(n_jobs=self.num_cores)(delayed(Smooth_bkg)(frame,gauss_smooth,interpolate) for frame in flux*m)
+
+
+
 			else:
 				for i in range(flux.shape[0]):
 					bkg_smth[i] = Smooth_bkg((flux*m)[i],gauss_smooth,interpolate)
@@ -579,25 +620,10 @@ class tessreduce():
 		
 		# Calculate quantum efficiency 
 		if calc_qe:
-			strap = (self.mask == 4) * 1.0
-			strap[strap==0] = np.nan
-			# check if its a time varying mask
-			if len(strap.shape) == 3: 
-				strap = strap[self.ref_ind]
-			mask = ((self.mask & 1) == 0) * 1.0
-			mask[mask==0] = np.nan
-		
-			data = strip_units(self.flux) * mask
-			norm = self.flux / bkg_smth
-			straps = norm * ((self.mask & 4)>0)
-			limit = np.nanpercentile(straps,60,axis=1)
-			straps[limit[:,np.newaxis,:] < straps] = np.nan
-			straps[straps==0] = 1
-
-			value = np.nanmedian(straps,axis=1)
-			qe = np.ones_like(bkg_smth) * value[:,np.newaxis,:]
-			bkg = bkg_smth * qe
+			self.bkg = bkg_smth
+			qe = self._calc_qe(flux,bkg_smth)
 			self.qe = qe
+			bkg = bkg_smth * qe
 		else:
 			bkg = np.array(bkg_smth)
 		self.bkg = bkg
@@ -885,6 +911,7 @@ class tessreduce():
 			shifts = np.zeros((len(f),2)) * np.nan
 			for i in range(len(f)):
 				shifts[i,:] = difference_shifts(f[i],m)
+		sraw = deepcopy(shifts)
 
 		shifts = Smooth_motion(shifts,self.tpf)
 
@@ -898,8 +925,10 @@ class tessreduce():
 			ind = np.where(np.diff(t) > .5)[0]
 			shifts[ind,:] = np.nan
 			plt.figure(figsize=(1.5*fig_width,1*fig_width))
-			plt.plot(t,shifts[:,0],'.',label='Row shift',alpha =0.5)
-			plt.plot(t,shifts[:,1],'.',label='Col shift',alpha =0.5)
+			plt.plot(t,sraw[:,0],'.',label='Row shift',alpha = 0.5)
+			plt.plot(t,sraw[:,1],'.',label='Col shift',alpha = 0.5)
+			plt.plot(t,shifts[:,0],'-',label='Smoothed row shift')
+			plt.plot(t,shifts[:,1],'-',label='Smoothed col shift')
 			plt.ylabel('Shift (pixels)',fontsize=15)
 			plt.xlabel('Time (MJD)',fontsize=15)
 			plt.legend()
@@ -945,7 +974,7 @@ class tessreduce():
 		if median:
 			for i in range(len(shifted)):
 				if np.nansum(abs(shifted[i])) > 0:
-					shifted[i] = shift(self.ref,[-self.shift[i,1],-self.shift[i,0]])
+					shifted[i] = shift(self.ref,[-self.shift[i,1],-self.shift[i,0]], mode='nearest',order=5)
 			self.flux -= shifted
 
 		else:
@@ -1071,7 +1100,7 @@ class tessreduce():
 		p1 = pearsonr(lc[finite],self.shift[finite,0])[0]
 		p2 = pearsonr(lc[finite],self.shift[finite,1])[0]
 		if (abs(p1) > limit) | (abs(p2) > limit):
-			if p1 > p2:
+			if abs(p1) > abs(p2):
 				m = 'x shift'
 				p = p1
 			else:
@@ -1547,13 +1576,14 @@ class tessreduce():
 		if time_ind is None:
 			time_ind = np.arange(0,len(self.flux))
 
+		
+		col = self.tpf.column - int(self.size/2-1) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
+		row = self.tpf.row - int(self.size/2-1) + loc[1] 
+
 		if isinstance(loc[0], (float, np.floating, np.float32, np.float64)):
 			loc[0] = int(loc[0] + 0.5)
 		if isinstance(loc[1], (float, np.floating, np.float32, np.float64)):
 			loc[1] = int(loc[1] + 0.5)
-		
-		col = self.tpf.column - int(self.size/2-1) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
-		row = self.tpf.row - int(self.size/2-1) + loc[1] 
 			
 		prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row) # initialise psf kernel
 		if ref:
@@ -1855,7 +1885,7 @@ class tessreduce():
 				#print('mask frac ',frac)
 				if frac < 0.05:
 					print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-					self.make_mask(catalogue_path=self._catalogue_path,maglim=15,strapsize=7,scale=0.5)
+					self.make_mask(catalogue_path=self._catalogue_path,maglim=15,strapsize=7,scale=0.2)
 				if self.verbose > 0:
 					print('made source mask')
 			else:
@@ -1867,7 +1897,7 @@ class tessreduce():
 				print('calculating background')
 			
 			# calculate the background
-			self.background()
+			self.background(rerun_negative=True)
 			
 
 			if np.isnan(self.bkg).all():
@@ -1927,7 +1957,7 @@ class tessreduce():
 				if self.verbose > 0:
 					print('!!Re-running for difference image!!')
 				# reseting to do diffim 
-				self._flux_aligned = deepcopy(self.flux)
+				
 				self.flux = strip_units(self.tpf.flux)
 				self.flux = self.flux / self.qe
 
@@ -1936,7 +1966,7 @@ class tessreduce():
 
 					if self.verbose > 0:
 						print('shifting images')
-
+				self._flux_aligned = deepcopy(self.flux)
 				if test_seed is not None:
 					self.flux += test_seed
 				self.flux[np.nansum(self.tpf.flux.value,axis=(1,2))==0] = np.nan
@@ -1945,8 +1975,9 @@ class tessreduce():
 				self.flux -= self.ref
 
 				self.ref -= self.bkg[self.ref_ind]
+				self._ref_bkg = self.bkg[self.ref_ind]
 				# remake mask
-				self.make_mask(catalogue_path=self._catalogue_path,maglim=18,strapsize=7,scale=mask_scale*.8,useref=False)#Source_mask(ref,grid=0)
+				self.make_mask(catalogue_path=self._catalogue_path,maglim=18,strapsize=7,scale=mask_scale*.5,useref=False)#Source_mask(ref,grid=0)
 				frac = np.nansum((self.mask== 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 				#print('mask frac ',frac)
 				if frac < 0.05:
@@ -2532,12 +2563,12 @@ class tessreduce():
 			ind = dist < 1.5
 			close = tab.iloc[ind]
 			
-			d['gmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.gmag.values,25))) + 25
-			d['rmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.rmag.values,25))) + 25
-			d['imag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.imag.values,25))) + 25
-			d['zmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.zmag.values,25))) + 25
+			d['gmag'].iloc[i] = -2.5*np.log10(np.nansum(maselfflux(close.gmag.values,25))) + 25
+			d['rmag'].iloc[i] = -2.5*np.log10(np.nansum(maselfflux(close.rmag.values,25))) + 25
+			d['imag'].iloc[i] = -2.5*np.log10(np.nansum(maselfflux(close.imag.values,25))) + 25
+			d['zmag'].iloc[i] = -2.5*np.log10(np.nansum(maselfflux(close.zmag.values,25))) + 25
 			if system == 'ps1':
-				d['ymag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.ymag.values,25))) + 25
+				d['ymag'].iloc[i] = -2.5*np.log10(np.nansum(maselfflux(close.ymag.values,25))) + 25
 		# convert to tess mags
 		if len(d) < 10:
 			print('!!!WARNING!!! field calibration is unreliable, using the default zp = 20.44')

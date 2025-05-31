@@ -221,7 +221,7 @@ def Smooth_bkg(data, gauss_smooth=2, interpolate=False, extrapolate=True):
 				# end inpaint
 				estimate = inpaint.inpaint_biharmonic(data,mask)
 				#estimate = signal.fftconvolve(estimate,self.prf,mode='same')
-				if np.nanmedian(estimate) < 20:
+				if (np.nanmedian(estimate) < 100) & (np.nanstd(estimate) < 3): # magic numbers to define a well behaved background
 					gauss_smooth = gauss_smooth * 3
 				estimate = gaussian_filter(estimate,gauss_smooth)
 		else:
@@ -282,7 +282,7 @@ def Calculate_shifts(data,mx,my,finder):
 
 def image_sub(theta, image, ref):
 	dx, dy = theta
-	s = shift(image,([dx,dy]),order=5)
+	s = shift(image,([dx,dy]),order=5, mode='nearest')
 	#translation = np.float64([[1,0,dx],[0,1, dy]])
 	#s = cv2.warpAffine(image, translation, image.shape[::-1], flags=cv2.INTER_CUBIC,borderValue=0)
 	diff = (ref-s)**2
@@ -290,6 +290,31 @@ def image_sub(theta, image, ref):
 		return np.nansum(diff[10:-11,10:-11])
 	else:
 		return np.nansum(diff[5:-6,5:-6])
+
+
+### TESTING CODE
+#def c_shift_image(img, shift):
+#    return scipy.ndimage.shift(img, shift=shift, order=5, mode='nearest')  # cubic interpolation
+#
+#def cost_function(shift, ref_img, moving_img):
+#    shifted = shift_image(moving_img, shift)
+#    diff = ref_img - shifted
+#    return np.sum(diff[2:-2,2:-2]**2)  # Sum of Squared Differences (SSD)
+#
+#def align_subpixel(ref_img, moving_img, initial_shift=(0,0)):
+#    ref_img = ref_img.astype(np.float32)
+#    moving_img = moving_img.astype(np.float32)
+#
+#    # Minimize SSD by shifting moving_img
+#    result = minimize(cost_function, initial_shift, args=(ref_img, moving_img), method='Powell')
+#
+#    best_shift = result.x
+#    aligned_img = c_shift_image(moving_img, best_shift)
+#
+#    print(f"Optimal shift (y, x): {best_shift}")
+#    return aligned_img, best_shift
+###
+
 
 def difference_shifts(image,ref):
 	"""
@@ -317,9 +342,10 @@ def difference_shifts(image,ref):
 	"""
 	if np.nansum(abs(image)) > 0:
 		x0= [0,0]
-		bds = [(-1,1),(-1,1)]
+		bds = [(-1.5,1.5),(-1.5,1.5)]
 		res = minimize(image_sub,x0,args=(image,ref),method = 'Powell',bounds= bds)
 		s = res.x
+		#a,s = align_subpixel(ref,image)
 	else:
 		s = np.zeros((2)) * np.nan
 	if (s == np.ones((2))).any():
@@ -346,7 +372,7 @@ def Smooth_motion(Centroids,tpf):
 
 	"""
 	smoothed = np.zeros_like(Centroids) * np.nan
-	skernel = int(len(tpf.flux) * 0.2) #simple way of making the smoothing window 10% of the duration
+	skernel = int(len(tpf.flux) * 0.01) #simple way of making the smoothing window 10% of the duration
 	skernel = skernel // 2 +1
 	print('!!! skernel '+ str(skernel))
 	#skernel = 25
