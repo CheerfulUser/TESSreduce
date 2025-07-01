@@ -192,8 +192,8 @@ def Tonry_reduce(Data,plot=False,savename=None,system='ps1'):
         colours = Make_colours(dat.iloc[ind],tonry,compare,Extinction = res.x, Tonry = True,system=system)
         clip = Tonry_clip(colours,tonry)
         #clips += [clip]
-        dat['locus'].iloc[ind] = clip 
-    dat2 = dat.iloc[dat['locus'].values > 0]
+        dat.loc[ind,'locus'] = clip * 1
+    dat2 = dat.loc[dat['locus'] > 0]
     #print('Pass ' + str(i+1) + ': '  + str(res.x[0]))
     #clips[0][clips[0]] = clips[1]
     if plot:

@@ -65,7 +65,7 @@ class tessreduce():
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,
 				 reduce=True,align=True,diff=True,corr_correction=True,kernel_match=False,calibrate=True,sourcehunt=True,
 				 phot_method='aperture',imaging=False,parallel=True,num_cores=-1,diagnostic_plot=False,plot=True,
-				 savename=None,quality_bitmask='default',cache_dir=None,catalogue_path=False,
+				 savename=None,quality_bitmask='default',cache_dir=None,cache=True,catalogue_path=False,
 				 shift_method='difference',prf_path=None,verbose=1):
 
 		"""
@@ -235,8 +235,8 @@ class tessreduce():
 		# Retrieve TPF
 		elif self.check_coord():
 			if self.verbose>0:
-				print('getting TPF from TESScut')
-			self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
+				print('Downloading TPF from TESScut')
+			self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir,cache=cache)
 			self._get_gaia()
 
 		self.ground = ground(ra = self.ra, dec = self.dec)
@@ -326,7 +326,13 @@ class tessreduce():
 			m = 'phot_mehtod must be a string equal to either "psf", or "aperture".'
 			raise ValueError(m)
 
-	def get_TESS(self,ra=None,dec=None,name=None,size=None,sector=None,quality_bitmask='default',cache_dir=None):
+	def __clean_lk_cache(self,cache_dir=None):
+		if cache_dir is None:
+			cache = lk.config.get_cache_dir()
+
+
+	def get_TESS(self,ra=None,dec=None,name=None,size=None,sector=None,
+				 quality_bitmask='default',cache_dir=None,cache=True):
 		"""
 		Use the lightcurve interface with TESScut to get an FFI cutout 
 		of a region around the given coords.
@@ -383,6 +389,14 @@ class tessreduce():
 
 		# Download 
 		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=size,download_dir=cache_dir)
+		if not cache:
+			try:
+				call = f'rm {tpf.path}'
+				os.system(call)
+				if self.verbose > 0:
+					print('Cache removed')
+			except:
+				print(f'Failed to remove: {tpf.path}')
 
 		# Check to ensure it succeeded
 		if tpf is None:
@@ -2563,12 +2577,12 @@ class tessreduce():
 			ind = dist < 1.5
 			close = tab.iloc[ind]
 			
-			d['gmag'].iloc[i] = -2.5*np.log10(np.nansum(maselfflux(close.gmag.values,25))) + 25
-			d['rmag'].iloc[i] = -2.5*np.log10(np.nansum(maselfflux(close.rmag.values,25))) + 25
-			d['imag'].iloc[i] = -2.5*np.log10(np.nansum(maselfflux(close.imag.values,25))) + 25
-			d['zmag'].iloc[i] = -2.5*np.log10(np.nansum(maselfflux(close.zmag.values,25))) + 25
+			d.loc[i,'gmag'] = -2.5*np.log10(np.nansum(maselfflux(close.gmag.values,25))) + 25
+			d.loc[i,'rmag'] = -2.5*np.log10(np.nansum(maselfflux(close.rmag.values,25))) + 25
+			d.loc[i,'imag'] = -2.5*np.log10(np.nansum(maselfflux(close.imag.values,25))) + 25
+			d.loc[i,'zmag'] = -2.5*np.log10(np.nansum(maselfflux(close.zmag.values,25))) + 25
 			if system == 'ps1':
-				d['ymag'].iloc[i] = -2.5*np.log10(np.nansum(maselfflux(close.ymag.values,25))) + 25
+				d.loc[i,'ymag'] = -2.5*np.log10(np.nansum(maselfflux(close.ymag.values,25))) + 25
 		# convert to tess mags
 		if len(d) < 10:
 			print('!!!WARNING!!! field calibration is unreliable, using the default zp = 20.44')
