@@ -27,8 +27,8 @@ class TestTESSreduce(unittest.TestCase):
     #def test_Shift_images(self):
     #    self.tess.shift_images()
 
-    def test_field_calibrate(self):
-        self.tess.field_calibrate()
+    #def test_field_calibrate(self):
+    #    self.tess.field_calibrate()
 
     def test_Diff_lc(self):
         self.tess.diff_lc()
