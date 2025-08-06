@@ -91,7 +91,7 @@ class create_psf():
         psf = shift(psf,ext_shift)
         self.psf = psf/np.nansum(psf)
 
-    def minimize_position(self,coeff,image,ext_shift):
+    def minimize_position(self,coeff,image,ext_shift,surface=True,order=2):
         """
         Applies an exponential function using psf residuals to optimise the psf fit.
         
@@ -114,7 +114,15 @@ class create_psf():
             optimization model used for psf fitting
             
         """
-        
+        if surface:
+            x = np.arange(image.shape[1])
+            y = np.arange(image.shape[0])
+            yy,xx = np.meshgrid(y,x)
+            plane_coeff = coeff[2:]
+            s = polynomial_surface(xx,yy,plane_coeff,order)
+        else:
+            s = 0
+
         self.source_x = coeff[0]
         self.source_y = coeff[1]
         
@@ -126,7 +134,7 @@ class create_psf():
         residual = np.nansum(diff**2)
         return residual#np.exp(residual)
     
-    def psf_position(self,image,limx=0.8,limy=0.8,ext_shift=[0,0]):
+    def psf_position(self,image,limx=0.8,limy=0.8,ext_shift=[0,0],surface=False,order=2):
         """
         Finds the optimal psf fit
         
@@ -150,10 +158,18 @@ class create_psf():
             Optimal psf fit to input image
             
         """
-
+        #brightloc = 
         normimage = image / np.nansum(image)    # normalise the image
-        coeff = [self.source_x,self.source_y]
-        lims = [[-limx,limx],[-limy,limy]]
+        if surface:
+            num_coeffs = (poly_order + 1) * (poly_order + 2) // 2
+            coeff = np.zeros(num_coeffs + 2)
+            coeff[0] = self.source_x; coeff[1] = self.source_y
+            lims = [[-limx,limx],[-limy,limy]]
+            for i in range(num_coeffs):
+                lims += [-np.inf,np.inf]
+        else:
+            coeff = [self.source_x,self.source_y]
+            lims = [[-limx,limx],[-limy,limy]]
         
         # -- Optimize -- #
         res = minimize(self.minimize_position, coeff, args=(normimage,ext_shift), method='Powell',bounds=lims)
@@ -240,8 +256,11 @@ class create_psf():
         else:
             initial = f0
         
-        res = minimize(self.minimize_psf_flux,initial,args=(image,surface,poly_order,kernel),method='BFGS')
-        error = np.sqrt(np.diag(res['hess_inv']))
+        #res = minimize(self.minimize_psf_flux,initial,args=(image,surface,poly_order,kernel),method='BFGS')
+        res = minimize(self.minimize_psf_flux,initial,args=(image,surface,poly_order,kernel),method='Powell')
+        error = 1
+        #error = np.sqrt(np.diag(res['hess_inv']))
+
         self.res = res
         self.flux = res.x[0]
         self.eflux = error[0]
