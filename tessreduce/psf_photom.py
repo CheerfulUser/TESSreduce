@@ -258,12 +258,11 @@ class create_psf():
         
         #res = minimize(self.minimize_psf_flux,initial,args=(image,surface,poly_order,kernel),method='BFGS')
         res = minimize(self.minimize_psf_flux,initial,args=(image,surface,poly_order,kernel),method='Powell')
-        error = 1
         #error = np.sqrt(np.diag(res['hess_inv']))
 
         self.res = res
         self.flux = res.x[0]
-        self.eflux = error[0]
+        self.eflux = 1#error[0]
         
         if surface:
             x = np.arange(image.shape[1])
