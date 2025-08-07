@@ -91,7 +91,7 @@ class create_psf():
         psf = shift(psf,ext_shift)
         self.psf = psf/np.nansum(psf)
 
-    def minimize_position(self,coeff,image,ext_shift):#,surface=True,order=2):
+    def minimize_position(self,coeff,image,error,ext_shift):#,surface=True,order=2):
         """
         Applies an exponential function using psf residuals to optimise the psf fit.
         
@@ -130,11 +130,11 @@ class create_psf():
         self.source(shiftx = self.source_x, shifty = self.source_y,ext_shift=ext_shift)
 
         # -- calculate residuals -- #
-        diff = abs(image - self.psf)
-        residual = np.nansum(diff**2)
+        diff = abs(image - self.psf)**2
+        residual = np.nansum(diff/error)
         return residual#np.exp(residual)
     
-    def psf_position(self,image,limx=0.8,limy=0.8,ext_shift=[0,0]):#,surface=False,order=2):
+    def psf_position(self,image,error,limx=0.8,limy=0.8,ext_shift=[0,0]):#,surface=False,order=2):
         """
         Finds the optimal psf fit
         
@@ -158,25 +158,33 @@ class create_psf():
             Optimal psf fit to input image
             
         """
+        if error is None:
+            error = np.ones_like(image)
         #brightloc = 
-        normimage = image / np.nansum(image)    # normalise the image
-        # if surface:
-        #     num_coeffs = (poly_order + 1) * (poly_order + 2) // 2
-        #     coeff = np.zeros(num_coeffs + 2)
-        #     coeff[0] = self.source_x; coeff[1] = self.source_y
-        #     lims = [[-limx,limx],[-limy,limy]]
-        #     for i in range(num_coeffs):
-        #         lims += [-np.inf,np.inf]
-        # else:
-        coeff = [self.source_x,self.source_y]
-        lims = [[-limx,limx],[-limy,limy]]
-        
-        # -- Optimize -- #
-        res = minimize(self.minimize_position, coeff, args=(normimage,ext_shift), method='Powell',bounds=lims)
-        print('Optimal PSF shift: ', res.x)
-        self.psf_fit = res
+        if np.nansum(image) > 0:
+            if np.isfinite(ext_shift).all():
+                ext_shift[0] = 0; ext_shift[1] = 0
+            normimage = image / np.nansum(image)    # normalise the image
 
-    def minimize_psf_flux(self,coeff,image,surface=True,order=2,kernel=None):
+            # if surface:
+            #     num_coeffs = (poly_order + 1) * (poly_order + 2) // 2
+            #     coeff = np.zeros(num_coeffs + 2)
+            #     coeff[0] = self.source_x; coeff[1] = self.source_y
+            #     lims = [[-limx,limx],[-limy,limy]]
+            #     for i in range(num_coeffs):
+            #         lims += [-np.inf,np.inf]
+            # else:
+            coeff = [self.source_x,self.source_y]
+            lims = [[-limx,limx],[-limy,limy]]
+            
+            # -- Optimize -- #
+            res = minimize(self.minimize_position, coeff, args=(normimage,error,ext_shift), method='Powell',bounds=lims)
+            print('Optimal PSF shift: ', res.x)
+            self.psf_fit = res
+        else:
+            self.psf_fit = None
+
+    def minimize_psf_flux(self,coeff,image,error=None,surface=True,order=2,kernel=None):
 
         """
         
@@ -210,10 +218,10 @@ class create_psf():
         if kernel is not None:
             self.psf = fftconvolve(self.psf, kernel, mode='same')
 
-        res = np.nansum((image - self.psf*coeff[0] - s)**2)
+        res = np.nansum((image - self.psf*coeff[0] - s)**2/error)
         return res
 
-    def psf_flux(self,image,ext_shift=None,surface=True,poly_order=3,kernel=None):
+    def psf_flux(self,image,error=None,ext_shift=None,surface=True,poly_order=3,kernel=None):
 
         """
         
@@ -238,10 +246,11 @@ class create_psf():
             residual of optimal psf flux fit 
             
         """
-        
+        if error is None:
+            error = np.ones_like(image)
         if self.psf is None:
             self.source(shiftx=self.source_x,shifty=self.source_y)
-        if ext_shift is not None:
+        if (ext_shift is not None) & np.isfinite(ext_shift).all():
             self.source(ext_shift=ext_shift)
         mask = np.zeros_like(self.psf)
         mask[self.psf > np.nanpercentile(self.psf,90)] = 1
@@ -256,13 +265,13 @@ class create_psf():
         else:
             initial = f0
         
-        #res = minimize(self.minimize_psf_flux,initial,args=(image,surface,poly_order,kernel),method='BFGS')
-        res = minimize(self.minimize_psf_flux,initial,args=(image,surface,poly_order,kernel),method='Powell')
-        #error = np.sqrt(np.diag(res['hess_inv']))
+        res = minimize(self.minimize_psf_flux,initial,args=(image,error,surface,poly_order,kernel),method='BFGS')
+        #res = minimize(self.minimize_psf_flux,initial,args=(image,error,surface,poly_order,kernel),method='Powell')
+        error = np.sqrt(np.diag(res['hess_inv']))
 
         self.res = res
         self.flux = res.x[0]
-        self.eflux = 1#error[0]
+        self.eflux = error[0]
         
         if surface:
             x = np.arange(image.shape[1])

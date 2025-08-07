@@ -280,12 +280,12 @@ def Calculate_shifts(data,mx,my,finder):
 			shifts[1,:] = np.nan
 	return shifts
 
-def image_sub(theta, image, ref):
+def image_sub(theta, image, ref, eimage, eref):
 	dx, dy = theta
 	s = shift(image,([dx,dy]),order=5, mode='nearest')
 	#translation = np.float64([[1,0,dx],[0,1, dy]])
 	#s = cv2.warpAffine(image, translation, image.shape[::-1], flags=cv2.INTER_CUBIC,borderValue=0)
-	diff = (ref-s)**2
+	diff = (ref-s)**2#/(eimage + eref)
 	if image.shape[0] > 50:
 		return np.nansum(diff[10:-11,10:-11])
 	else:
@@ -316,7 +316,7 @@ def image_sub(theta, image, ref):
 ###
 
 
-def difference_shifts(image,ref):
+def difference_shifts(image,ref,eimage,eref):
 	"""
 	Calculate the offsets of sources identified by photutils from a reference
 
@@ -343,7 +343,7 @@ def difference_shifts(image,ref):
 	if np.nansum(abs(image)) > 0:
 		x0= [0,0]
 		bds = [(-1.5,1.5),(-1.5,1.5)]
-		res = minimize(image_sub,x0,args=(image,ref),method = 'Powell',bounds= bds)
+		res = minimize(image_sub,x0,args=(image,ref,eimage,eref),method = 'Powell',bounds= bds)
 		s = res.x
 		#a,s = align_subpixel(ref,image)
 	else:
@@ -374,7 +374,6 @@ def Smooth_motion(Centroids,tpf):
 	smoothed = np.zeros_like(Centroids) * np.nan
 	skernel = int(len(tpf.flux) * 0.01) #simple way of making the smoothing window 10% of the duration
 	skernel = skernel // 2 +1
-	print('!!! skernel '+ str(skernel))
 	#skernel = 25
 	if skernel < 25:
 		skernel = 25
@@ -739,17 +738,17 @@ def par_psf_initialise(flux,camera,ccd,sector,column,row,cutoutSize,loc,time_ind
 	prf = create_psf(prf,cutoutSize)
 	return prf, cutout
 
-def par_psf_flux(image,prf,shift=[0,0],bkg_poly_order=3,kernel=None):
+def par_psf_flux(image,error,prf,shift=[0,0],bkg_poly_order=3,kernel=None):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
-	prf.psf_flux(image,ext_shift=shift,poly_order=bkg_poly_order,kernel=kernel)
+	prf.psf_flux(image,error,ext_shift=shift,poly_order=bkg_poly_order,kernel=kernel)
 	return prf.flux, prf.eflux
 
-def par_psf_full(cutout,prf,shift=[0,0],xlim=0.5,ylim=0.5):
+def par_psf_full(cutout,error,prf,shift=[0,0],xlim=0.5,ylim=0.5):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
-	prf.psf_position(cutout,ext_shift=shift,limx=xlim,limy=ylim)
-	prf.psf_flux(cutout)
+	prf.psf_position(cutout,error,ext_shift=shift,limx=xlim,limy=ylim)
+	prf.psf_flux(cutout,error)
 	pos = [prf.source_x, prf.source_y]
 	return prf.flux, prf.eflux, pos
 
