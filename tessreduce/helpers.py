@@ -1232,3 +1232,90 @@ def grad_clip_fill_bkg(bkg,sigma=3,max_size=1000):
 	estimate = inpaint.inpaint_biharmonic(data,points)
 	return estimate
 
+def grad_clip(data,box_size=100):
+	"""
+	Perform a local sigma clip of points based on the gradient of the points. 
+	Pixels with large gradients are contaminated by stars/galaxies.
+
+	Inputs
+	------
+		data : array
+			1d array of the data to clip
+		box_size : int 
+			integer defining the box size to clip over 
+	Output
+	------
+		gradind : bool
+
+	"""
+	gradind = np.zeros_like(data)
+    
+	for i in range(len(data)):
+		if i < box_size//2:
+			d = data[:i+box_size//2]
+		elif len(data) - i < box_size//2:
+			d = data[i-box_size//2:]
+		else:
+			d = data[i-box_size//2:i+box_size//2]
+        
+		ind = np.isfinite(d)
+		d = d[ind]
+		if len(d) > 5:
+			gind = ~sigma_clip(np.gradient(abs(d))+d,sigma_lower=5,).mask
+			if i < box_size//2:
+				gradind[:i+box_size//2][ind] = gind
+			elif len(data) - i < box_size//2:
+				gradind[i-box_size//2:][ind] = gind
+			else:
+				gradind[i-box_size//2:i+box_size//2][ind] = gind
+    
+	gradind = gradind > 0
+	return gradind 
+
+def fit_strap(data,mask):
+	"""
+	interpolate over missing data
+
+	"""
+	x = np.arange(0,len(data))
+	y = data.copy()
+	p = np.ones_like(x)
+	if len(y[mask]) > 5:
+		p = interp1d(x[mask], y[mask],bounds_error=False,fill_value=np.nan,kind='linear')
+		p = p(x)
+		if np.isnan(p).any():
+			p2 = interp1d(x[mask], y[mask],bounds_error=False,fill_value='extrapolate',kind='nearest')
+			p2 = p2(x)
+			p[np.isnan(p)] = p2[np.isnan(p)]
+	return p
+
+def parallel_strap_fit(frame,frame_bkg,frame_err,mask,repeats=3,tol=3):
+	norm = frame / frame_bkg
+	sind = np.where(np.nansum(mask,axis=0)>0)[0]
+	qe = np.ones_like(frame)
+	for i in sind:
+		y = frame[:,i]
+		d = abs(np.gradient(y))
+		m, med, std = sigma_clipped_stats(d,maxiters=10)
+		nm = (d > med + std) * 1
+		nm = np.convolve(nm,np.ones(3),mode='same')
+		nm = (nm == 0)
+		#for r in range(repeats):
+		q = fit_strap(norm[:,i],nm)
+		#q /= frame_bkg[:,i]
+		q = savgol_filter(q,61,2)
+		#sub = ((frame - (q * frame_bkg)))[:,i]
+		#ind = (sub < tol * frame_err)[:,i]
+		#nm[ind] = True
+		qe[:,i] = q
+	#qe[(qe-1) < 5e-3] = 1
+	return qe
+
+
+
+
+
+
+
+
+
