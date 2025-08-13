@@ -1303,7 +1303,7 @@ def parallel_strap_fit(frame,frame_bkg,frame_err,mask,repeats=3,tol=3):
 		#for r in range(repeats):
 		q = fit_strap(norm[:,i],nm)
 		#q /= frame_bkg[:,i]
-		if y.shape > 70:
+		if len(y) > 70:
 			q = savgol_filter(q,61,2)
 		else:
 			mq = np.nanmed(q)
