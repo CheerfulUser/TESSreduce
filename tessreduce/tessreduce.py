@@ -558,7 +558,7 @@ class tessreduce():
 		if flux.shape[1] < 10000:
 			ratio = (flux / bkg_smth) * m
 			
-			m, med, std = sigma_clipped_stats(ratio,axis=1,sigma_upper=2,sigma_lower=3,maxiters=10)
+			m, med, std = sigma_clipped_stats(ratio,axis=1,sigma_upper=2,sigma_lower=3)
 			#qe_1d = np.nanpercentile(ratio,10,axis=1)
 			
 			#qe[:,:,:] = qe_1d[:,np.newaxis,:]
