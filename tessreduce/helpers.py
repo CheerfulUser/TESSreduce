@@ -1303,21 +1303,49 @@ def parallel_strap_fit(frame,frame_bkg,frame_err,mask,repeats=3,tol=3):
 		#for r in range(repeats):
 		q = fit_strap(norm[:,i],nm)
 		#q /= frame_bkg[:,i]
-		if len(y) > 70:
-			q = savgol_filter(q,61,2)
+		if len(y) > 110:
+			q = savgol_filter(q,101,1)
 		else:
-			mq = np.nanmed(q)
+			mq = np.nanmedian(q)
 			q[:] = mq
 
 		qe[:,i] = q
-	#qe[(qe-1) < 5e-3] = 1
+
+	#qe[:,np.nanmean((qe-1),axis=) < 5e-3] = 1
 	return qe
 
 
+def simulate_epsf(camera,ccd,sector,column,row,size=13,realizations=2000,oversample=3):
+	from photutils.psf import EPSFBuilder, EPSFStar, EPSFStars
 
+	psfs = []
+	randpos = np.random.uniform(-1,1,size=(2,realizations)) + 6
+	prf_mod = TESS_PRF(cam=camera, ccd=ccd,sector=sector,
+						colnum=column,rownum=row)
 
+	for i in range(len(randpos)):
+		psfs += [prf_mod.locate(randpos[0,i],randpos[1,i],(13,13))]
+	psfs = np.array(psfs)
 
+	stars = []
+	for i in range(len(psfs)):
+		stars += [EPSFStar(psfs[i],cutout_center=randpos[:,i])]
+	stars = EPSFStars(stars)
 
+	epsf_builder = EPSFBuilder(oversampling=oversample, maxiters=20, progress_bar=False)
+	epsf, fitted_stars = epsf_builder(stars)
+
+	return epsf
+
+def parallel_photutils(cutout,e_cutout,psf_phot,init_params=None):
+    if np.nansum(abs(cutout)) > 0:
+        phot = psf_phot(cutout, error=e_cutout,init_params=init_params)
+        phot = phot.to_pandas()
+        return phot[['flux_fit']].values[0], phot[['flux_err']].values[0]
+        #return float(phot[['flux_fit']].values), float(phot[['flux_err']].values)
+    else:
+        return np.array([np.nan]), np.array([np.nan])
+    
 
 
 

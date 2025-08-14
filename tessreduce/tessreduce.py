@@ -66,7 +66,7 @@ class tessreduce():
 				 reduce=True,align=True,diff=True,corr_correction=True,kernel_match=False,calibrate=True,sourcehunt=True,
 				 phot_method='aperture',imaging=False,parallel=True,num_cores=-1,diagnostic_plot=False,plot=True,
 				 savename=None,quality_bitmask='default',cache_dir=None,cache=True,catalogue_path=False,
-				 shift_method='difference',prf_path=None,verbose=1):
+				 shift_method='difference',prf_path=None,verbose=1,col_offset=0):
 
 		"""
 		Class for extracting reduced TESS photometry around a target coordinate or event. 
@@ -145,6 +145,7 @@ class tessreduce():
 		self.kernel_match = kernel_match
 		self.imaging = imaging
 		self.parallel = parallel
+		self._col_offset = col_offset
 		if type(num_cores) == str:
 			self.num_cores = multiprocessing.cpu_count()
 		else:
@@ -186,6 +187,7 @@ class tessreduce():
 		self.zp_e = None
 		self.sn_name = None
 		self.ebv = 0
+		self.epsf = None
 		# repeat for backup
 		self.tzp = None
 		self.tzp_e = None
@@ -447,9 +449,9 @@ class tessreduce():
 
 		# Generate mask from source catalogue
 		if useref:
-			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize,ref=self.ref)
+			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize,ref=self.ref,col_offset=self._col_offset)
 		else:
-			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize)
+			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize,col_offset=self._col_offset)
 
 		# Generate sky background as the inverse of mask
 		sky = ((mask & 1)+1 ==1) * 1.
@@ -553,10 +555,10 @@ class tessreduce():
 		m = (np.nansum(masks,axis=0) > 0) * 1.
 		m[m==0] = np.nan
 		qe = np.ones_like(flux) * 1.
-		if flux.shape[1] < 30:
+		if flux.shape[1] < 10000:
 			ratio = (flux / bkg_smth) * m
 			
-			m, med, std = sigma_clipped_stats(ratio,axis=1,sigma_upper=2,sigma_lower=3)
+			m, med, std = sigma_clipped_stats(ratio,axis=1,sigma_upper=2,sigma_lower=3,maxiters=10)
 			#qe_1d = np.nanpercentile(ratio,10,axis=1)
 			
 			#qe[:,:,:] = qe_1d[:,np.newaxis,:]
@@ -1612,8 +1614,8 @@ class tessreduce():
 			time_ind = np.arange(0,len(self.flux))
 
 		
-		col = self.tpf.column - int(self.size/2-1) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
-		row = self.tpf.row - int(self.size/2-1) + loc[1] 
+		col = self.tpf.column - int(self.size//2) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
+		row = self.tpf.row - int(self.size//2) + loc[1] 
 
 		if isinstance(loc[0], (float, np.floating, np.float32, np.float64)):
 			loc[0] = int(np.round(loc[0],0))
@@ -1689,6 +1691,61 @@ class tessreduce():
 		pos[0,:] += xpos; pos[1,:] += ypos
 		return flux, pos
 
+	def psf_photutils(self,xPix,yPix,size=5,local_bkg=False,ref=False,return_pos=False):
+		from photutils.psf import PSFPhotometry
+		from astropy.table import Table
+		rad = size // 2
+		if self.epsf is None:
+			col = self.tpf.column - int(self.size//2) + yPix # find column and row, when specifying location on a *say* 90x90 px cutout
+			row = self.tpf.row - int(self.size//2) + xPix
+			self.epsf = simulate_epsf(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row)
+		if local_bkg:
+			localbkg_estimator = LocalBackground(1.5, 7, bkgstat)
+		else:
+			localbkg_estimator = None
+		if ref:
+			flux = self.flux + self.ref
+		else:
+			flux = self.flux
+		cutouts = flux[:,yPix-rad:yPix+rad+1,xPix-rad:xPix+rad+1]
+		ecutouts = self.eflux[:,yPix-rad:yPix+rad+1,xPix-rad:xPix+rad+1]
+
+		weight = np.abs(np.nansum((cutouts/ecutouts)[:,1:4,1:4],axis=(1,2)))
+		weight[np.isnan(weight)] = 0
+		ind = np.argmax(weight)
+		fit_shape = (size, size)
+		# initial position fit on brightest frame
+		psfphot = PSFPhotometry(self.epsf, fit_shape, finder=None,aperture_radius=1.5,
+								localbkg_estimator=localbkg_estimator)
+		init = Table()
+		init['x_init'] = [size//2]
+		init['y_init'] = [size//2]
+		phot = psfphot(cutouts[ind], error=ecutouts[ind],init_params=init)
+
+		# fit with the best position
+		init2 = Table()
+		init['x_init'] = phot['x_fit']
+		init['y_init'] = phot['y_fit']	
+		flux = np.zeros(len(self.flux)) * np.nan
+		eflux = np.zeros(len(self.flux)) * np.nan
+		psfphot2 = PSFPhotometry(self.epsf, fit_shape, finder=None,aperture_radius=1.5,
+								 xy_bounds=(0.05),localbkg_estimator=localbkg_estimator)
+		f,ef = zip(*Parallel(n_jobs=self.num_cores)(delayed(parallel_photutils)(cutouts[i],ecutouts[i],psfphot2,init) for i in np.arange(len(flux))))
+		f = np.array(f).flatten()
+		ef = np.array(ef).flatten()
+
+		phot = phot.to_pandas()
+		pos = phot[['x_fit','y_fit']].values + np.array([xPix,yPix]) - size//2
+		epos = phot[['x_err','y_err']].values
+		if return_pos:
+			return f, ef, pos, epos
+		else:
+			return f, ef
+
+
+
+
+
 	def psf_photometry(self,xPix,yPix,size=7,snap='brightest',ext_shift=True,plot=False,diff=None,bkg_poly_order=3):
 		"""
 		Main PSF Photometry function
@@ -1763,9 +1820,10 @@ class tessreduce():
 					prf, cutouts, ecutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))	# gather base PRF and the array of cutouts data
 					bkg = self.bkg[:,int(yPix),int(xPix)]
 					#lowbkg = bkg < np.nanpercentile(bkg,16)
-					weight = np.abs(np.nansum(cutouts[:,int(yPix)-1:int(yPix)+2,int(xPix)-1:int(xPix)+2],axis=(1,2))) / bkg
+					#weight = np.abs(np.nansum(cutouts[:,int(yPix)-1:int(yPix)+2,int(xPix)-1:int(xPix)+2],axis=(1,2))) / bkg
+					weight = np.abs(np.nansum((cutouts / ecuts)[:,int(yPix)-1:int(yPix)+2,int(xPix)-1:int(xPix)+2],axis=(1,2)))
 					weight[np.isnan(weight)] = 0
-					ind = np.argmax(abs(weight))
+					ind = np.argmax(weight)
 					#ind = np.where(cutouts==np.nanmax(cutouts))[0][0]
 					ref = cutouts[ind]
 					base = create_psf(prf,size)
