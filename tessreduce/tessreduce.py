@@ -555,6 +555,7 @@ class tessreduce():
 		m = (np.nansum(masks,axis=0) > 0) * 1.
 		m[m==0] = np.nan
 		ratio = flux / bkg_smth * m
+		ratio[ratio < 1] = np.nan
 		#m, med, std = sigma_clipped_stats(ratio,axis=1,sigma_upper=2)
 		qe_1d = np.nanpercentile(ratio,10,axis=1)
 		qe = np.ones_like(norm)
@@ -642,7 +643,7 @@ class tessreduce():
 			if self.parallel:
 				bkg_smth = Parallel(n_jobs=self.num_cores)(delayed(Smooth_bkg)(frame,gauss_smooth,interpolate) for frame in flux*m)
 				if rerun_negative:
-					over_sub = (deepcopy(self.flux) - bkg_smth) < -3 * self.eflux
+					over_sub = (deepcopy(self.flux) - bkg_smth) < -self.eflux # -0.5
 					over_sub = np.nansum(over_sub,axis=0) > 0
 					self.over_sub = over_sub
 					#print('overshape ',over_sub.shape)
@@ -1712,10 +1713,19 @@ class tessreduce():
 		from photutils.psf import PSFPhotometry
 		from astropy.table import Table
 		rad = size // 2
+
+		if flux is None:
+			flux = self.flux
+		if (flux.shape[1] < size) | (flux.shape[2] < size):
+			e = 'Image dimensions must be larger than the cutout size'
+			raise ValueError(e)
+		if eflux is None:
+			eflux = self.eflux
+
 		if (xPix is None) | (yPix is None):
 			xPix = flux.shape[2]//2
 			yPix = flux.shape[1]//2
-		
+
 		if epsf is None:
 			if self.epsf is None:
 				col = self.tpf.column - int(self.size//2) + yPix # find column and row, when specifying location on a *say* 90x90 px cutout
@@ -1727,13 +1737,7 @@ class tessreduce():
 			localbkg_estimator = LocalBackground(1.5, 7, bkgstat)
 		else:
 			localbkg_estimator = None
-		if flux is None:
-			flux = self.flux
-		if (flux.shape[1] < size) | (flux.shape[2] < size):
-			e = 'Image dimensions must be larger than the cutout size'
-			raise ValueError(e)
-		if eflux is None:
-			eflux = self.eflux
+		
 		if ref:
 			flux = flux + self.ref
 
