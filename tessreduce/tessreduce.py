@@ -1712,6 +1712,10 @@ class tessreduce():
 		from photutils.psf import PSFPhotometry
 		from astropy.table import Table
 		rad = size // 2
+		if (xPix is None) | (yPix is None):
+			xPix = flux.shape[2]//2
+			yPix = flux.shape[1]//2
+		
 		if epsf is None:
 			if self.epsf is None:
 				col = self.tpf.column - int(self.size//2) + yPix # find column and row, when specifying location on a *say* 90x90 px cutout
@@ -1728,9 +1732,6 @@ class tessreduce():
 		if (flux.shape[1] < size) | (flux.shape[2] < size):
 			e = 'Image dimensions must be larger than the cutout size'
 			raise ValueError(e)
-		if (xPix is None) | (yPix is None):
-			xPix = flux.shape[2]//2
-			yPix = flux.shape[1]//2
 		if eflux is None:
 			eflux = self.eflux
 		if ref:
