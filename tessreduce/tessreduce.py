@@ -547,37 +547,52 @@ class tessreduce():
 		Calculate the effective quantum efficiency enhancement of the detector from scattered light.
 		'''
 		norm = flux / bkg_smth
-		straps = norm * ((self.mask & 4) > 0)
+		straps = norm * ((self.mask & 4)>0)
 
 		straps[straps==0] = np.nan
 		m,med,std = sigma_clipped_stats(straps,axis=(1,2),maxiters=10,mask_value=np.nan)
 		masks = straps < (med + 2*std)[:,np.newaxis,np.newaxis]
 		m = (np.nansum(masks,axis=0) > 0) * 1.
 		m[m==0] = np.nan
-		qe = np.ones_like(flux) * 1.
-		if flux.shape[1] < 10000:
-			ratio = (flux / bkg_smth) * m
-			
-			m, med, std = sigma_clipped_stats(ratio,axis=1,sigma_upper=2,sigma_lower=3)
-			#qe_1d = np.nanpercentile(ratio,10,axis=1)
-			
-			#qe[:,:,:] = qe_1d[:,np.newaxis,:]
-			qe[:,:,:] = med[:,np.newaxis,:]
-
-		else:
-			index = np.arange(len(flux),dtype=int)
-			if self.parallel:
-				qe = Parallel(n_jobs=self.num_cores)(delayed(parallel_strap_fit)(flux[i],bkg_smth[i],flux_e[i],m) for i in index)
-			else:
-				qe = []
-				for i in index:
-					qe += [parallel_strap_fit(flux[i],bkg_smth[i],flux_e[i],m)]
-			qe = np.array(qe)
-		#filler = np.nanmedian(qe,axis=1)
-
+		ratio = flux / bkg_smth * m
+		#m, med, std = sigma_clipped_stats(ratio,axis=1,sigma_upper=2)
+		qe_1d = np.nanpercentile(ratio,10,axis=1)
+		qe = np.ones_like(norm)
+		qe[:,:,:] = qe_1d[:,np.newaxis,:]
+		#qe[:,:,:] = med[:,np.newaxis,:]
 		qe[np.isnan(qe)] = 1
 		qe[qe<1] = 1
 		return qe
+
+		# straps[straps==0] = np.nan
+		# m,med,std = sigma_clipped_stats(straps,axis=(1,2),maxiters=10,mask_value=np.nan)
+		# masks = straps < (med + 2*std)[:,np.newaxis,np.newaxis]
+		# m = (np.nansum(masks,axis=0) > 0) * 1.
+		# m[m==0] = np.nan
+		# qe = np.ones_like(flux) * 1.
+		# if flux.shape[1] < 10000:
+		# 	ratio = (flux / bkg_smth) * m
+			
+		# 	m, med, std = sigma_clipped_stats(ratio,axis=1,sigma_upper=2,sigma_lower=3)
+		# 	#qe_1d = np.nanpercentile(ratio,10,axis=1)
+			
+		# 	#qe[:,:,:] = qe_1d[:,np.newaxis,:]
+		# 	qe[:,:,:] = med[:,np.newaxis,:]
+
+		# else:
+		# 	index = np.arange(len(flux),dtype=int)
+		# 	if self.parallel:
+		# 		qe = Parallel(n_jobs=self.num_cores)(delayed(parallel_strap_fit)(flux[i],bkg_smth[i],flux_e[i],m) for i in index)
+		# 	else:
+		# 		qe = []
+		# 		for i in index:
+		# 			qe += [parallel_strap_fit(flux[i],bkg_smth[i],flux_e[i],m)]
+		# 	qe = np.array(qe)
+		# #filler = np.nanmedian(qe,axis=1)
+
+		# qe[np.isnan(qe)] = 1
+		# qe[qe<1] = 1
+		# return qe
 
 	def background(self,gauss_smooth=2,calc_qe=True,strap_iso=True,source_hunt=False,interpolate=True,rerun_negative=False):
 		"""
@@ -1691,52 +1706,76 @@ class tessreduce():
 		pos[0,:] += xpos; pos[1,:] += ypos
 		return flux, pos
 
-	def psf_photutils(self,xPix,yPix,size=5,local_bkg=False,ref=False,return_pos=False):
+	def psf_photutils(self,xPix=None,yPix=None,size=5,local_bkg=False,epsf=None,
+					  flux=None,eflux=None,ref=False,return_pos=False,
+					  snap='brightest'):
 		from photutils.psf import PSFPhotometry
 		from astropy.table import Table
 		rad = size // 2
-		if self.epsf is None:
-			col = self.tpf.column - int(self.size//2) + yPix # find column and row, when specifying location on a *say* 90x90 px cutout
-			row = self.tpf.row - int(self.size//2) + xPix
-			self.epsf = simulate_epsf(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row)
+		if epsf is None:
+			if self.epsf is None:
+				col = self.tpf.column - int(self.size//2) + yPix # find column and row, when specifying location on a *say* 90x90 px cutout
+				row = self.tpf.row - int(self.size//2) + xPix
+				self.epsf = simulate_epsf(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row)
+			epsf = self.epsf
+
 		if local_bkg:
 			localbkg_estimator = LocalBackground(1.5, 7, bkgstat)
 		else:
 			localbkg_estimator = None
-		if ref:
-			flux = self.flux + self.ref
-		else:
+		if flux is None:
 			flux = self.flux
-		cutouts = flux[:,yPix-rad:yPix+rad+1,xPix-rad:xPix+rad+1]
-		ecutouts = self.eflux[:,yPix-rad:yPix+rad+1,xPix-rad:xPix+rad+1]
+		if (flux.shape[1] < size) | (flux.shape[2] < size):
+			e = 'Image dimensions must be larger than the cutout size'
+			raise ValueError(e)
+		if (xPix is None) | (yPix is None):
+			xPix = flux.shape[2]//2
+			yPix = flux.shape[1]//2
+		if eflux is None:
+			eflux = self.eflux
+		if ref:
+			flux = flux + self.ref
 
-		weight = np.abs(np.nansum((cutouts/ecutouts)[:,1:4,1:4],axis=(1,2)))
-		weight[np.isnan(weight)] = 0
-		ind = np.argmax(weight)
+		cutouts = flux[:,yPix-rad:yPix+rad+1,xPix-rad:xPix+rad+1]
+		ecutouts = eflux[:,yPix-rad:yPix+rad+1,xPix-rad:xPix+rad+1]
 		fit_shape = (size, size)
-		# initial position fit on brightest frame
-		psfphot = PSFPhotometry(self.epsf, fit_shape, finder=None,aperture_radius=1.5,
+		psfphot = PSFPhotometry(epsf, fit_shape, finder=None,aperture_radius=1.5,
 								localbkg_estimator=localbkg_estimator)
 		init = Table()
 		init['x_init'] = [size//2]
 		init['y_init'] = [size//2]
-		phot = psfphot(cutouts[ind], error=ecutouts[ind],init_params=init)
+		if snap.lower() != 'all':
+			if snap.lower() == 'brightest':
+				weight = np.abs(np.nansum((cutouts/ecutouts)[:,1:4,1:4],axis=(1,2)))
+				weight[np.isnan(weight)] = 0
+				ind = np.argmax(weight)
+				rcut = cutouts[ind] 
+				ecut = ecutouts[ind]
+			elif snap.lower() == 'ref':
+				rcut = self.ref[:,yPix-rad:yPix+rad+1,xPix-rad:xPix+rad+1]
+				ecut = ecutouts[self.ref_ind]
 
-		# fit with the best position
-		init2 = Table()
-		init['x_init'] = phot['x_fit']
-		init['y_init'] = phot['y_fit']	
-		flux = np.zeros(len(self.flux)) * np.nan
-		eflux = np.zeros(len(self.flux)) * np.nan
-		psfphot2 = PSFPhotometry(self.epsf, fit_shape, finder=None,aperture_radius=1.5,
-								 xy_bounds=(0.05),localbkg_estimator=localbkg_estimator)
-		f,ef = zip(*Parallel(n_jobs=self.num_cores)(delayed(parallel_photutils)(cutouts[i],ecutouts[i],psfphot2,init) for i in np.arange(len(flux))))
-		f = np.array(f).flatten()
-		ef = np.array(ef).flatten()
-
-		phot = phot.to_pandas()
-		pos = phot[['x_fit','y_fit']].values + np.array([xPix,yPix]) - size//2
-		epos = phot[['x_err','y_err']].values
+			
+			phot = psfphot(rcut, error=ecut,init_params=init)
+			# fit with the best position
+			init2 = Table()
+			init['x_init'] = phot['x_fit']
+			init['y_init'] = phot['y_fit']	
+			flux = np.zeros(len(self.flux)) * np.nan
+			eflux = np.zeros(len(self.flux)) * np.nan
+			psfphot2 = PSFPhotometry(epsf, fit_shape, finder=None,aperture_radius=1.5,
+									 xy_bounds=(0.05),localbkg_estimator=localbkg_estimator)
+			f,ef = zip(*Parallel(n_jobs=self.num_cores)(delayed(parallel_photutils)(cutouts[i],ecutouts[i],psfphot2,init) for i in np.arange(len(cutouts))))
+			f = np.array(f).flatten()
+			ef = np.array(ef).flatten()
+			phot = phot.to_pandas()
+			pos = phot[['x_fit','y_fit']].values + np.array([xPix,yPix]) - size//2
+			epos = phot[['x_err','y_err']].values
+		else:
+			f,ef,pos,epos = zip(*Parallel(n_jobs=self.num_cores)(delayed(parallel_photutils)(cutouts[i],ecutouts[i],psfphot,init,True) for i in np.arange(len(cutouts))))
+			pos['x_fit'] += xPix - size//2
+			pos['y_fit'] += xPix - size//2
+		
 		if return_pos:
 			return f, ef, pos, epos
 		else:
@@ -1821,7 +1860,7 @@ class tessreduce():
 					bkg = self.bkg[:,int(yPix),int(xPix)]
 					#lowbkg = bkg < np.nanpercentile(bkg,16)
 					#weight = np.abs(np.nansum(cutouts[:,int(yPix)-1:int(yPix)+2,int(xPix)-1:int(xPix)+2],axis=(1,2))) / bkg
-					weight = np.abs(np.nansum((cutouts / ecuts)[:,int(yPix)-1:int(yPix)+2,int(xPix)-1:int(xPix)+2],axis=(1,2)))
+					weight = np.abs(np.nansum((cutouts / ecutouts)[:,int(yPix)-1:int(yPix)+2,int(xPix)-1:int(xPix)+2],axis=(1,2)))
 					weight[np.isnan(weight)] = 0
 					ind = np.argmax(weight)
 					#ind = np.where(cutouts==np.nanmax(cutouts))[0][0]

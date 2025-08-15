@@ -53,18 +53,18 @@ fig_width = fig_width_pt*inches_per_pt  # width in inches
 
 def strip_units(data):
 	"""
-    Removes the units off of data that was not in a NDarray, such as an astropy table. Returns an NDarray that has no units 
+	Removes the units off of data that was not in a NDarray, such as an astropy table. Returns an NDarray that has no units 
 
-    Parameters:
-    ----------
-    data: ArrayLike
-            ArrayLike set of data that may have associated units that want to be removed. Should be able to return something sensible when .values is called.
+	Parameters:
+	----------
+	data: ArrayLike
+			ArrayLike set of data that may have associated units that want to be removed. Should be able to return something sensible when .values is called.
 
-    Returns:
-    -------
-    data: ArrayLike
-            Same shape as input data, but will not have any units
-    """
+	Returns:
+	-------
+	data: ArrayLike
+			Same shape as input data, but will not have any units
+	"""
 	
 	if type(data) != np.ndarray:
 		data = data.value
@@ -294,25 +294,25 @@ def image_sub(theta, image, ref, eimage, eref):
 
 ### TESTING CODE
 #def c_shift_image(img, shift):
-#    return scipy.ndimage.shift(img, shift=shift, order=5, mode='nearest')  # cubic interpolation
+#	return scipy.ndimage.shift(img, shift=shift, order=5, mode='nearest')  # cubic interpolation
 #
 #def cost_function(shift, ref_img, moving_img):
-#    shifted = shift_image(moving_img, shift)
-#    diff = ref_img - shifted
-#    return np.sum(diff[2:-2,2:-2]**2)  # Sum of Squared Differences (SSD)
+#	shifted = shift_image(moving_img, shift)
+#	diff = ref_img - shifted
+#	return np.sum(diff[2:-2,2:-2]**2)  # Sum of Squared Differences (SSD)
 #
 #def align_subpixel(ref_img, moving_img, initial_shift=(0,0)):
-#    ref_img = ref_img.astype(np.float32)
-#    moving_img = moving_img.astype(np.float32)
+#	ref_img = ref_img.astype(np.float32)
+#	moving_img = moving_img.astype(np.float32)
 #
-#    # Minimize SSD by shifting moving_img
-#    result = minimize(cost_function, initial_shift, args=(ref_img, moving_img), method='Powell')
+#	# Minimize SSD by shifting moving_img
+#	result = minimize(cost_function, initial_shift, args=(ref_img, moving_img), method='Powell')
 #
-#    best_shift = result.x
-#    aligned_img = c_shift_image(moving_img, best_shift)
+#	best_shift = result.x
+#	aligned_img = c_shift_image(moving_img, best_shift)
 #
-#    print(f"Optimal shift (y, x): {best_shift}")
-#    return aligned_img, best_shift
+#	print(f"Optimal shift (y, x): {best_shift}")
+#	return aligned_img, best_shift
 ###
 
 
@@ -450,36 +450,36 @@ def smooth_zp(zp,time):
 	return smoothed, err
 
 def grads_rad(flux):
-    """
-    Calculates the radius of the flux from the gradient of the flux, and the double gradient of the flux.  
+	"""
+	Calculates the radius of the flux from the gradient of the flux, and the double gradient of the flux.  
 
-    Parameters:
-    ----------
-    flux: ArrayLike
-            An array of flux values
+	Parameters:
+	----------
+	flux: ArrayLike
+			An array of flux values
 
-    Returns:
-    -------
-    rad: ArrayLike
-            The radius of the fluxes 
-    """
-    rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
-    return rad
+	Returns:
+	-------
+	rad: ArrayLike
+			The radius of the fluxes 
+	"""
+	rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
+	return rad
 
 def grad_flux_rad(flux):
 	"""
-    Calculates the radius of the flux from the gradient of the flux.  
+	Calculates the radius of the flux from the gradient of the flux.  
 
-    Parameters:
-    ----------
-    flux: ArrayLike
-            An array of flux values
+	Parameters:
+	----------
+	flux: ArrayLike
+			An array of flux values
 
-    Returns:
-    -------
-    rad: ArrayLike
-            The radius of the fluxes 
-    """
+	Returns:
+	-------
+	rad: ArrayLike
+			The radius of the fluxes 
+	"""
 	rad = np.sqrt(flux**2+np.gradient(flux)**2)
 	return rad
 
@@ -1249,7 +1249,7 @@ def grad_clip(data,box_size=100):
 
 	"""
 	gradind = np.zeros_like(data)
-    
+	
 	for i in range(len(data)):
 		if i < box_size//2:
 			d = data[:i+box_size//2]
@@ -1257,7 +1257,7 @@ def grad_clip(data,box_size=100):
 			d = data[i-box_size//2:]
 		else:
 			d = data[i-box_size//2:i+box_size//2]
-        
+		
 		ind = np.isfinite(d)
 		d = d[ind]
 		if len(d) > 5:
@@ -1268,7 +1268,7 @@ def grad_clip(data,box_size=100):
 				gradind[i-box_size//2:][ind] = gind
 			else:
 				gradind[i-box_size//2:i+box_size//2][ind] = gind
-    
+	
 	gradind = gradind > 0
 	return gradind 
 
@@ -1337,15 +1337,25 @@ def simulate_epsf(camera,ccd,sector,column,row,size=13,realizations=2000,oversam
 
 	return epsf
 
-def parallel_photutils(cutout,e_cutout,psf_phot,init_params=None):
-    if np.nansum(abs(cutout)) > 0:
-        phot = psf_phot(cutout, error=e_cutout,init_params=init_params)
-        phot = phot.to_pandas()
-        return phot[['flux_fit']].values[0], phot[['flux_err']].values[0]
-        #return float(phot[['flux_fit']].values), float(phot[['flux_err']].values)
-    else:
-        return np.array([np.nan]), np.array([np.nan])
-    
+def parallel_photutils(cutout,e_cutout,psf_phot,init_params=None,return_pos=False):
+	if np.nansum(abs(cutout)) > 0:
+		phot = psf_phot(cutout, error=e_cutout,init_params=init_params)
+		phot = phot.to_pandas()
+		f = phot[['flux_fit']].values[0]; ef = phot[['flux_err']].values[0]
+		pos = phot[['x_fit','y_fit']].values
+		epos = phot[['x_err','y_err']].values
+		if return_pos:
+			return f, ef, pos, epos
+		else:
+			return f, ef
+		#return float(phot[['flux_fit']].values), float(phot[['flux_err']].values)
+	else:
+		if return_pos:
+			pos = np.array([np.nan,np.nan])
+			return np.array([np.nan]), np.array([np.nan]), pos, pos
+		else:
+			return np.array([np.nan]), np.array([np.nan])
+	
 
 
 
