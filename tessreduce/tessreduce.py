@@ -172,6 +172,7 @@ class tessreduce():
 
 		# Calculated 
 		self.mask = None
+		#self._over_sub = None
 		self.shift = None
 		self.bkg = None
 		self.flux = None
@@ -645,7 +646,7 @@ class tessreduce():
 				if rerun_negative:
 					over_sub = (deepcopy(self.flux) - bkg_smth) < -self.eflux # -0.5
 					over_sub = np.nansum(over_sub,axis=0) > 0
-					self.over_sub = over_sub
+					#self._over_sub = over_sub
 					#print('overshape ',over_sub.shape)
 					#print('m ',m.shape)
 					strap_mask = (self.mask & 4) > 0
@@ -2030,6 +2031,11 @@ class tessreduce():
 				self.mask = mask
 				if self.verbose > 0:
 					print('assigned source mask')
+			if moving_mask is not None:
+					moving_mask = moving_mask > 0
+					temp = np.zeros_like(self.flux,dtype=int)
+					temp[:,:,:] = self.mask
+					self.mask = temp | moving_mask
 			# calculate background for each frame
 			if self.verbose > 0:
 				print('calculating background')
