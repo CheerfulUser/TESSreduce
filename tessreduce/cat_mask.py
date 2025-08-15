@@ -282,7 +282,7 @@ def Cat_mask(tpf,catalogue_path=None,maglim=19,scale=1,strapsize=3,ref=None,sigm
 	sat = (np.nansum(sat,axis=0) > 0).astype(int) * 2 # assign 2 bit 
 	
 	if strapsize > 0: 
-		strap = Strap_mask(image,tpf.column,strapsize+col_offset).astype(int) * 4 # assign 4 bit 
+		strap = Strap_mask(image,tpf.column+col_offset,strapsize).astype(int) * 4 # assign 4 bit 
 	else:
 		strap = np.zeros_like(image,dtype=int)
 
