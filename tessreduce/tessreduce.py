@@ -656,7 +656,7 @@ class tessreduce():
 						strap_mask = strap_mask[0]
 					if strap_iso:
 						over_sub[strap_mask] = 0
-					if source_hunt:
+					if source_hunt | (len(m.shape == 3)):
 						m[:,over_sub[:,:]] = 1
 					else:
 						m[over_sub] = 1
