@@ -564,6 +564,8 @@ class tessreduce():
 		#qe[:,:,:] = med[:,np.newaxis,:]
 		qe[np.isnan(qe)] = 1
 		qe[qe<1] = 1
+		m, med, std = sigma_clipped_stats(qe,axis=0)
+		qe[:] = med
 		return qe
 
 		# straps[straps==0] = np.nan
@@ -650,6 +652,8 @@ class tessreduce():
 					#print('overshape ',over_sub.shape)
 					#print('m ',m.shape)
 					strap_mask = (self.mask & 4) > 0
+					if len(strap_mask.shape) == 3:
+						strap_mask = strap_mask[0]
 					if strap_iso:
 						over_sub[strap_mask] = 0
 					if source_hunt:
