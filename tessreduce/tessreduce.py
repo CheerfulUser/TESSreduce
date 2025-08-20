@@ -1297,7 +1297,7 @@ class tessreduce():
 			if savename is not None:
 				plt.savefig(savename + '_diff_diag.pdf', bbox_inches = "tight")
 
-		p = self.check_trend(lc=lc[1])
+		#p = self.check_trend(lc=lc[1])
 		return lc, sky
 
 	def dif_diag_plot(self,ap_tar,ap_sky,lc=None,sky=None,data=None):
