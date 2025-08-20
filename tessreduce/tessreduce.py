@@ -66,7 +66,7 @@ class tessreduce():
 				 reduce=True,align=True,diff=True,corr_correction=True,kernel_match=False,calibrate=True,sourcehunt=True,
 				 phot_method='aperture',imaging=False,parallel=True,num_cores=-1,diagnostic_plot=False,plot=True,
 				 savename=None,quality_bitmask='default',cache_dir=None,cache=True,catalogue_path=False,
-				 shift_method='difference',prf_path=None,verbose=1,col_offset=0):
+				 shift_method='difference',use_error_image=False,prf_path=None,verbose=1,col_offset=0):
 
 		"""
 		Class for extracting reduced TESS photometry around a target coordinate or event. 
@@ -154,6 +154,7 @@ class tessreduce():
 		self._sourcehunt = sourcehunt
 		self.verbose = verbose
 		self._shift_method = shift_method
+		self._use_error_image = use_error_image
 
 		# Offline Paths 
 		if catalogue_path is None:
@@ -226,7 +227,10 @@ class tessreduce():
 			if type(tpf) == str:
 				self.tpf = lk.TessTargetPixelFile(tpf)
 			self.flux = strip_units(self.tpf.flux)
-			self.eflux = strip_units(self.tpf.flux_err)
+			if self._use_error_image:
+				self.eflux = strip_units(self.tpf.flux_err)
+			else:
+				self.eflux = None
 			self.flux[np.isnan(self.flux)] = 0
 			self.wcs = self.tpf.wcs
 			self.ra = self.tpf.ra
@@ -410,7 +414,10 @@ class tessreduce():
 		self.tpf  = tpf
 		self.flux = strip_units(tpf.flux)  # Stripping astropy units so only numbers are returned
 		self.flux[np.isnan(self.flux)] = 0
-		self.eflux = strip_units(tpf.flux_err)
+		if self._use_error_image:
+			self.eflux = strip_units(tpf.flux_err)
+		else:
+			self.eflux = None
 		self.wcs  = tpf.wcs
 
 	def make_mask(self,catalogue_path=None,maglim=19,scale=1,strapsize=6,useref=False):
@@ -543,7 +550,7 @@ class tessreduce():
 				m[i] = par_psf_source_mask(data[i],self.prf,sigma)
 		return m * 1.0
 
-	def _calc_qe(self,flux,bkg_smth,flux_e):
+	def _calc_qe(self,flux,bkg_smth):#,flux_e):
 		'''
 		Calculate the effective quantum efficiency enhancement of the detector from scattered light.
 		'''
@@ -646,7 +653,10 @@ class tessreduce():
 			if self.parallel:
 				bkg_smth = Parallel(n_jobs=self.num_cores)(delayed(Smooth_bkg)(frame,gauss_smooth,interpolate) for frame in flux*m)
 				if rerun_negative:
-					over_sub = (deepcopy(self.flux) - bkg_smth) < -self.eflux # -0.5
+					if self._use_error_image:
+						over_sub = (deepcopy(self.flux) - bkg_smth) < -self.eflux # -0.5
+					else:
+						over_sub = (deepcopy(self.flux) - bkg_smth) <  -0.5
 					over_sub = np.nansum(over_sub,axis=0) > 0
 					#self._over_sub = over_sub
 					#print('overshape ',over_sub.shape)
@@ -676,7 +686,7 @@ class tessreduce():
 		# Calculate quantum efficiency 
 		if calc_qe:
 			self.bkg = bkg_smth
-			qe = self._calc_qe(flux,bkg_smth,self.eflux)
+			qe = self._calc_qe(flux,bkg_smth)#,self.eflux)
 			self.qe = qe
 			bkg = bkg_smth * qe
 		else:
@@ -957,18 +967,20 @@ class tessreduce():
 		f = self.flux 
 		m = self.ref.copy() * sources
 		m[m==0] = np.nan
-		eref = self.eflux[self.ref_ind]
+		#eref = self.eflux[self.ref_ind]
 
 
 		if self.parallel:
 			ind = np.arange(len(f))
 			shifts = Parallel(n_jobs=self.num_cores)(
-						delayed(difference_shifts)(f[i],m,self.eflux[i],eref) for i in ind)
+						#delayed(difference_shifts)(f[i],m,self.eflux[i],eref) for i in ind)
+						delayed(difference_shifts)(f[i],m) for i in ind)
 			shifts = np.array(shifts)
 		else:
 			shifts = np.zeros((len(f),2)) * np.nan
 			for i in range(len(f)):
-				shifts[i,:] = difference_shifts(f[i],m,self.eflux[i],eref)
+				#shifts[i,:] = difference_shifts(f[i],m,self.eflux[i],eref)
+				shifts[i,:] = difference_shifts(f[i],m)
 		sraw = deepcopy(shifts)
 
 		shifts = Smooth_motion(shifts,self.tpf)
@@ -1273,7 +1285,10 @@ class tessreduce():
 			else:
 				tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
 			tar -= sky_med * tar_ap**2
-			tar_err = np.nansum((self.eflux)*ap_tar,axis=(1,2))#sky_std * tar_ap**2
+			if self._use_error_image:
+				tar_err = np.nansum((self.eflux)*ap_tar,axis=(1,2))#sky_std * tar_ap**2
+			else:
+				tar_err = sky_std * tar_ap**2
 		if phot_method == 'psf':
 			if psf_snap is None:
 				psf_snap = 'brightest'
@@ -1648,7 +1663,9 @@ class tessreduce():
 			cutout = (self.flux+self.ref)[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 		else:
 			cutout = self.flux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+		#if self._use_error_image:
 		ecutout = self.eflux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+		#else:
 		return prf, cutout, ecutout
 
 	def moving_psf_photometry(self,xpos,ypos,size=5,time_ind=None,xlim=2,ylim=2):

@@ -280,7 +280,7 @@ def Calculate_shifts(data,mx,my,finder):
 			shifts[1,:] = np.nan
 	return shifts
 
-def image_sub(theta, image, ref, eimage, eref):
+def image_sub(theta, image, ref):#, eimage, eref):
 	dx, dy = theta
 	s = shift(image,([dx,dy]),order=5, mode='nearest')
 	#translation = np.float64([[1,0,dx],[0,1, dy]])
@@ -316,7 +316,7 @@ def image_sub(theta, image, ref, eimage, eref):
 ###
 
 
-def difference_shifts(image,ref,eimage,eref):
+def difference_shifts(image,ref):#,eimage,eref):
 	"""
 	Calculate the offsets of sources identified by photutils from a reference
 
@@ -343,7 +343,8 @@ def difference_shifts(image,ref,eimage,eref):
 	if np.nansum(abs(image)) > 0:
 		x0= [0,0]
 		bds = [(-1.5,1.5),(-1.5,1.5)]
-		res = minimize(image_sub,x0,args=(image,ref,eimage,eref),method = 'Powell',bounds= bds)
+		#res = minimize(image_sub,x0,args=(image,ref,eimage,eref),method = 'Powell',bounds= bds)
+		res = minimize(image_sub,x0,args=(image,ref),method = 'Powell',bounds= bds)
 		s = res.x
 		#a,s = align_subpixel(ref,image)
 	else:
