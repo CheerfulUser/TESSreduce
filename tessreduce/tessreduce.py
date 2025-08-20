@@ -2144,12 +2144,12 @@ class tessreduce():
 				self.ref -= self.bkg[self.ref_ind]
 				self._ref_bkg = self.bkg[self.ref_ind]
 				# remake mask
-				self.make_mask(catalogue_path=self._catalogue_path,maglim=18,strapsize=7,scale=mask_scale*.5,useref=False)#Source_mask(ref,grid=0)
+				self.make_mask(catalogue_path=self._catalogue_path,maglim=17,strapsize=7,scale=mask_scale*.5,useref=False)#Source_mask(ref,grid=0)
 				frac = np.nansum((self.mask== 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 				#print('mask frac ',frac)
 				if frac < 0.05:
 					print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-					self.make_mask(catalogue_path=self._catalogue_path,maglim=15,strapsize=7,scale=0.5)
+					self.make_mask(catalogue_path=self._catalogue_path,maglim=15,strapsize=7,scale=mask_scale*.5*.5)
 				# assuming that the target is in the centre, so masking it out 
 				#m_tar = np.zeros_like(self.mask,dtype=int)
 				#m_tar[self.ref.shape[0]//2,self.ref.shape[1]//2]= 1
