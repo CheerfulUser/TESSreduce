@@ -1657,6 +1657,13 @@ class tessreduce():
 			loc[0] = int(np.round(loc[0],0))
 		if isinstance(loc[1], (float, np.floating, np.float32, np.float64)):
 			loc[1] = int(np.round(loc[1]))
+
+		col += 45 # add on the non-science columns
+		row += 1 # add on the non-science row
+		if col > 2090:
+			col = 2090
+		if row > 2040:
+			row = 2040
 			
 		prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row) # initialise psf kernel
 		if ref:
@@ -1754,6 +1761,13 @@ class tessreduce():
 			if self.epsf is None:
 				col = self.tpf.column - int(self.size//2) + yPix # find column and row, when specifying location on a *say* 90x90 px cutout
 				row = self.tpf.row - int(self.size//2) + xPix
+				col += 45 # add on the non-science columns
+				row += 1 # add on the non-science row
+				if col > 2090:
+					col = 2090
+				if row > 2040:
+					row = 2040
+
 				self.epsf = simulate_epsf(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row)
 			epsf = self.epsf
 
