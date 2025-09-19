@@ -515,20 +515,35 @@ class tessreduce():
 			
 		"""
 
+		col = self.tpf.column - int(self.size//2) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
+		row = self.tpf.row - int(self.size//2) + loc[1] 
+
+		if isinstance(loc[0], (float, np.floating, np.float32, np.float64)):
+			loc[0] = int(np.round(loc[0],0))
+		if isinstance(loc[1], (float, np.floating, np.float32, np.float64)):
+			loc[1] = int(np.round(loc[1]))
+
+		col += 45 # add on the non-science columns
+		row += 1 # add on the non-science row
+		if col > 2090:
+			col = 2090
+		if row > 2040:
+			row = 2040
+
 		# Find PRF for cutout (depends on Sector, Camera, CCD, Pixel Row, Pixel Column)
 		if self._catalogue_path is not None:
 
 			if self.sector < 4:
 				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.sector,
-								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
+								col,row,
 								localdatadir=f'{self._prf_path}/Sectors1_2_3')
 			else:
 				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.sector,
-								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
+								col,row,
 								localdatadir=f'{self._prf_path}/Sectors4+')
 		else:
 			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.sector,
-									self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
+									col,row)
 		
 		self.prf =  prf.locate(5,5,(11,11))
 
@@ -1783,7 +1798,7 @@ class tessreduce():
 		ecutouts = eflux[:,yPix-rad:yPix+rad+1,xPix-rad:xPix+rad+1]
 		fit_shape = (size, size)
 		psfphot = PSFPhotometry(epsf, fit_shape, finder=None,aperture_radius=1.5,
-								localbkg_estimator=localbkg_estimator)
+								localbkg_estimator=localbkg_estimator,xy_bounds=(0.05))
 		init = Table()
 		init['x_init'] = [size//2]
 		init['y_init'] = [size//2]
