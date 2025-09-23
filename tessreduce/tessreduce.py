@@ -515,13 +515,8 @@ class tessreduce():
 			
 		"""
 
-		col = self.tpf.column - int(self.size//2) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
-		row = self.tpf.row - int(self.size//2) + loc[1] 
-
-		if isinstance(loc[0], (float, np.floating, np.float32, np.float64)):
-			loc[0] = int(np.round(loc[0],0))
-		if isinstance(loc[1], (float, np.floating, np.float32, np.float64)):
-			loc[1] = int(np.round(loc[1]))
+		col = self.tpf.column + int(self.size//2) # find column and row, when specifying location on a *say* 90x90 px cutout
+		row = self.tpf.row + int(self.size//2)
 
 		col += 45 # add on the non-science columns
 		row += 1 # add on the non-science row
@@ -2647,7 +2642,7 @@ class tessreduce():
 		smooth = f1(lc[0])
 		return smooth
 
-	def detrend_star(self,lc=None):
+	def detrend_star(self,lc=None,normalize=False):
 		"""
 		Removes trends, e.g. background or stellar variability from the lightcurve data.
 
@@ -2694,7 +2689,10 @@ class tessreduce():
 		smooth = f1(temp[0])
 		
 		detrended = deepcopy(lc)
-		detrended[1] -= smooth
+		if normalize:
+			detrended[1] /= smooth
+		else:
+			detrended[1] -= smooth
 		return detrended
 
 
