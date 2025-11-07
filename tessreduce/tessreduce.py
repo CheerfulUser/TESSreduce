@@ -1674,8 +1674,13 @@ class tessreduce():
 			col = 2090
 		if row > 2040:
 			row = 2040
-			
-		prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row) # initialise psf kernel
+		row = np.max([row,10])
+		col = np.max([col,45])	
+		try:	
+			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row) # initialise psf kernel
+		except:
+			print(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row)
+			raise ValueError
 		if ref:
 			cutout = (self.flux+self.ref)[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 		else:
@@ -2947,6 +2952,9 @@ class tessreduce():
 		xx = xx[ind]; yy = yy[ind]
 		d['col'] = xx; d['row'] = yy
 
+		#self.cat['cal'] = 0
+		#self.cat['cal'].iloc[ind] = 1
+
 		if len(d) == 0:
 			print('!!! No suitable calibration sources !!!\nSetting to the default value of zp=20.44')
 			self.zp = 20.44
@@ -3008,12 +3016,14 @@ class tessreduce():
 		if plot:
 			plt.figure()
 			nonan = np.isfinite(self.ref)
-			plt.imshow(ref,origin='lower',vmax = np.percentile(ref[nonan],80),vmin=np.percentile(ref[nonan],10))
-			plt.scatter(d.col.iloc[eind],d.row.iloc[eind],color='r')
+			plt.imshow(ref,origin='lower',vmax = np.percentile(ref[nonan],90),vmin=np.percentile(ref[nonan],10))
+			cbar = plt.colorbar()
+			cbar.ax.set_ylabel('Counts',fontsize=12)
+			plt.plot(d.col.iloc[eind],d.row.iloc[eind],'rx')
 			plt.title('Calibration sources')
 			plt.ylabel('Row',fontsize=15)
 			plt.xlabel('Column',fontsize=15)
-			plt.colorbar()
+			
 			plt.show()
 			if savename is not None:
 				plt.savefig(savename + 'cal_sources.pdf', bbox_inches = "tight")
