@@ -512,30 +512,32 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True, df = False):
 	tr_list : list
 		list of ra, dec, and sector that can be put into tessreduce.
 	"""
-	try:
-		url = 'https://api.astrocats.space/{}'.format(name)
-		response = requests.get(url)
-		json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
-		d = json.loads(json_acceptable_string)
-		if list(d.keys())[0] == 'message':
-			#print(d['message'])
+	tns = True
+	# try:
+	# 	url = 'https://api.astrocats.space/{}'.format(name)
+	# 	response = requests.get(url)
+	# 	json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
+	# 	d = json.loads(json_acceptable_string)
+	# 	if list(d.keys())[0] == 'message':
+	# 		#print(d['message'])
 
-			#return None
-			tns = True
-		else:
-			disc_t = d[name]['discoverdate'][0]['value']
-			disc_t = Time(disc_t.replace('/','-'))
-			max_t = d[name]['maxdate'][0]['value']
-			max_t = Time(max_t.replace('/','-'))
-			ra = d[name]['ra'][-1]['value']
-			dec = d[name]['dec'][-1]['value']
-			tns = False
-	except:
-		tns = True
+	# 		#return None
+	# 		tns = True
+	# 	else:
+	# 		disc_t = d[name]['discoverdate'][0]['value']
+	# 		disc_t = Time(disc_t.replace('/','-'))
+	# 		max_t = d[name]['maxdate'][0]['value']
+	# 		max_t = Time(max_t.replace('/','-'))
+	# 		ra = d[name]['ra'][-1]['value']
+	# 		dec = d[name]['dec'][-1]['value']
+	# 		tns = False
+	# except:
+	# 	tns = True
 	if tns:
 		#print('!! Open SNe Catalog down, using TNS !!')
-		name = name[name.index('2'):]
-		url = f'https://www.wis-tns.org/object/{name}' # hard coding in that the event is in the 2000s
+		if (name[:2].lower() == 'sn') | (name[:2].lower() == 'at'):
+			name = name[2:]
+		url = f'https://www.wis-tns.org/object/{name}'
 		headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36'}
 		result = requests.get(url, headers=headers)
 		if result.ok:
@@ -544,11 +546,11 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True, df = False):
 			disc_t = Time(result.text.split('<span class="name">Discovery Date</span><div class="value"><b>')[-1].split('<')[0])
 			max_t = deepcopy(disc_t)
 
-			c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
-			ra = c.ra.deg
-			dec = c.dec.deg
+			# c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
+			# ra = c.ra.deg
+			# dec = c.dec.deg
 
-	c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
+	c = SkyCoord(ra,dec, unit=(u.deg, u.deg))
 	ra = c.ra.deg
 	dec = c.dec.deg
 	

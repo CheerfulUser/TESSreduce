@@ -78,7 +78,7 @@ class ground():
         self.ra  = ra
         self.dec  = dec 
         self.sn_name  = sn_name
-
+        self.ztf_name = None
         # diags
         self.zp = -48.6
         self.flux_type = 'mag'
@@ -88,6 +88,17 @@ class ground():
         self.ztf = None
         self.asassn = None
         self.ps1 = None
+
+
+    def _get_ztf_name(self):
+        client = Alerce()
+        name = client.query_objects(ra=self.ra,dec=self.dec)['oid'].values
+        try:
+            name = name[0]
+        except:
+            pass
+
+        self.ztf_name = name
 
 
     def __old_get_sn_name(self):
@@ -175,13 +186,13 @@ class ground():
         """
         Gets the ztf light curve data. First checks that the transient name is defined
         """
-        if self.sn_name is None:
-            self.get_sn_name()
-        for name in self.cat_names:
-            if 'ZTF' in name:
-                ztf_name = name
-        if ztf_name is not None:
-            self.ztf = get_ztf(ztf_name)
+        if self.ztf_name is None:
+            self._get_ztf_name()
+        # for name in self.cat_names:
+        #     if 'ZTF' in name:
+        #         ztf_name = name
+        if self.ztf_name is not None:
+            self.ztf = get_ztf(self.ztf_name)
         return
 
 
