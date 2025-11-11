@@ -56,7 +56,7 @@ with warnings.catch_warnings():
 package_directory = os.path.dirname(os.path.abspath(__file__)) + '/'
 
 fig_width_pt = 240.0  # Get this from LaTeX using \showthe\columnwidth
-inches_per_pt = 1.0/72.27			   # Convert pt to inches
+inches_per_pt = 1.0/72.27				# Convert pt to inches
 golden_mean = (np.sqrt(5)-1.0)/2.0		 # Aesthetic ratio
 fig_width = fig_width_pt*inches_per_pt  # width in inches
 
@@ -65,8 +65,8 @@ class tessreduce():
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,
 				 reduce=True,align=True,diff=True,corr_correction=True,kernel_match=False,calibrate=True,sourcehunt=True,
 				 phot_method='aperture',imaging=False,parallel=True,num_cores=-1,diagnostic_plot=False,plot=True,
-				 savename=None,quality_bitmask='default',cache_dir=None,catalogue_path=False,
-				 shift_method='difference',prf_path=None,verbose=1):
+				 savename=None,quality_bitmask='default',cache_dir=None,cache=True,catalogue_path=False,
+				 shift_method='difference',use_error_image=False,prf_path=None,verbose=1,col_offset=0):
 
 		"""
 		Class for extracting reduced TESS photometry around a target coordinate or event. 
@@ -145,6 +145,7 @@ class tessreduce():
 		self.kernel_match = kernel_match
 		self.imaging = imaging
 		self.parallel = parallel
+		self._col_offset = col_offset
 		if type(num_cores) == str:
 			self.num_cores = multiprocessing.cpu_count()
 		else:
@@ -153,6 +154,7 @@ class tessreduce():
 		self._sourcehunt = sourcehunt
 		self.verbose = verbose
 		self._shift_method = shift_method
+		self._use_error_image = use_error_image
 
 		# Offline Paths 
 		if catalogue_path is None:
@@ -171,6 +173,7 @@ class tessreduce():
 
 		# Calculated 
 		self.mask = None
+		#self._over_sub = None
 		self.shift = None
 		self.bkg = None
 		self.flux = None
@@ -186,6 +189,7 @@ class tessreduce():
 		self.zp_e = None
 		self.sn_name = None
 		self.ebv = 0
+		self.epsf = None
 		# repeat for backup
 		self.tzp = None
 		self.tzp_e = None
@@ -223,19 +227,24 @@ class tessreduce():
 			if type(tpf) == str:
 				self.tpf = lk.TessTargetPixelFile(tpf)
 			self.flux = strip_units(self.tpf.flux)
+			if self._use_error_image:
+				self.eflux = strip_units(self.tpf.flux_err)
+			else:
+				self.eflux = None
+			self.flux[np.isnan(self.flux)] = 0
 			self.wcs = self.tpf.wcs
 			self.ra = self.tpf.ra
 			self.dec = self.tpf.dec
 			self.size = self.tpf.flux.shape[1]
 			self.sector = self.tpf.sector
 			if self.sector is None:
-				self.sector = 30
+				self.sector = 999
 
 		# Retrieve TPF
 		elif self.check_coord():
 			if self.verbose>0:
-				print('getting TPF from TESScut')
-			self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir)
+				print('Downloading TPF from TESScut')
+			self.get_TESS(quality_bitmask=quality_bitmask,cache_dir=cache_dir,cache=cache)
 			self._get_gaia()
 
 		self.ground = ground(ra = self.ra, dec = self.dec)
@@ -278,9 +287,9 @@ class tessreduce():
 		result = Get_Catalogue(self.tpf, Catalog = 'gaia')
 		result = result[result.Gmag < maglim]
 		result = result.rename(columns={'RA_ICRS': 'ra',
-							   'DE_ICRS': 'dec',
-							   'e_RA_ICRS': 'e_ra',
-							   'e_DE_ICRS': 'e_dec',})
+								'DE_ICRS': 'dec',
+								'e_RA_ICRS': 'e_ra',
+								'e_DE_ICRS': 'e_dec',})
 		
 		# Convert star RA/DEC to pixel values and input into dataframe
 		x,y = self.wcs.all_world2pix(result['ra'].values,result['dec'].values,0)
@@ -325,7 +334,13 @@ class tessreduce():
 			m = 'phot_mehtod must be a string equal to either "psf", or "aperture".'
 			raise ValueError(m)
 
-	def get_TESS(self,ra=None,dec=None,name=None,size=None,sector=None,quality_bitmask='default',cache_dir=None):
+	def __clean_lk_cache(self,cache_dir=None):
+		if cache_dir is None:
+			cache = lk.config.get_cache_dir()
+
+
+	def get_TESS(self,ra=None,dec=None,name=None,size=None,sector=None,
+				 quality_bitmask='default',cache_dir=None,cache=True):
 		"""
 		Use the lightcurve interface with TESScut to get an FFI cutout 
 		of a region around the given coords.
@@ -382,6 +397,14 @@ class tessreduce():
 
 		# Download 
 		tpf = tess.download(quality_bitmask=quality_bitmask,cutout_size=size,download_dir=cache_dir)
+		if not cache:
+			try:
+				call = f'rm {tpf.path}'
+				os.system(call)
+				if self.verbose > 0:
+					print('Cache removed')
+			except:
+				print(f'Failed to remove: {tpf.path}')
 
 		# Check to ensure it succeeded
 		if tpf is None:
@@ -390,6 +413,11 @@ class tessreduce():
 		
 		self.tpf  = tpf
 		self.flux = strip_units(tpf.flux)  # Stripping astropy units so only numbers are returned
+		self.flux[np.isnan(self.flux)] = 0
+		if self._use_error_image:
+			self.eflux = strip_units(tpf.flux_err)
+		else:
+			self.eflux = None
 		self.wcs  = tpf.wcs
 
 	def make_mask(self,catalogue_path=None,maglim=19,scale=1,strapsize=6,useref=False):
@@ -429,9 +457,9 @@ class tessreduce():
 
 		# Generate mask from source catalogue
 		if useref:
-			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize,ref=self.ref)
+			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize,ref=self.ref,col_offset=self._col_offset)
 		else:
-			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize)
+			mask, cat = Cat_mask(self.tpf,catalogue_path,maglim,scale,strapsize,col_offset=self._col_offset)
 
 		# Generate sky background as the inverse of mask
 		sky = ((mask & 1)+1 ==1) * 1.
@@ -487,20 +515,30 @@ class tessreduce():
 			
 		"""
 
+		col = self.tpf.column + int(self.size//2) # find column and row, when specifying location on a *say* 90x90 px cutout
+		row = self.tpf.row + int(self.size//2)
+
+		col += 45 # add on the non-science columns
+		row += 1 # add on the non-science row
+		if col > 2090:
+			col = 2090
+		if row > 2040:
+			row = 2040
+
 		# Find PRF for cutout (depends on Sector, Camera, CCD, Pixel Row, Pixel Column)
 		if self._catalogue_path is not None:
 
 			if self.sector < 4:
 				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.sector,
-								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
+								col,row,
 								localdatadir=f'{self._prf_path}/Sectors1_2_3')
 			else:
 				prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.sector,
-								self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2,
+								col,row,
 								localdatadir=f'{self._prf_path}/Sectors4+')
 		else:
 			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.sector,
-				   	   		self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
+									col,row)
 		
 		self.prf =  prf.locate(5,5,(11,11))
 
@@ -522,7 +560,62 @@ class tessreduce():
 				m[i] = par_psf_source_mask(data[i],self.prf,sigma)
 		return m * 1.0
 
-	def background(self,gauss_smooth=2,calc_qe=True, strap_iso=True,source_hunt=False,interpolate=True):
+	def _calc_qe(self,flux,bkg_smth):#,flux_e):
+		'''
+		Calculate the effective quantum efficiency enhancement of the detector from scattered light.
+		'''
+		norm = flux / bkg_smth
+		straps = norm * ((self.mask & 4)>0)
+
+		straps[straps==0] = np.nan
+		m,med,std = sigma_clipped_stats(straps,axis=(1,2),maxiters=10,mask_value=np.nan)
+		masks = straps < (med + 2*std)[:,np.newaxis,np.newaxis]
+		m = (np.nansum(masks,axis=0) > 0) * 1.
+		m[m==0] = np.nan
+		ratio = flux / bkg_smth * m
+		ratio[ratio < 1] = np.nan
+		#m, med, std = sigma_clipped_stats(ratio,axis=1,sigma_upper=2)
+		qe_1d = np.nanpercentile(ratio,10,axis=1)
+		qe = np.ones_like(norm)
+		qe[:,:,:] = qe_1d[:,np.newaxis,:]
+		#qe[:,:,:] = med[:,np.newaxis,:]
+		qe[np.isnan(qe)] = 1
+		qe[qe<1] = 1
+		m, med, std = sigma_clipped_stats(qe,axis=0)
+		qe[:] = med
+		return qe
+
+		# straps[straps==0] = np.nan
+		# m,med,std = sigma_clipped_stats(straps,axis=(1,2),maxiters=10,mask_value=np.nan)
+		# masks = straps < (med + 2*std)[:,np.newaxis,np.newaxis]
+		# m = (np.nansum(masks,axis=0) > 0) * 1.
+		# m[m==0] = np.nan
+		# qe = np.ones_like(flux) * 1.
+		# if flux.shape[1] < 10000:
+		# 	ratio = (flux / bkg_smth) * m
+			
+		# 	m, med, std = sigma_clipped_stats(ratio,axis=1,sigma_upper=2,sigma_lower=3)
+		# 	#qe_1d = np.nanpercentile(ratio,10,axis=1)
+			
+		# 	#qe[:,:,:] = qe_1d[:,np.newaxis,:]
+		# 	qe[:,:,:] = med[:,np.newaxis,:]
+
+		# else:
+		# 	index = np.arange(len(flux),dtype=int)
+		# 	if self.parallel:
+		# 		qe = Parallel(n_jobs=self.num_cores)(delayed(parallel_strap_fit)(flux[i],bkg_smth[i],flux_e[i],m) for i in index)
+		# 	else:
+		# 		qe = []
+		# 		for i in index:
+		# 			qe += [parallel_strap_fit(flux[i],bkg_smth[i],flux_e[i],m)]
+		# 	qe = np.array(qe)
+		# #filler = np.nanmedian(qe,axis=1)
+
+		# qe[np.isnan(qe)] = 1
+		# qe[qe<1] = 1
+		# return qe
+
+	def background(self,gauss_smooth=2,calc_qe=True,strap_iso=True,source_hunt=False,interpolate=True,rerun_negative=False):
 		"""
 		Calculate the temporal and spatial variation in the background.
 
@@ -569,6 +662,29 @@ class tessreduce():
 			bkg_smth = np.zeros_like(flux) * np.nan
 			if self.parallel:
 				bkg_smth = Parallel(n_jobs=self.num_cores)(delayed(Smooth_bkg)(frame,gauss_smooth,interpolate) for frame in flux*m)
+				if rerun_negative:
+					if self._use_error_image:
+						over_sub = (deepcopy(self.flux) - bkg_smth) < -self.eflux # -0.5
+					else:
+						over_sub = (deepcopy(self.flux) - bkg_smth) <  -0.5
+					over_sub = np.nansum(over_sub,axis=0) > 0
+					#self._over_sub = over_sub
+					#print('overshape ',over_sub.shape)
+					#print('m ',m.shape)
+					strap_mask = (self.mask & 4) > 0
+					if len(strap_mask.shape) == 3:
+						strap_mask = strap_mask[0]
+					if strap_iso:
+						over_sub[strap_mask] = 0
+					if source_hunt | (len(self.mask.shape) == 3):
+						m[:,over_sub[:,:]] = 1
+					else:
+						m[over_sub] = 1
+					self._bkgmask = m
+					bkg_smth = Parallel(n_jobs=self.num_cores)(delayed(Smooth_bkg)(frame,gauss_smooth,interpolate) for frame in flux*m)
+
+
+
 			else:
 				for i in range(flux.shape[0]):
 					bkg_smth[i] = Smooth_bkg((flux*m)[i],gauss_smooth,interpolate)
@@ -579,25 +695,10 @@ class tessreduce():
 		
 		# Calculate quantum efficiency 
 		if calc_qe:
-			strap = (self.mask == 4) * 1.0
-			strap[strap==0] = np.nan
-			# check if its a time varying mask
-			if len(strap.shape) == 3: 
-				strap = strap[self.ref_ind]
-			mask = ((self.mask & 1) == 0) * 1.0
-			mask[mask==0] = np.nan
-		
-			data = strip_units(self.flux) * mask
-			norm = self.flux / bkg_smth
-			straps = norm * ((self.mask & 4)>0)
-			limit = np.nanpercentile(straps,60,axis=1)
-			straps[limit[:,np.newaxis,:] < straps] = np.nan
-			straps[straps==0] = 1
-
-			value = np.nanmedian(straps,axis=1)
-			qe = np.ones_like(bkg_smth) * value[:,np.newaxis,:]
-			bkg = bkg_smth * qe
+			self.bkg = bkg_smth
+			qe = self._calc_qe(flux,bkg_smth)#,self.eflux)
 			self.qe = qe
+			bkg = bkg_smth * qe
 		else:
 			bkg = np.array(bkg_smth)
 		self.bkg = bkg
@@ -657,7 +758,7 @@ class tessreduce():
 			dist_mask = convolve(dist_mask,kern) > 0
 			if self.parallel:
 				bkg_3 = Parallel(n_jobs=self.num_cores)(delayed(parallel_bkg3)(self.bkg[i],dist_mask[i]) 
-														   for i in np.arange(len(dist_mask)))
+															for i in np.arange(len(dist_mask)))
 			else:
 				bkg_3 = []
 				bkg_smth = np.zeros_like(dist_mask)
@@ -682,7 +783,7 @@ class tessreduce():
 		
 		if self.parallel:
 			bkg_clip = Parallel(n_jobs=self.num_cores)(delayed(clip_background)(self.bkg[i],self.mask,sigma,ideal_size) 
-													   for i in np.arange(len(self.bkg)))
+														for i in np.arange(len(self.bkg)))
 		else:
 			bkg_clip = []
 			for i in range(len(self.bkg)):
@@ -708,7 +809,7 @@ class tessreduce():
 		
 		if self.parallel:
 			bkg_clip = Parallel(n_jobs=self.num_cores)(delayed(grad_clip_fill_bkg)(self.bkg[i],sigma,max_size) 
-													   for i in np.arange(len(self.bkg)))
+														for i in np.arange(len(self.bkg)))
 		else:
 			bkg_clip = []
 			for i in range(len(self.bkg)):
@@ -798,7 +899,7 @@ class tessreduce():
 		mean, med, std = sigma_clipped_stats(m, sigma=3.0)
 
 		prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,
-				   	   self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
+							self.tpf.column+self.flux.shape[2]/2,self.tpf.row+self.flux.shape[1]/2)
 		self.prf =  prf.locate(5,5,(11,11))
 		
 		finder = StarFinder(2*std,kernel=self.prf,exclude_border=True)
@@ -876,15 +977,21 @@ class tessreduce():
 		f = self.flux 
 		m = self.ref.copy() * sources
 		m[m==0] = np.nan
+		#eref = self.eflux[self.ref_ind]
+
 
 		if self.parallel:
+			ind = np.arange(len(f))
 			shifts = Parallel(n_jobs=self.num_cores)(
-				delayed(difference_shifts)(frame,m) for frame in f)
+						#delayed(difference_shifts)(f[i],m,self.eflux[i],eref) for i in ind)
+						delayed(difference_shifts)(f[i],m) for i in ind)
 			shifts = np.array(shifts)
 		else:
 			shifts = np.zeros((len(f),2)) * np.nan
 			for i in range(len(f)):
+				#shifts[i,:] = difference_shifts(f[i],m,self.eflux[i],eref)
 				shifts[i,:] = difference_shifts(f[i],m)
+		sraw = deepcopy(shifts)
 
 		shifts = Smooth_motion(shifts,self.tpf)
 
@@ -898,8 +1005,10 @@ class tessreduce():
 			ind = np.where(np.diff(t) > .5)[0]
 			shifts[ind,:] = np.nan
 			plt.figure(figsize=(1.5*fig_width,1*fig_width))
-			plt.plot(t,shifts[:,0],'.',label='Row shift',alpha =0.5)
-			plt.plot(t,shifts[:,1],'.',label='Col shift',alpha =0.5)
+			plt.plot(t,sraw[:,0],'.',label='Row shift',alpha = 0.5)
+			plt.plot(t,sraw[:,1],'.',label='Col shift',alpha = 0.5)
+			plt.plot(t,shifts[:,0],'-',label='Smoothed row shift')
+			plt.plot(t,shifts[:,1],'-',label='Smoothed col shift')
 			plt.ylabel('Shift (pixels)',fontsize=15)
 			plt.xlabel('Time (MJD)',fontsize=15)
 			plt.legend()
@@ -945,7 +1054,7 @@ class tessreduce():
 		if median:
 			for i in range(len(shifted)):
 				if np.nansum(abs(shifted[i])) > 0:
-					shifted[i] = shift(self.ref,[-self.shift[i,1],-self.shift[i,0]])
+					shifted[i] = shift(self.ref,[-self.shift[i,1],-self.shift[i,0]], mode='nearest',order=5)
 			self.flux -= shifted
 
 		else:
@@ -1071,7 +1180,7 @@ class tessreduce():
 		p1 = pearsonr(lc[finite],self.shift[finite,0])[0]
 		p2 = pearsonr(lc[finite],self.shift[finite,1])[0]
 		if (abs(p1) > limit) | (abs(p2) > limit):
-			if p1 > p2:
+			if abs(p1) > abs(p2):
 				m = 'x shift'
 				p = p1
 			else:
@@ -1151,12 +1260,12 @@ class tessreduce():
 			
 		if (ra is not None) & (dec is not None) & (self.tpf is not None):
 			x,y = self.wcs.all_world2pix(ra,dec,0)
-			x = int(x + 0.5)
-			y = int(y + 0.5)
+			x = int(np.round(x,0))
+			y = int(np.round(y,0))
 		elif (x is None) & (y is None):
 			x,y = self.wcs.all_world2pix(self.ra,self.dec,0)
-			x = int(x + 0.5)
-			y = int(y + 0.5)
+			x = int(np.round(x,0))
+			y = int(np.round(y,0))
 
 		ap_tar = np.zeros_like(data[0])
 		ap_sky = np.zeros_like(data[0])
@@ -1186,7 +1295,10 @@ class tessreduce():
 			else:
 				tar = np.nansum((data+self.ref)*ap_tar,axis=(1,2))
 			tar -= sky_med * tar_ap**2
-			tar_err = sky_std * tar_ap**2
+			if self._use_error_image:
+				tar_err = np.nansum((self.eflux)*ap_tar,axis=(1,2))#sky_std * tar_ap**2
+			else:
+				tar_err = sky_std * tar_ap**2
 		if phot_method == 'psf':
 			if psf_snap is None:
 				psf_snap = 'brightest'
@@ -1210,7 +1322,7 @@ class tessreduce():
 			if savename is not None:
 				plt.savefig(savename + '_diff_diag.pdf', bbox_inches = "tight")
 
-		p = self.check_trend(lc=lc[1])
+		#p = self.check_trend(lc=lc[1])
 		return lc, sky
 
 	def dif_diag_plot(self,ap_tar,ap_sky,lc=None,sky=None,data=None):
@@ -1267,9 +1379,9 @@ class tessreduce():
 		nonan1 = np.isfinite(d)
 		nonan2 = np.isfinite(d*ap)
 		plt.imshow(data[maxind],origin='lower',
-				   vmin=np.nanpercentile(d,16),
-				   vmax=np.nanpercentile(d[nonan2],80),
-				   aspect='auto')
+					vmin=np.nanpercentile(d,16),
+					vmax=np.nanpercentile(d[nonan2],80),
+					aspect='auto')
 		cbar = plt.colorbar()
 		cbar.set_label('$e^-/s$',fontsize=15)
 		plt.xlabel('Column',fontsize=15)
@@ -1547,20 +1659,38 @@ class tessreduce():
 		if time_ind is None:
 			time_ind = np.arange(0,len(self.flux))
 
-		if isinstance(loc[0], (float, np.floating, np.float32, np.float64)):
-			loc[0] = int(loc[0] + 0.5)
-		if isinstance(loc[1], (float, np.floating, np.float32, np.float64)):
-			loc[1] = int(loc[1] + 0.5)
 		
-		col = self.tpf.column - int(self.size/2-1) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
-		row = self.tpf.row - int(self.size/2-1) + loc[1] 
-			
-		prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row) # initialise psf kernel
+		col = self.tpf.column - int(self.size//2) + loc[0] # find column and row, when specifying location on a *say* 90x90 px cutout
+		row = self.tpf.row - int(self.size//2) + loc[1] 
+
+		if isinstance(loc[0], (float, np.floating, np.float32, np.float64)):
+			loc[0] = int(np.round(loc[0],0))
+		if isinstance(loc[1], (float, np.floating, np.float32, np.float64)):
+			loc[1] = int(np.round(loc[1]))
+
+		col += 45 # add on the non-science columns
+		row += 1 # add on the non-science row
+		if col > 2090:
+			col = 2090
+		if row > 2040:
+			row = 2040
+		row = np.max([row,10])
+		col = np.max([col,45])	
+		try:	
+			prf = TESS_PRF(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row) # initialise psf kernel
+		except:
+			print(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row)
+			raise ValueError
 		if ref:
 			cutout = (self.flux+self.ref)[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 		else:
 			cutout = self.flux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
-		return prf, cutout
+		if self._use_error_image:
+			ecutout = self.eflux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+		else:
+			ecutout = np.ones_like(cutout) * 0.1
+		#else:
+		return prf, cutout, ecutout
 
 	def moving_psf_photometry(self,xpos,ypos,size=5,time_ind=None,xlim=2,ylim=2):
 		"""
@@ -1597,14 +1727,14 @@ class tessreduce():
 				raise ValueError(m)
 		inds = np.arange(0,len(xpos))
 		if self.parallel:
-			prfs, cutouts = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_initialise)(self.flux,self.tpf.camera,self.tpf.ccd,
-																   							 self.tpf.sector,self.tpf.column,self.tpf.row,
-																							 size,[xpos[i],ypos[i]],time_ind) for i in inds))
+			prfs, cutouts, ecutouts = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_initialise)(self.flux,self.tpf.camera,self.tpf.ccd,
+																						 self.tpf.sector,self.tpf.column,self.tpf.row,
+																					 size,[xpos[i],ypos[i]],time_ind) for i in inds))
 		else:
 			prfs = []
 			cutouts = []
 			for i in range(len(time_ind)):
-				prf, cutout = self._psf_initialise(size,[xpos[i],ypos[i]],time_ind=time_ind[i])
+				prf, cutout, ecutouts = self._psf_initialise(size,[xpos[i],ypos[i]],time_ind=time_ind[i])
 				prfs += [prf]
 				cutouts += [cutout]
 		cutouts = np.array(cutouts)
@@ -1622,6 +1752,96 @@ class tessreduce():
 		pos = np.array(pos)
 		pos[0,:] += xpos; pos[1,:] += ypos
 		return flux, pos
+
+	def psf_photutils(self,xPix=None,yPix=None,size=5,local_bkg=False,epsf=None,
+					  flux=None,eflux=None,ref=False,return_pos=False,
+					  snap='brightest'):
+		from photutils.psf import PSFPhotometry
+		from astropy.table import Table
+		rad = size // 2
+
+		if flux is None:
+			flux = self.flux
+		if (flux.shape[1] < size) | (flux.shape[2] < size):
+			e = 'Image dimensions must be larger than the cutout size'
+			raise ValueError(e)
+		if eflux is None:
+			eflux = self.eflux
+
+		if (xPix is None) | (yPix is None):
+			xPix = flux.shape[2]//2
+			yPix = flux.shape[1]//2
+
+		if epsf is None:
+			if self.epsf is None:
+				col = self.tpf.column - int(self.size//2) + yPix # find column and row, when specifying location on a *say* 90x90 px cutout
+				row = self.tpf.row - int(self.size//2) + xPix
+				col += 45 # add on the non-science columns
+				row += 1 # add on the non-science row
+				if col > 2090:
+					col = 2090
+				if row > 2040:
+					row = 2040
+
+				self.epsf = simulate_epsf(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row)
+			epsf = self.epsf
+
+		if local_bkg:
+			localbkg_estimator = LocalBackground(1.5, 7, bkgstat)
+		else:
+			localbkg_estimator = None
+		
+		if ref:
+			flux = flux + self.ref
+
+		cutouts = flux[:,yPix-rad:yPix+rad+1,xPix-rad:xPix+rad+1]
+		ecutouts = eflux[:,yPix-rad:yPix+rad+1,xPix-rad:xPix+rad+1]
+		fit_shape = (size, size)
+		psfphot = PSFPhotometry(epsf, fit_shape, finder=None,aperture_radius=1.5,
+								localbkg_estimator=localbkg_estimator,xy_bounds=(0.05))
+		init = Table()
+		init['x_init'] = [size//2]
+		init['y_init'] = [size//2]
+		if snap.lower() != 'all':
+			if snap.lower() == 'brightest':
+				weight = np.abs(np.nansum((cutouts/ecutouts)[:,1:4,1:4],axis=(1,2)))
+				weight[np.isnan(weight)] = 0
+				ind = np.argmax(weight)
+				rcut = cutouts[ind] 
+				ecut = ecutouts[ind]
+			elif snap.lower() == 'ref':
+				rcut = self.ref[:,yPix-rad:yPix+rad+1,xPix-rad:xPix+rad+1]
+				ecut = ecutouts[self.ref_ind]
+
+			
+			phot = psfphot(rcut, error=ecut,init_params=init)
+			# fit with the best position
+			init2 = Table()
+			init['x_init'] = phot['x_fit']
+			init['y_init'] = phot['y_fit']	
+			flux = np.zeros(len(self.flux)) * np.nan
+			eflux = np.zeros(len(self.flux)) * np.nan
+			psfphot2 = PSFPhotometry(epsf, fit_shape, finder=None,aperture_radius=1.5,
+									 xy_bounds=(0.05),localbkg_estimator=localbkg_estimator)
+			f,ef = zip(*Parallel(n_jobs=self.num_cores)(delayed(parallel_photutils)(cutouts[i],ecutouts[i],psfphot2,init) for i in np.arange(len(cutouts))))
+			f = np.array(f).flatten()
+			ef = np.array(ef).flatten()
+			phot = phot.to_pandas()
+			pos = phot[['x_fit','y_fit']].values + np.array([xPix,yPix]) - size//2
+			epos = phot[['x_err','y_err']].values
+		else:
+			f,ef,pos,epos = zip(*Parallel(n_jobs=self.num_cores)(delayed(parallel_photutils)(cutouts[i],ecutouts[i],psfphot,init,True) for i in np.arange(len(cutouts))))
+			pos['x_fit'] += xPix - size//2
+			pos['y_fit'] += xPix - size//2
+		
+		if return_pos:
+			return f, ef, pos, epos
+		else:
+			return f, ef
+
+
+
+
 
 	def psf_photometry(self,xPix,yPix,size=7,snap='brightest',ext_shift=True,plot=False,diff=None,bkg_poly_order=3):
 		"""
@@ -1669,12 +1889,12 @@ class tessreduce():
 
 		if type(snap) == str:
 			if snap == 'all': 
-				prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
+				prf, cutouts, ecutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))	# gather base PRF and the array of cutouts data
 				inds = np.arange(len(cutouts))
 				base = create_psf(prf,size)
 				flux, eflux, pos = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_full)(cutouts[i],base,self.shift[i]) for i in inds))
 
-				#prf, cutouts = self._psf_initialise(size,(xPix,yPix))   # gather base PRF and the array of cutouts data
+				#prf, cutouts = self._psf_initialise(size,(xPix,yPix))	# gather base PRF and the array of cutouts data
 				#xShifts = []
 				#yShifts = []
 				#for cutout in tqdm(cutouts):
@@ -1694,53 +1914,54 @@ class tessreduce():
 				#	ax[2].set_ylabel('yShift')
 			else:
 				if snap == 'brightest': # each cutout has position snapped to brightest frame fit position
-					prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
+					prf, cutouts, ecutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))	# gather base PRF and the array of cutouts data
 					bkg = self.bkg[:,int(yPix),int(xPix)]
 					#lowbkg = bkg < np.nanpercentile(bkg,16)
-					weight = np.abs(np.nansum(cutouts[:,int(yPix)-1:int(yPix)+2,int(xPix)-1:int(xPix)+2],axis=(1,2))) / bkg
+					#weight = np.abs(np.nansum(cutouts[:,int(yPix)-1:int(yPix)+2,int(xPix)-1:int(xPix)+2],axis=(1,2))) / bkg
+					weight = np.abs(np.nansum((cutouts / ecutouts)[:,int(yPix)-1:int(yPix)+2,int(xPix)-1:int(xPix)+2],axis=(1,2)))
 					weight[np.isnan(weight)] = 0
-					ind = np.argmax(abs(weight))
+					ind = np.argmax(weight)
 					#ind = np.where(cutouts==np.nanmax(cutouts))[0][0]
 					ref = cutouts[ind]
 					base = create_psf(prf,size)
-					base.psf_position(ref,ext_shift=self.shift[ind])
+					base.psf_position(ref,ecutouts[ind],ext_shift=self.shift[ind])
 				elif snap == 'ref':
-					prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=True)   # gather base PRF and the array of cutouts data
+					prf, cutouts,ecutouts = self._psf_initialise(size,(xPix,yPix),ref=True)	# gather base PRF and the array of cutouts data
 					ref = cutouts[self.ref_ind]
 					base = create_psf(prf,size)
-					base.psf_position(ref)
+					base.psf_position(ref,ecutouts[self.ref_ind])
 					if diff:
-						_, cutouts = self._psf_initialise(size,(xPix,yPix),ref=False)
+						_, cutouts,ecutouts = self._psf_initialise(size,(xPix,yPix),ref=False)
 				elif snap == 'fixed':
-					prf, cutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))   # gather base PRF and the array of cutouts data
+					prf, cutouts, ecutouts = self._psf_initialise(size,(xPix,yPix),ref=(not diff))	# gather base PRF and the array of cutouts data
 					base = create_psf(prf,size)
 				if self.parallel:
 					inds = np.arange(len(cutouts))
 					if self.delta_kernel is not None:
-						flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i],bkg_poly_order,self.delta_kernel[i]) for i in inds))
+						flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],ecutouts[i],base,self.shift[i],bkg_poly_order,self.delta_kernel[i]) for i in inds))
 					else:
-						flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i],bkg_poly_order) for i in inds))
+						flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],ecutouts[i],base,self.shift[i],bkg_poly_order) for i in inds))
 				else:
 					for i in range(len(cutouts)):
-						flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
+						flux += [par_psf_flux(cutouts[i],ecutouts[i],base,self.shift[i])]
 			if plot:
 				plt.figure()
 				plt.plot(flux)
 				plt.ylabel('Flux')
 
 			
-		elif type(snap) == int:	   # each cutout has position snapped to 'snap' frame fit position (snap is integer)
+		elif type(snap) == int:		# each cutout has position snapped to 'snap' frame fit position (snap is integer)
 			base = create_psf(prf,size)
 			base.psf_position(cutouts[snap])
 			if self.parallel:
 				inds = np.arange(len(cutouts))
 				if self.delta_kernel is not None:
-					flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i],bkg_poly_order,self.delta_kernel[i]) for i in inds))
+					flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],ecutouts[i],base,self.shift[i],bkg_poly_order,self.delta_kernel[i]) for i in inds))
 				else:
-					flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],base,self.shift[i],bkg_poly_order) for i in inds))
+					flux, eflux = zip(*Parallel(n_jobs=self.num_cores)(delayed(par_psf_flux)(cutouts[i],ecutouts[i],base,self.shift[i],bkg_poly_order) for i in inds))
 			else:
 				for i in range(len(cutouts)):
-					flux += [par_psf_flux(cutouts[i],base,self.shift[i])]
+					flux += [par_psf_flux(cutouts[i],ecutouts[i],base,self.shift[i])]
 			if plot:
 				fig,ax = plt.subplots(ncols=1,figsize=(12,4))
 				ax.plot(flux)
@@ -1855,19 +2076,24 @@ class tessreduce():
 				#print('mask frac ',frac)
 				if frac < 0.05:
 					print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-					self.make_mask(catalogue_path=self._catalogue_path,maglim=15,strapsize=7,scale=0.5)
+					self.make_mask(catalogue_path=self._catalogue_path,maglim=15,strapsize=7,scale=0.2)
 				if self.verbose > 0:
 					print('made source mask')
 			else:
 				self.mask = mask
 				if self.verbose > 0:
 					print('assigned source mask')
+			if moving_mask is not None:
+					moving_mask = moving_mask > 0
+					temp = np.zeros_like(self.flux,dtype=int)
+					temp[:,:,:] = self.mask
+					self.mask = temp | moving_mask
 			# calculate background for each frame
 			if self.verbose > 0:
 				print('calculating background')
 			
 			# calculate the background
-			self.background()
+			self.background(rerun_negative=True)
 			
 
 			if np.isnan(self.bkg).all():
@@ -1927,7 +2153,7 @@ class tessreduce():
 				if self.verbose > 0:
 					print('!!Re-running for difference image!!')
 				# reseting to do diffim 
-				self._flux_aligned = deepcopy(self.flux)
+				
 				self.flux = strip_units(self.tpf.flux)
 				self.flux = self.flux / self.qe
 
@@ -1936,7 +2162,7 @@ class tessreduce():
 
 					if self.verbose > 0:
 						print('shifting images')
-
+				self._flux_aligned = deepcopy(self.flux)
 				if test_seed is not None:
 					self.flux += test_seed
 				self.flux[np.nansum(self.tpf.flux.value,axis=(1,2))==0] = np.nan
@@ -1945,13 +2171,14 @@ class tessreduce():
 				self.flux -= self.ref
 
 				self.ref -= self.bkg[self.ref_ind]
+				self._ref_bkg = self.bkg[self.ref_ind]
 				# remake mask
-				self.make_mask(catalogue_path=self._catalogue_path,maglim=18,strapsize=7,scale=mask_scale*.8,useref=False)#Source_mask(ref,grid=0)
+				self.make_mask(catalogue_path=self._catalogue_path,maglim=17,strapsize=7,scale=mask_scale*.5,useref=False)#Source_mask(ref,grid=0)
 				frac = np.nansum((self.mask== 0) * 1.) / (self.mask.shape[0] * self.mask.shape[1])
 				#print('mask frac ',frac)
 				if frac < 0.05:
 					print('!!!WARNING!!! mask is too dense, lowering mask_scale to 0.5, and raising maglim to 15. Background quality will be reduced.')
-					self.make_mask(catalogue_path=self._catalogue_path,maglim=15,strapsize=7,scale=0.5)
+					self.make_mask(catalogue_path=self._catalogue_path,maglim=15,strapsize=7,scale=mask_scale*.5*.5)
 				# assuming that the target is in the centre, so masking it out 
 				#m_tar = np.zeros_like(self.mask,dtype=int)
 				#m_tar[self.ref.shape[0]//2,self.ref.shape[1]//2]= 1
@@ -2052,7 +2279,7 @@ class tessreduce():
 		elif type(aperture) == np.ndarray:
 			aper = aperture * 1.
 			 
-		lc = Lightcurve(flux,aper)   #,scale = scale)
+		lc = Lightcurve(flux,aper)	#,scale = scale)
 		if clip:
 			mask = ~sigma_mask(lc)
 			lc[mask] = np.nan
@@ -2420,7 +2647,7 @@ class tessreduce():
 		smooth = f1(lc[0])
 		return smooth
 
-	def detrend_star(self,lc=None):
+	def detrend_star(self,lc=None,normalize=False):
 		"""
 		Removes trends, e.g. background or stellar variability from the lightcurve data.
 
@@ -2467,7 +2694,10 @@ class tessreduce():
 		smooth = f1(temp[0])
 		
 		detrended = deepcopy(lc)
-		detrended[1] -= smooth
+		if normalize:
+			detrended[1] /= smooth
+		else:
+			detrended[1] -= smooth
 		return detrended
 
 
@@ -2532,12 +2762,12 @@ class tessreduce():
 			ind = dist < 1.5
 			close = tab.iloc[ind]
 			
-			d['gmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.gmag.values,25))) + 25
-			d['rmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.rmag.values,25))) + 25
-			d['imag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.imag.values,25))) + 25
-			d['zmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.zmag.values,25))) + 25
+			d.loc[i,'gmag'] = -2.5*np.log10(np.nansum(maselfflux(close.gmag.values,25))) + 25
+			d.loc[i,'rmag'] = -2.5*np.log10(np.nansum(maselfflux(close.rmag.values,25))) + 25
+			d.loc[i,'imag'] = -2.5*np.log10(np.nansum(maselfflux(close.imag.values,25))) + 25
+			d.loc[i,'zmag'] = -2.5*np.log10(np.nansum(maselfflux(close.zmag.values,25))) + 25
 			if system == 'ps1':
-				d['ymag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.ymag.values,25))) + 25
+				d.loc[i,'ymag'] = -2.5*np.log10(np.nansum(maselfflux(close.ymag.values,25))) + 25
 		# convert to tess mags
 		if len(d) < 10:
 			print('!!!WARNING!!! field calibration is unreliable, using the default zp = 20.44')
@@ -2559,11 +2789,11 @@ class tessreduce():
 		for i in range(len(d)):
 			#if self.phot_method == 'aperture':
 			mask = np.zeros_like(self.ref)
-			mask[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
+			mask[int(np.round(d.row.values[i],0)),int(np.round(d.col.values[i],0))] = 1
 			mask = convolve(mask,np.ones((3,3)))
 			flux += [np.nansum(tflux*mask,axis=(1,2))]
 			m2 = np.zeros_like(self.ref)
-			m2[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
+			m2[int(np.round(d.row.values[i],0)),int(np.round(d.col.values[i]))] = 1
 			m2 = convolve(m2,np.ones((7,7))) - convolve(m2,np.ones((5,5)))
 			eflux += [np.nansum(tflux*m2,axis=(1,2))]
 			mag = -2.5*np.log10(np.nansum((self.ref*m2))) + 20.44
@@ -2618,7 +2848,6 @@ class tessreduce():
 				Error in the photometric zeropoint
 
 		"""
-
 		if plot is None:
 			plot = self.diagnostic_plot
 		if savename is None:
@@ -2651,31 +2880,32 @@ class tessreduce():
 			tflux = self.flux
 			
 
-		ind = (table.imag.values < 19) & (table.imag.values > 14)
+		ind = (table.imag.values < 19) & (table.imag.values > 13.5)
 		tab = table.iloc[ind]
 		
 		e, dat = Tonry_reduce(tab,plot=plot,savename=savename,system=system)
 		self.ebv = e[0]
 
-		gr = (dat.gmag - dat.rmag).values
-		ind = (gr < 1) & (dat.imag.values < 15)
+		gr = (dat.gmag - dat['rmag']).values
+		ind = (gr < 1) & (dat['imag'].values < 16)
 		d = dat.iloc[ind]
 		
 		x,y = self.wcs.all_world2pix(d.RAJ2000.values,d.DEJ2000.values,0)
 		d['col'] = x
 		d['row'] = y
-		pos_ind = (5 < x) & (x < self.ref.shape[1]-5) & (5 < y) & (y < self.ref.shape[0]-5)
+		pos_ind = (-5 < x) & (x < self.ref.shape[1]+5) & (-5 < y) & (y < self.ref.shape[0]+5)
 		d = d.iloc[pos_ind]
+		x = x[pos_ind]; y = y[pos_ind]
 		
 
 		# account for crowding 
 		for i in range(len(d)):
-			x = d.col.values[i]
-			y = d.row.values[i]
+			xx = d.col.values[i]
+			yy = d.row.values[i]
 			
-			dist = np.sqrt((tab.col.values-x)**2 + (tab.row.values-y)**2)
+			dist = np.sqrt((tab['col'].values-xx)**2 + (tab['row'].values-yy)**2)
 			
-			ind = dist < 1.5
+			ind = dist < 1
 			close = tab.iloc[ind]
 			
 			d['gmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.gmag.values,25))) + 25
@@ -2684,6 +2914,7 @@ class tessreduce():
 			d['zmag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.zmag.values,25))) + 25
 			if system == 'ps1':
 				d['ymag'].iloc[i] = -2.5*np.log10(np.nansum(mag2flux(close.ymag.values,25))) + 25
+
 		# convert to tess mags
 		if len(d) < 10:
 			print('!!!WARNING!!! field calibration is unreliable, using the default zp = 20.44')
@@ -2699,20 +2930,56 @@ class tessreduce():
 			d = SM_to_TESS_mag(d,ebv=self.ebv)
 
 		
+		maglim = 16.5
+		maglim_bright = 10 
+		dist = np.sqrt((x[:,np.newaxis] - x[np.newaxis,:])**2 + (y[:,np.newaxis] - y[np.newaxis,:])**2)
+		mag_diff = d['tmag'].values[:,np.newaxis] - d['tmag'].values[np.newaxis,:]
+		mag_diff[mag_diff == 0] = np.nan
+		mag_diff[mag_diff < -2] = np.nan
+		mag_diff = np.isnan(mag_diff)
+		dist[dist==0] = np.nan
+		dist[mag_diff] = np.nan
+		min_dist = np.nanmin(dist,axis=1)
+		ind = min_dist > 5
+		if sum(ind) < 10:
+			ind = min_dist > 3
+		d = d.iloc[ind]
+		ind2 = (d['tmag'].values < maglim) & (d['tmag'].values > maglim_bright)
+		d = d.iloc[ind2]
+		xx = x[ind][ind2]; yy = y[ind][ind2]
+		ind = (xx > 5) & (xx < self.ref.shape[1]-5) & (yy > 5) & (yy < self.ref.shape[0]-5)
+		d = d.iloc[ind]
+		xx = xx[ind]; yy = yy[ind]
+		d['col'] = xx; d['row'] = yy
+
+		#self.cat['cal'] = 0
+		#self.cat['cal'].iloc[ind] = 1
+
+		if len(d) == 0:
+			print('!!! No suitable calibration sources !!!\nSetting to the default value of zp=20.44')
+			self.zp = 20.44
+			self.zp_e = 0.05
+			# backup for when messing around with flux later
+			self.tzp = 20.44
+			self.tzp_e = 0.05
+			return
+
 		flux = []
 		eflux = []
 		eind = np.zeros(len(d))
 		for i in range(len(d)):
 			mask = np.zeros_like(self.ref)
-			xx = int(d.col.values[i] + .5); yy = int(d.row.values[i] + .5)
+			xx = int(np.round(d['col'].values[i],0)); yy = int(np.round(d['row'].values[i]))
 			mask[yy,xx] = 1
 			mask = convolve(mask,np.ones((3,3)))
 			if self.phot_method == 'aperture':
 				flux += [np.nansum(tflux*mask,axis=(1,2))]
 			elif self.phot_method == 'psf':
-				flux += [self.psf_photometry(xPix=xx,yPix=yy,snap='ref',diff=False)]
+				f, e = self.psf_photometry(xPix=xx,yPix=yy,snap='ref',diff=False)
+				flux += [f]
+				eflux += [e]
 			m2 = np.zeros_like(self.ref)
-			m2[int(d.row.values[i] + .5),int(d.col.values[i] + .5)] = 1
+			m2[int(np.round(d['row'].values[i],0)),int(np.round(d['col'].values[i]))] = 1
 			m2 = convolve(m2,np.ones((7,7))) - convolve(m2,np.ones((5,5)))
 			eflux += [np.nansum(tflux*m2,axis=(1,2))]
 			mag = -2.5*np.log10(np.nansum((ref*m2))) + 20.44
@@ -2727,10 +2994,9 @@ class tessreduce():
 		#eind = abs(eflux) > 20
 		if self.phot_method == 'aperture':
 			flux[~eind] = np.nan
-		
 
 		#calculate the zeropoint
-		zp = d.tmag.values[:,np.newaxis] + 2.5*np.log10(flux) 
+		zp = d['tmag'].values[:,np.newaxis] + 2.5*np.log10(flux) 
 		if len(zp) == 0:
 			zp = np.array([20.44])
 		
@@ -2750,12 +3016,14 @@ class tessreduce():
 		if plot:
 			plt.figure()
 			nonan = np.isfinite(self.ref)
-			plt.imshow(ref,origin='lower',vmax = np.percentile(ref[nonan],80),vmin=np.percentile(ref[nonan],10))
-			plt.scatter(d.col.iloc[eind],d.row.iloc[eind],color='r')
+			plt.imshow(ref,origin='lower',vmax = np.percentile(ref[nonan],90),vmin=np.percentile(ref[nonan],10))
+			cbar = plt.colorbar()
+			cbar.ax.set_ylabel('Counts',fontsize=12)
+			plt.plot(d.col.iloc[eind],d.row.iloc[eind],'rx')
 			plt.title('Calibration sources')
 			plt.ylabel('Row',fontsize=15)
 			plt.xlabel('Column',fontsize=15)
-			plt.colorbar()
+			
 			plt.show()
 			if savename is not None:
 				plt.savefig(savename + 'cal_sources.pdf', bbox_inches = "tight")
@@ -2811,10 +3079,10 @@ class tessreduce():
 		if compare:
 			print('!!!WARNING!!! field calibration is unreliable, using the default zp = 20.44')
 			self.zp = 20.44
-			self.zp_e = 0.5
+			self.zp_e = 0.05
 			# backup for when messing around with flux later
 			self.tzp = 20.44
-			self.tzp_e = 0.5
+			self.tzp_e = 0.05
 		else:
 			self.zp = mzp
 			self.zp_e = stdzp

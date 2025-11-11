@@ -53,18 +53,18 @@ fig_width = fig_width_pt*inches_per_pt  # width in inches
 
 def strip_units(data):
 	"""
-    Removes the units off of data that was not in a NDarray, such as an astropy table. Returns an NDarray that has no units 
+	Removes the units off of data that was not in a NDarray, such as an astropy table. Returns an NDarray that has no units 
 
-    Parameters:
-    ----------
-    data: ArrayLike
-            ArrayLike set of data that may have associated units that want to be removed. Should be able to return something sensible when .values is called.
+	Parameters:
+	----------
+	data: ArrayLike
+			ArrayLike set of data that may have associated units that want to be removed. Should be able to return something sensible when .values is called.
 
-    Returns:
-    -------
-    data: ArrayLike
-            Same shape as input data, but will not have any units
-    """
+	Returns:
+	-------
+	data: ArrayLike
+			Same shape as input data, but will not have any units
+	"""
 	
 	if type(data) != np.ndarray:
 		data = data.value
@@ -221,7 +221,7 @@ def Smooth_bkg(data, gauss_smooth=2, interpolate=False, extrapolate=True):
 				# end inpaint
 				estimate = inpaint.inpaint_biharmonic(data,mask)
 				#estimate = signal.fftconvolve(estimate,self.prf,mode='same')
-				if np.nanmedian(estimate) < 20:
+				if (np.nanmedian(estimate) < 100) & (np.nanstd(estimate) < 3): # magic numbers to define a well behaved background
 					gauss_smooth = gauss_smooth * 3
 				estimate = gaussian_filter(estimate,gauss_smooth)
 		else:
@@ -280,18 +280,43 @@ def Calculate_shifts(data,mx,my,finder):
 			shifts[1,:] = np.nan
 	return shifts
 
-def image_sub(theta, image, ref):
+def image_sub(theta, image, ref):#, eimage, eref):
 	dx, dy = theta
-	s = shift(image,([dx,dy]),order=5)
+	s = shift(image,([dx,dy]),order=5, mode='nearest')
 	#translation = np.float64([[1,0,dx],[0,1, dy]])
 	#s = cv2.warpAffine(image, translation, image.shape[::-1], flags=cv2.INTER_CUBIC,borderValue=0)
-	diff = (ref-s)**2
+	diff = (ref-s)**2#/(eimage + eref)
 	if image.shape[0] > 50:
 		return np.nansum(diff[10:-11,10:-11])
 	else:
 		return np.nansum(diff[5:-6,5:-6])
 
-def difference_shifts(image,ref):
+
+### TESTING CODE
+#def c_shift_image(img, shift):
+#	return scipy.ndimage.shift(img, shift=shift, order=5, mode='nearest')  # cubic interpolation
+#
+#def cost_function(shift, ref_img, moving_img):
+#	shifted = shift_image(moving_img, shift)
+#	diff = ref_img - shifted
+#	return np.sum(diff[2:-2,2:-2]**2)  # Sum of Squared Differences (SSD)
+#
+#def align_subpixel(ref_img, moving_img, initial_shift=(0,0)):
+#	ref_img = ref_img.astype(np.float32)
+#	moving_img = moving_img.astype(np.float32)
+#
+#	# Minimize SSD by shifting moving_img
+#	result = minimize(cost_function, initial_shift, args=(ref_img, moving_img), method='Powell')
+#
+#	best_shift = result.x
+#	aligned_img = c_shift_image(moving_img, best_shift)
+#
+#	print(f"Optimal shift (y, x): {best_shift}")
+#	return aligned_img, best_shift
+###
+
+
+def difference_shifts(image,ref):#,eimage,eref):
 	"""
 	Calculate the offsets of sources identified by photutils from a reference
 
@@ -317,9 +342,11 @@ def difference_shifts(image,ref):
 	"""
 	if np.nansum(abs(image)) > 0:
 		x0= [0,0]
-		bds = [(-1,1),(-1,1)]
+		bds = [(-1.5,1.5),(-1.5,1.5)]
+		#res = minimize(image_sub,x0,args=(image,ref,eimage,eref),method = 'Powell',bounds= bds)
 		res = minimize(image_sub,x0,args=(image,ref),method = 'Powell',bounds= bds)
 		s = res.x
+		#a,s = align_subpixel(ref,image)
 	else:
 		s = np.zeros((2)) * np.nan
 	if (s == np.ones((2))).any():
@@ -346,9 +373,8 @@ def Smooth_motion(Centroids,tpf):
 
 	"""
 	smoothed = np.zeros_like(Centroids) * np.nan
-	skernel = int(len(tpf.flux) * 0.2) #simple way of making the smoothing window 10% of the duration
+	skernel = int(len(tpf.flux) * 0.01) #simple way of making the smoothing window 10% of the duration
 	skernel = skernel // 2 +1
-	print('!!! skernel '+ str(skernel))
 	#skernel = 25
 	if skernel < 25:
 		skernel = 25
@@ -425,36 +451,36 @@ def smooth_zp(zp,time):
 	return smoothed, err
 
 def grads_rad(flux):
-    """
-    Calculates the radius of the flux from the gradient of the flux, and the double gradient of the flux.  
+	"""
+	Calculates the radius of the flux from the gradient of the flux, and the double gradient of the flux.  
 
-    Parameters:
-    ----------
-    flux: ArrayLike
-            An array of flux values
+	Parameters:
+	----------
+	flux: ArrayLike
+			An array of flux values
 
-    Returns:
-    -------
-    rad: ArrayLike
-            The radius of the fluxes 
-    """
-    rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
-    return rad
+	Returns:
+	-------
+	rad: ArrayLike
+			The radius of the fluxes 
+	"""
+	rad = np.sqrt(np.gradient(flux)**2+np.gradient(np.gradient(flux))**2)
+	return rad
 
 def grad_flux_rad(flux):
 	"""
-    Calculates the radius of the flux from the gradient of the flux.  
+	Calculates the radius of the flux from the gradient of the flux.  
 
-    Parameters:
-    ----------
-    flux: ArrayLike
-            An array of flux values
+	Parameters:
+	----------
+	flux: ArrayLike
+			An array of flux values
 
-    Returns:
-    -------
-    rad: ArrayLike
-            The radius of the fluxes 
-    """
+	Returns:
+	-------
+	rad: ArrayLike
+			The radius of the fluxes 
+	"""
 	rad = np.sqrt(flux**2+np.gradient(flux)**2)
 	return rad
 
@@ -486,30 +512,32 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True, df = False):
 	tr_list : list
 		list of ra, dec, and sector that can be put into tessreduce.
 	"""
-	try:
-		url = 'https://api.astrocats.space/{}'.format(name)
-		response = requests.get(url)
-		json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
-		d = json.loads(json_acceptable_string)
-		if list(d.keys())[0] == 'message':
-			#print(d['message'])
+	tns = True
+	# try:
+	# 	url = 'https://api.astrocats.space/{}'.format(name)
+	# 	response = requests.get(url)
+	# 	json_acceptable_string = response.content.decode("utf-8").replace("'", "").split('\n')[0]
+	# 	d = json.loads(json_acceptable_string)
+	# 	if list(d.keys())[0] == 'message':
+	# 		#print(d['message'])
 
-			#return None
-			tns = True
-		else:
-			disc_t = d[name]['discoverdate'][0]['value']
-			disc_t = Time(disc_t.replace('/','-'))
-			max_t = d[name]['maxdate'][0]['value']
-			max_t = Time(max_t.replace('/','-'))
-			ra = d[name]['ra'][-1]['value']
-			dec = d[name]['dec'][-1]['value']
-			tns = False
-	except:
-		tns = True
+	# 		#return None
+	# 		tns = True
+	# 	else:
+	# 		disc_t = d[name]['discoverdate'][0]['value']
+	# 		disc_t = Time(disc_t.replace('/','-'))
+	# 		max_t = d[name]['maxdate'][0]['value']
+	# 		max_t = Time(max_t.replace('/','-'))
+	# 		ra = d[name]['ra'][-1]['value']
+	# 		dec = d[name]['dec'][-1]['value']
+	# 		tns = False
+	# except:
+	# 	tns = True
 	if tns:
 		#print('!! Open SNe Catalog down, using TNS !!')
-		name = name[name.index('2'):]
-		url = f'https://www.wis-tns.org/object/{name}' # hard coding in that the event is in the 2000s
+		if (name[:2].lower() == 'sn') | (name[:2].lower() == 'at'):
+			name = name[2:]
+		url = f'https://www.wis-tns.org/object/{name}'
 		headers = {'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/50.0.2661.102 Safari/537.36'}
 		result = requests.get(url, headers=headers)
 		if result.ok:
@@ -518,11 +546,11 @@ def sn_lookup(name,time='disc',buffer=0,print_table=True, df = False):
 			disc_t = Time(result.text.split('<span class="name">Discovery Date</span><div class="value"><b>')[-1].split('<')[0])
 			max_t = deepcopy(disc_t)
 
-			c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
-			ra = c.ra.deg
-			dec = c.dec.deg
+			# c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
+			# ra = c.ra.deg
+			# dec = c.dec.deg
 
-	c = SkyCoord(ra,dec, unit=(u.hourangle, u.deg))
+	c = SkyCoord(ra,dec, unit=(u.deg, u.deg))
 	ra = c.ra.deg
 	dec = c.dec.deg
 	
@@ -713,17 +741,17 @@ def par_psf_initialise(flux,camera,ccd,sector,column,row,cutoutSize,loc,time_ind
 	prf = create_psf(prf,cutoutSize)
 	return prf, cutout
 
-def par_psf_flux(image,prf,shift=[0,0],bkg_poly_order=3,kernel=None):
+def par_psf_flux(image,error,prf,shift=[0,0],bkg_poly_order=3,kernel=None):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
-	prf.psf_flux(image,ext_shift=shift,poly_order=bkg_poly_order,kernel=kernel)
+	prf.psf_flux(image,error,ext_shift=shift,poly_order=bkg_poly_order,kernel=kernel)
 	return prf.flux, prf.eflux
 
-def par_psf_full(cutout,prf,shift=[0,0],xlim=0.5,ylim=0.5):
+def par_psf_full(cutout,error,prf,shift=[0,0],xlim=0.5,ylim=0.5):
 	if np.isnan(shift)[0]:
 		shift = np.array([0,0])
-	prf.psf_position(cutout,ext_shift=shift,limx=xlim,limy=ylim)
-	prf.psf_flux(cutout)
+	prf.psf_position(cutout,error,ext_shift=shift,limx=xlim,limy=ylim)
+	prf.psf_flux(cutout,error)
 	pos = [prf.source_x, prf.source_y]
 	return prf.flux, prf.eflux, pos
 
@@ -1206,4 +1234,131 @@ def grad_clip_fill_bkg(bkg,sigma=3,max_size=1000):
 	data[points] = np.nan
 	estimate = inpaint.inpaint_biharmonic(data,points)
 	return estimate
+
+def grad_clip(data,box_size=100):
+	"""
+	Perform a local sigma clip of points based on the gradient of the points. 
+	Pixels with large gradients are contaminated by stars/galaxies.
+
+	Inputs
+	------
+		data : array
+			1d array of the data to clip
+		box_size : int 
+			integer defining the box size to clip over 
+	Output
+	------
+		gradind : bool
+
+	"""
+	gradind = np.zeros_like(data)
+	
+	for i in range(len(data)):
+		if i < box_size//2:
+			d = data[:i+box_size//2]
+		elif len(data) - i < box_size//2:
+			d = data[i-box_size//2:]
+		else:
+			d = data[i-box_size//2:i+box_size//2]
+		
+		ind = np.isfinite(d)
+		d = d[ind]
+		if len(d) > 5:
+			gind = ~sigma_clip(np.gradient(abs(d))+d,sigma_lower=5,).mask
+			if i < box_size//2:
+				gradind[:i+box_size//2][ind] = gind
+			elif len(data) - i < box_size//2:
+				gradind[i-box_size//2:][ind] = gind
+			else:
+				gradind[i-box_size//2:i+box_size//2][ind] = gind
+	
+	gradind = gradind > 0
+	return gradind 
+
+def fit_strap(data,mask):
+	"""
+	interpolate over missing data
+
+	"""
+	x = np.arange(0,len(data))
+	y = data.copy()
+	p = np.ones_like(x)
+	if len(y[mask]) > 5:
+		p = interp1d(x[mask], y[mask],bounds_error=False,fill_value=np.nan,kind='linear')
+		p = p(x)
+		if np.isnan(p).any():
+			p2 = interp1d(x[mask], y[mask],bounds_error=False,fill_value='extrapolate',kind='nearest')
+			p2 = p2(x)
+			p[np.isnan(p)] = p2[np.isnan(p)]
+	return p
+
+def parallel_strap_fit(frame,frame_bkg,frame_err,mask,repeats=3,tol=3):
+	norm = frame / frame_bkg
+	sind = np.where(np.nansum(mask,axis=0)>0)[0]
+	qe = np.ones_like(frame)
+	for i in sind:
+		y = frame[:,i]
+		d = abs(np.gradient(y))
+		m, med, std = sigma_clipped_stats(d,maxiters=10)
+		nm = (d > med + std) * 1
+		nm = np.convolve(nm,np.ones(3),mode='same')
+		nm = (nm == 0)
+		#for r in range(repeats):
+		q = fit_strap(norm[:,i],nm)
+		#q /= frame_bkg[:,i]
+		if len(y) > 110:
+			q = savgol_filter(q,101,1)
+		else:
+			mq = np.nanmedian(q)
+			q[:] = mq
+
+		qe[:,i] = q
+
+	#qe[:,np.nanmean((qe-1),axis=) < 5e-3] = 1
+	return qe
+
+
+def simulate_epsf(camera,ccd,sector,column,row,size=13,realizations=2000,oversample=3):
+	from photutils.psf import EPSFBuilder, EPSFStar, EPSFStars
+
+	psfs = []
+	randpos = np.random.uniform(-1,1,size=(2,realizations)) + 6
+	prf_mod = TESS_PRF(cam=camera, ccd=ccd,sector=sector,
+						colnum=column,rownum=row)
+
+	for i in range(len(randpos)):
+		psfs += [prf_mod.locate(randpos[0,i],randpos[1,i],(13,13))]
+	psfs = np.array(psfs)
+
+	stars = []
+	for i in range(len(psfs)):
+		stars += [EPSFStar(psfs[i],cutout_center=randpos[:,i])]
+	stars = EPSFStars(stars)
+
+	epsf_builder = EPSFBuilder(oversampling=oversample, maxiters=20, progress_bar=False)
+	epsf, fitted_stars = epsf_builder(stars)
+
+	return epsf
+
+def parallel_photutils(cutout,e_cutout,psf_phot,init_params=None,return_pos=False):
+	if np.nansum(abs(cutout)) > 0:
+		phot = psf_phot(cutout, error=e_cutout,init_params=init_params)
+		phot = phot.to_pandas()
+		f = phot[['flux_fit']].values[0]; ef = phot[['flux_err']].values[0]
+		pos = phot[['x_fit','y_fit']].values
+		epos = phot[['x_err','y_err']].values
+		if return_pos:
+			return f, ef, pos, epos
+		else:
+			return f, ef
+		#return float(phot[['flux_fit']].values), float(phot[['flux_err']].values)
+	else:
+		if return_pos:
+			pos = np.array([np.nan,np.nan])
+			return np.array([np.nan]), np.array([np.nan]), pos, pos
+		else:
+			return np.array([np.nan]), np.array([np.nan])
+	
+
+
 

@@ -25,7 +25,7 @@ def circle_app(rad):
     """
     Makes a kinda circular aperture, probably not worth using.
     """
-    mask = np.zeros((int(rad*2+.5)+1,int(rad*2+.5)+1))
+    mask = np.zeros((int(np.round(rad*2,0))+1,int(np.round(rad*2))+1))
     c = rad
     x,y =np.where(mask==0)
     dist = np.sqrt((x-c)**2 + (y-c)**2)
@@ -42,8 +42,8 @@ def ps1_auto_mask(table,Image,scale=1):
     image = np.zeros_like(Image)
     x = table.x.values
     y = table.y.values
-    x = (x+.5).astype(int)
-    y = (y+.5).astype(int)
+    x = (np.round(x,0)).astype(int)
+    y = (np.round(y,0)).astype(int)
     m = table.mag.values
     ind = size_limit(x,y,image)
     x = x[ind]; y = y[ind]; m = m[ind]
@@ -91,8 +91,8 @@ def gaia_auto_mask(table,Image,scale=1):
     image = np.zeros_like(Image)
     x = table.x.values
     y = table.y.values
-    x = (x+.5).astype(int)
-    y = (y+.5).astype(int)
+    x = (np.round(x,0)).astype(int)
+    y = (np.round(y,0)).astype(int)
     m = table.mag.values
     ind = size_limit(x,y,image)
     x = x[ind]; y = y[ind]; m = m[ind]
@@ -105,10 +105,15 @@ def gaia_auto_mask(table,Image,scale=1):
     mags = [[18,17],[17,16],[16,15],[15,14],[14,13.5],[13.5,12],[12,10],[10,9],[9,8],[8,7]]
     size = (np.array([3,4,5,6,7,8,10,14,16,18])*scale).astype(int)
     for i, mag in enumerate(mags):
-        m = ((magim > mag[1]) & (magim <= mag[0])) * 1.
-        k = np.ones((size[i],size[i]))
-        conv = fftconvolve(m, k,mode='same')#.astype(int)
-        masks[str(mag[0])] = (conv >.1) * 1.
+        ind = (m > mag[1]) & (m <= mag[0])
+        magim = np.zeros_like(image)
+        magim[y[ind],x[ind]] = 1.
+        if size[i] >0:
+            k = np.ones((size[i],size[i]))
+            conv = fftconvolve(magim, k,mode='same')#.astype(int)
+            masks[str(mag[0])] = (conv >.1) * 1.
+        else:
+            conv = magim
     masks['all'] = np.zeros_like(image,dtype=float)
     for key in masks:
         masks['all'] += masks[key]
@@ -143,8 +148,8 @@ def Big_sat(table,Image,scale=1):
     sat = table.iloc[i]
     x = sat.x.values
     y = sat.y.values
-    x = (x+.5).astype(int)
-    y = (y+.5).astype(int)
+    x = (np.round(x,0)).astype(int)
+    y = (np.round(y,0)).astype(int)
     m = sat.mag.values
     ind = size_limit(x,y,image)
     
@@ -217,7 +222,7 @@ def Strap_mask(Image,col,size=4):
     big_strap = fftconvolve(strap_mask,np.ones((size,size)),mode='same') > .5
     return big_strap
 
-def Cat_mask(tpf,catalogue_path=None,maglim=19,scale=1,strapsize=3,ref=None,sigma=3):
+def Cat_mask(tpf,catalogue_path=None,maglim=19,scale=1,strapsize=3,ref=None,sigma=3,col_offset=0):
 
 	"""
 	Make a source mask from the PS1 and Gaia catalogs.
@@ -277,7 +282,7 @@ def Cat_mask(tpf,catalogue_path=None,maglim=19,scale=1,strapsize=3,ref=None,sigm
 	sat = (np.nansum(sat,axis=0) > 0).astype(int) * 2 # assign 2 bit 
 	
 	if strapsize > 0: 
-		strap = Strap_mask(image,tpf.column,strapsize).astype(int) * 4 # assign 4 bit 
+		strap = Strap_mask(image,tpf.column+col_offset,strapsize).astype(int) * 4 # assign 4 bit 
 	else:
 		strap = np.zeros_like(image,dtype=int)
 
