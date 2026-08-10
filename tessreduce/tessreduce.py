@@ -364,23 +364,23 @@ class tessreduce():
 			if not self.sector:
 				self.sector = 999
 
-			self.column = tpf.column
-			self.row = tpf.row
+			self.column = self.tpf.column
+			self.row = self.tpf.row
 			self.camera = self.tpf.camera
 			self.ccd = self.tpf.ccd
 
 		# -- Allow for cube to be given directly, but require MJD, WCS, Sector to be given as well -- #
 		elif self.flux is not None:
-			if self.mjd is None:
+			if self.mjd is None:	# obviously need the time
 				m = 'If flux is given, the MJD must also be given.'
 				raise ValueError(m)
-			if self.wcs is None:
+			if self.wcs is None:	# obviously need the WCS
 				m = 'If flux is given, the WCS must also be given.'
 				raise ValueError(m)
-			if self.sector is None:
+			if self.sector is None:	# obviously need the sector
 				m = 'If flux is given, the sector must also be given.'
 				raise ValueError(m)
-			if self._force_ref_ind is None:
+			if self._force_ref_ind is None:		# this is because we dont have the quality flags anymore, so can't get a good ref easily
 				m = 'If flux is given, the reference frame index must also be given.'
 				raise ValueError(m)
 			if self.camera is None:
