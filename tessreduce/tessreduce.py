@@ -1461,11 +1461,13 @@ class tessreduce():
 			time_restriction = self._ref_time_window
 		# m,med,std = sigma_clipped_stats(self.flux,axis=(1,2))
 		_p = self.flux.reshape(len(self.flux), -1)
-		med = np.median(_p, axis=1)
-		std = np.median(np.abs(_p - med[:, np.newaxis]), axis=1) * 1.4826
+		# nan-aware: bad frames are set to NaN before this is called, and a single
+		# NaN frame would otherwise make smed NaN, select no frames and give a NaN ref
+		med = np.nanmedian(_p, axis=1)
+		std = np.nanmedian(np.abs(_p - med[:, np.newaxis]), axis=1) * 1.4826
 		# sm, smed, sstd = sigma_clipped_stats(std)
-		smed = np.median(std)
-		sstd = np.median(np.abs(std - smed)) * 1.4826
+		smed = np.nanmedian(std)
+		sstd = np.nanmedian(np.abs(std - smed)) * 1.4826
 		ind = np.where((std < (smed + 3*sstd)) & (std > (smed - 3*sstd)))[0]
 		times = self.mjd[ind]
 		ref_time = self.mjd[self.ref_ind]
