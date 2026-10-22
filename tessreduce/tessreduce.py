@@ -255,6 +255,7 @@ class tessreduce():
 		self._force_ref_ind = ref_ind
 		self._ref_type = ref_type
 		self._ref_time_window = ref_time_window
+		self._min_ref_frames = 100		# stack_ref's fallback when no usable frame is within ref_time_window
 		self._quality_bitmask = quality_bitmask
 		self._smooth_motion = smooth_motion
 		self._timing = timing
@@ -1468,11 +1469,22 @@ class tessreduce():
 		# sm, smed, sstd = sigma_clipped_stats(std)
 		smed = np.nanmedian(std)
 		sstd = np.nanmedian(np.abs(std - smed)) * 1.4826
-		ind = np.where((std < (smed + 3*sstd)) & (std > (smed - 3*sstd)))[0]
-		times = self.mjd[ind]
-		ref_time = self.mjd[self.ref_ind]
-		good = abs(times - ref_time) <= time_restriction
+		# one-sided: only reject noisy frames. A two-sided cut also rejects frames QUIETER than the median, and
+		# the reference is chosen to be quiet, so when sstd is small (star-dominated noise) every frame near it
+		# can fall below smed - 3 sstd and nothing is stacked
+		ind = np.where(std <= (smed + 3*sstd))[0]
+		dt = abs(self.mjd[ind] - self.mjd[self.ref_ind])
+		good = dt <= time_restriction
+		if not good.any() and len(ind):
+			# nothing usable within the window (e.g. the whole window in scattered light): stack the
+			# _min_ref_frames usable frames nearest in time instead of returning an all-NaN reference
+			good = dt <= np.sort(dt)[min(len(dt), getattr(self, '_min_ref_frames', 100)) - 1]
+			if getattr(self, 'verbose', 0) > 0:
+				print(f'stack_ref: no usable frames within {time_restriction} d of the reference; '
+					  f'stacking the {good.sum()} nearest ({dt[good].max():.1f} d away at most)')
 		ind = ind[good]
+		if len(ind) == 0:
+			ind = np.array([self.ref_ind])
 		stack = np.nanmedian(self.flux[ind],axis=0)
 		self.ref = stack
 
