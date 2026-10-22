@@ -369,8 +369,8 @@ class tessreduce():
 			if not self.sector:
 				self.sector = 999
 
-			self.column = tpf.column
-			self.row = tpf.row
+			self.column = self.tpf.column
+			self.row = self.tpf.row
 			self.camera = self.tpf.camera
 			self.ccd = self.tpf.ccd
 			self.quality = self.tpf.quality
@@ -386,16 +386,16 @@ class tessreduce():
 
 		# -- Allow for cube to be given directly, but require MJD, WCS, Sector to be given as well -- #
 		elif self.flux is not None:
-			if self.mjd is None:
+			if self.mjd is None:	# obviously need the time
 				m = 'If flux is given, the MJD must also be given.'
 				raise ValueError(m)
-			if self.wcs is None:
+			if self.wcs is None:	# obviously need the WCS
 				m = 'If flux is given, the WCS must also be given.'
 				raise ValueError(m)
-			if self.sector is None:
+			if self.sector is None:	# obviously need the sector
 				m = 'If flux is given, the sector must also be given.'
 				raise ValueError(m)
-			if self._force_ref_ind is None:
+			if self._force_ref_ind is None:		# this is because we dont have the quality flags anymore, so can't get a good ref easily
 				m = 'If flux is given, the reference frame index must also be given.'
 				raise ValueError(m)
 			if self.camera is None:
@@ -1461,11 +1461,13 @@ class tessreduce():
 			time_restriction = self._ref_time_window
 		# m,med,std = sigma_clipped_stats(self.flux,axis=(1,2))
 		_p = self.flux.reshape(len(self.flux), -1)
-		med = np.median(_p, axis=1)
-		std = np.median(np.abs(_p - med[:, np.newaxis]), axis=1) * 1.4826
+		# nan-aware: bad frames are set to NaN before this is called, and a single
+		# NaN frame would otherwise make smed NaN, select no frames and give a NaN ref
+		med = np.nanmedian(_p, axis=1)
+		std = np.nanmedian(np.abs(_p - med[:, np.newaxis]), axis=1) * 1.4826
 		# sm, smed, sstd = sigma_clipped_stats(std)
-		smed = np.median(std)
-		sstd = np.median(np.abs(std - smed)) * 1.4826
+		smed = np.nanmedian(std)
+		sstd = np.nanmedian(np.abs(std - smed)) * 1.4826
 		ind = np.where((std < (smed + 3*sstd)) & (std > (smed - 3*sstd)))[0]
 		times = self.mjd[ind]
 		ref_time = self.mjd[self.ref_ind]
