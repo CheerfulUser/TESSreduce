@@ -1470,13 +1470,17 @@ class tessreduce():
 		if time_restriction is None:
 			time_restriction = self._ref_time_window
 		# m,med,std = sigma_clipped_stats(self.flux,axis=(1,2))
+		# NaN-aware: blanked (bad) frames would otherwise make every statistic NaN
+		# and leave no frames in the stack
 		_p = self.flux.reshape(len(self.flux), -1)
-		med = np.median(_p, axis=1)
-		std = np.median(np.abs(_p - med[:, np.newaxis]), axis=1) * 1.4826
+		with warnings.catch_warnings():
+			warnings.simplefilter('ignore', RuntimeWarning)
+			med = np.nanmedian(_p, axis=1)
+			std = np.nanmedian(np.abs(_p - med[:, np.newaxis]), axis=1) * 1.4826
 		# sm, smed, sstd = sigma_clipped_stats(std)
-		smed = np.median(std)
-		sstd = np.median(np.abs(std - smed)) * 1.4826
-		ind = np.where((std < (smed + 3*sstd)) & (std > (smed - 3*sstd)))[0]
+		smed = np.nanmedian(std)
+		sstd = np.nanmedian(np.abs(std - smed)) * 1.4826
+		ind = np.where(np.isfinite(std) & (std < (smed + 3*sstd)) & (std > (smed - 3*sstd)))[0]
 		times = self.mjd[ind]
 		ref_time = self.mjd[self.ref_ind]
 		good = abs(times - ref_time) <= time_restriction
@@ -1876,7 +1880,7 @@ class tessreduce():
 
 	def diff_lc(self,time=None,x=None,y=None,ra=None,dec=None,tar_ap=3,
 				sky_in=5,sky_out=9,phot_method=None,psf_snap='brightest',
-				bkg_poly_order=3,plot=None,savename=None,mask=None,diff = True):
+				bkg_poly_order=3,plot=None,savename=None,mask=None,diff = True,bkg_leak=False):
 		"""
 		Calculate the difference imaged light curve. if no position is given (x,y or ra,dec)
 		then it degaults to the centre. Sky flux is calculated with an annulus aperture surrounding 
@@ -1911,6 +1915,11 @@ class tessreduce():
 			DESCRIPTION. The default is None.
 		diff : TYPE, optional
 			DESCRIPTION. The default is True.
+		bkg_leak : bool, optional
+			Remove the fraction of the local background that leaks into the light curve
+			(remove_background_leak); applied only when significant. Off by default: when the
+			background has little fast leverage the fit is dominated by the background model's own
+			noise. The default is False.
 
 		Returns
 		-------
@@ -2007,6 +2016,9 @@ class tessreduce():
 		nan_ind[self.ref_ind] = False
 		tar[nan_ind] = np.nan
 		tar_err[nan_ind] = np.nan
+
+		if bkg_leak and diff and (self.bkg is not None):
+			tar = self.remove_background_leak(tar,x,y)
 
 		# ── Orbit ref flux correction ──────────────────────────────────────────
 		if self.orbit_ref and hasattr(self, 'orbit_refs') and hasattr(self, 'orbit_segments'):
@@ -2703,7 +2715,7 @@ class tessreduce():
 		return flux, eflux
 
 
-	def scene_photometry(self,xPix,yPix,size=9,bkg_poly_order=2,snap='ref',
+	def scene_photometry(self,xPix,yPix,size=9,bkg_poly_order=None,snap='ref',
 						  neighbours=True,neighbour_prior_mag_tol=0.5,
 						  include_psf_derivatives=True,diff=None):
 		"""
@@ -2728,7 +2740,9 @@ class tessreduce():
 			Cutout side length in pixels (should be odd). The default is 9.
 		bkg_poly_order : int, optional
 			Order of the 2D polynomial background surface. 0 reproduces a flat
-			background. The default is 2.
+			background. The default (None) chooses 0, 1 or 2 on difference images
+			by the false flux each produces at empty control positions
+			(scene_photom.select_scene_model), and 2 otherwise.
 		snap : {'ref','brightest','fixed'}, optional
 			How the fixed position is chosen. 'ref' (default) refines position
 			once on the reference frame; 'brightest' refines on the highest
@@ -2794,6 +2808,11 @@ class tessreduce():
 		else:
 			raise ValueError("snap must be one of 'ref','brightest','fixed' for scene_photometry")
 
+		auto_order = bkg_poly_order is None
+		if auto_order:
+			bkg_poly_order = 2
+		# control-position score uses only the slow false flux (~6 h running median)
+		ctrl_smooth = max(int(round(0.25 / np.nanmedian(np.diff(self.mjd)))) | 1,3)
 		if ref_ind is not None:
 			def build_A(dx,dy):
 				A, _ = sp.build_design_matrix(prf,cent,(dx,dy),[],size,
@@ -2842,7 +2861,68 @@ class tessreduce():
 					drow = ncat['y'].values - yPix
 					sel = (np.abs(dcol) <= half) & (np.abs(drow) <= half) & (np.hypot(dcol,drow) > 0.5)
 					neighbour_dxdys = list(zip(dcol[sel],drow[sel]))
-					expected_flux = np.full(sel.sum(),np.nan)
+					if diff:
+						# on a difference cube free neighbours can also pass other sources' misfit
+						# into the target, so keep only those that reduce the false flux at empty
+						# control positions. With the reference added back every neighbour carries
+						# static flux and must stay in the model to deblend it.
+						neighbour_dxdys, bkg_poly_order = sp.select_scene_model(prf,cent,target_dxdy,neighbour_dxdys,
+																				size,cutout,
+																				orders=(0,1,2) if auto_order else (bkg_poly_order,),
+																				include_psf_derivatives=include_psf_derivatives,
+																				smooth=ctrl_smooth)
+						auto_order = False
+					self._scene_neighbours = neighbour_dxdys
+					expected_flux = np.full(len(neighbour_dxdys),np.nan)
+
+		if (not diff) and neighbours:
+			# reference added back: neighbour light is static and additive. Model it from the
+			# catalogue (positions and flux ratios to the target) rendered through the PRF, scale
+			# the whole scene once against the reference, and subtract it, rather than fitting
+			# near-degenerate free neighbours or dividing by a crowding factor.
+			ncat = self._scene_neighbour_cat()
+			if (ncat is not None) and ('mag' in ncat.columns):
+				pad = 3
+				dcol = ncat['x'].values - xPix
+				drow = ncat['y'].values - yPix
+				near = (np.abs(dcol) <= half + pad) & (np.abs(drow) <= half + pad)
+				dsep = np.hypot(dcol - target_dxdy[0],drow - target_dxdy[1])
+				if near.any() and dsep[near].min() < 1.0:
+					k = np.where(near)[0][np.argmin(dsep[near])]
+					w = 10**(-0.4*(ncat['mag'].values - ncat['mag'].values[k]))
+					others = near & (np.arange(len(dcol)) != k)
+					tgt_xy = [(dcol[k],drow[k])]
+					oth_xy = list(zip(dcol[others],drow[others]))
+					S_all = sp.render_catalogue_scene(prf,size,tgt_xy + oth_xy,np.r_[1.0,w[others]],pad=pad)
+					S_nb = sp.render_catalogue_scene(prf,size,oth_xy,w[others],pad=pad)
+					refc = self.ref[yPix-half:yPix+half+1,xPix-half:xPix+half+1].ravel()
+					best = None
+					for order in ((0,1,2) if auto_order else (bkg_poly_order,)):
+						A0, _ = sp.build_design_matrix(prf,cent,target_dxdy,[],size,poly_order=order,
+													   include_psf_derivatives=include_psf_derivatives)
+						npoly = A0.shape[1] - (3 if include_psf_derivatives else 1)
+						ok = np.isfinite(refc)
+						scale = np.linalg.lstsq(np.column_stack([S_all,A0[:,-npoly:]])[ok],refc[ok],rcond=None)[0][0]
+						sub = cutout - (scale*S_nb).reshape(size,size)[None]
+						_, sc = sp.select_neighbours_by_controls(prf,cent,target_dxdy,[],size,sub,poly_order=order,
+																 include_psf_derivatives=include_psf_derivatives,
+																 return_score=True,smooth=ctrl_smooth)
+						if best is None or sc < best[0]:
+							best = (sc,order,scale,sub)
+					_, bkg_poly_order, self._scene_static_scale, cutout = best
+					auto_order = False
+					neighbour_dxdys = []
+					expected_flux = np.array([])
+					self._scene_neighbours = oth_xy
+
+		if auto_order and diff:
+			# no neighbour catalogue: still choose the background order from the control positions
+			_, bkg_poly_order = sp.select_scene_model(prf,cent,target_dxdy,[],size,cutout,
+													  include_psf_derivatives=include_psf_derivatives,
+													  smooth=ctrl_smooth)
+		elif auto_order:
+			bkg_poly_order = 2
+		self._scene_bkg_order = bkg_poly_order
 
 		A, info = sp.build_design_matrix(prf,cent,target_dxdy,neighbour_dxdys,size,
 										  poly_order=bkg_poly_order,
@@ -2862,8 +2942,72 @@ class tessreduce():
 					prior_flux[idx] = expected_flux[k]
 					prior_strength[idx] = 1.0 / (neighbour_prior_mag_tol**2)
 
-		flux, eflux, coeffs = sp.fit_scene_lightcurve(cutout,A,prior_flux=prior_flux,prior_strength=prior_strength)
+		# never reject the target core: its residuals are its own PRF mismatch when bright
+		core = np.zeros((size,size),bool)
+		core[half-1:half+2,half-1:half+2] = True
+		flux, eflux, coeffs = sp.fit_scene_lightcurve(cutout,A,prior_flux=prior_flux,prior_strength=prior_strength,protect=core)
 		return flux, eflux
+
+
+	def remove_background_leak(self,flux,x,y,half=4,window=1.0,n_sigma=3):
+		"""
+		Remove the fraction of the local background that leaks into a target light curve,
+		flux -> flux - beta * (B - median B), where B is the median background model in the
+		(2 half + 1)^2 stamp around (x, y).
+
+		Beta is fitted on high-pass filtered copies of the light curve and B (a running median
+		over `window` days removed within each orbit), so slow astrophysical variability does not
+		enter the fit; fast scattered-light changes give the leverage. The correction is applied
+		only if beta is significant at `n_sigma`, with the error from a block jackknife over
+		1-day blocks. Beta and its error are stored as self.bkg_leak_beta.
+		"""
+		from scipy.ndimage import median_filter
+		B = np.nanmedian(self.bkg[:,y-half:y+half+1,x-half:x+half+1],axis=(1,2))
+		ok = np.isfinite(flux) & np.isfinite(B)
+		t = self.mjd
+		# filter width in cadences for `window` days, so 30, 10 and 3.3 min FFIs are treated alike
+		width = int(round(window / np.nanmedian(np.diff(t)))) | 1
+		# the background model's own per-frame noise enters the flux with the opposite sign
+		# (beta ~ -N_eff pixels); smooth B over ~0.1 d so only real sky changes give leverage
+		smooth = max(int(round(0.1 / np.nanmedian(np.diff(t)))) | 1,3)
+		hf = np.full(len(flux),np.nan)
+		hb = np.full(len(flux),np.nan)
+		for seg in np.split(np.arange(len(t)),np.where(np.diff(t) > 0.5)[0] + 1):
+			sg = seg[ok[seg]]
+			if len(sg) > width:
+				hf[sg] = flux[sg] - median_filter(flux[sg],width,mode='nearest')
+				Bs = median_filter(B[sg],smooth,mode='nearest')
+				hb[sg] = Bs - median_filter(Bs,width,mode='nearest')
+		use = np.isfinite(hf) & np.isfinite(hb)
+		self.bkg_leak_beta = (np.nan,np.nan)
+		if use.sum() < 3 * width:
+			return flux
+		fit = use.copy()
+		for _ in range(5):
+			beta = np.sum(hf[fit] * hb[fit]) / np.sum(hb[fit]**2)
+			r = hf - beta * hb
+			sig = 1.4826 * np.nanmedian(np.abs(r[use]))
+			fit = use & (np.abs(r) < 5 * sig)
+		# block jackknife over window-length blocks: the filtered residuals are correlated, so the
+		# white-noise error underestimates the uncertainty when the background has little leverage
+		blocks = np.floor((t - t[0]) / window).astype(int)
+		ids = np.unique(blocks[fit])
+		jk = []
+		for b_ in ids:
+			k = fit & (blocks != b_)
+			if np.sum(hb[k]**2) > 0:
+				jk.append(np.sum(hf[k] * hb[k]) / np.sum(hb[k]**2))
+		jk = np.array(jk)
+		beta_err = np.sqrt((len(jk) - 1) / len(jk) * np.sum((jk - jk.mean())**2)) if len(jk) > 2 else np.inf
+		self.bkg_leak_beta = (beta,beta_err)
+		if abs(beta) < n_sigma * beta_err:
+			return flux
+		Bs = np.full(len(B),np.nan)
+		for seg in np.split(np.arange(len(t)),np.where(np.diff(t) > 0.5)[0] + 1):
+			sg = seg[np.isfinite(B[seg])]
+			if len(sg) > 0:
+				Bs[sg] = median_filter(B[sg],smooth,mode='nearest')
+		return flux - beta * (Bs - np.nanmedian(Bs))
 
 
 	def _scene_neighbour_cat(self,maglim=19.5):
