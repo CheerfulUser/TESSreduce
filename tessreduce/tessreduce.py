@@ -2421,7 +2421,8 @@ class tessreduce():
 			print(self.camera,self.ccd,self.sector,col,row)
 			raise ValueError
 		if ref:
-			cutout = (self.flux+self.ref)[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
+			ys, xs = slice(loc[1]-cutoutSize//2,loc[1]+1+cutoutSize//2), slice(loc[0]-cutoutSize//2,loc[0]+1+cutoutSize//2)
+			cutout = self.flux[time_ind,ys,xs] + self.ref[ys,xs] # gather cutouts
 		else:
 			cutout = self.flux[time_ind,loc[1]-cutoutSize//2:loc[1]+1+cutoutSize//2,loc[0]-cutoutSize//2:loc[0]+1+cutoutSize//2] # gather cutouts
 		if self._use_error_image:
@@ -2792,7 +2793,8 @@ class tessreduce():
 		if diff:
 			cutout = self.flux[:,yPix-half:yPix+half+1,xPix-half:xPix+half+1]
 		else:
-			cutout = (self.flux+self.ref)[:,yPix-half:yPix+half+1,xPix-half:xPix+half+1]
+			# cut before adding the reference: adding it to the whole cube copies every frame
+			cutout = self.flux[:,yPix-half:yPix+half+1,xPix-half:xPix+half+1] + self.ref[yPix-half:yPix+half+1,xPix-half:xPix+half+1]
 
 		cent = (size-1) / 2.0
 
