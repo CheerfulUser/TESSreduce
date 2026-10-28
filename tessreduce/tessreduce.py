@@ -145,10 +145,10 @@ class tessreduce():
 	def __init__(self,ra=None,dec=None,name=None,obs_list=None,tpf=None,size=90,sector=None,
 			  	 flux=None,mjd=None,wcs=None,camera=None,ccd=None,shifts=None,
 				 reduce=True,align=True,diff=True,corr_correction=False,kernel_match=False,calibrate=True,sourcehunt=True,
-				 phot_method='aperture',imaging=False,parallel=True,num_cores=-1,backend='loky',diagnostic_plot=False,plot=True,
+				 phot_method='scene',imaging=False,parallel=True,num_cores=-1,backend='loky',diagnostic_plot=False,plot=True,
 				 savename=None,quality_bitmask='hard',cache_dir=None,cache=True,catalogue_path=False,
 				 shift_method='sep_core',use_error_image=False,prf_path=None,verbose=1,col_offset=0,
-				 bkg_temporal_window=501,ref_ind=None,ref_type='stack',ref_time_window=2,vector_path=None,
+				 bkg_temporal_window=501,ref_ind=None,ref_type='stack',ref_time_window=2,vector_path=None,refine_shifts=True,
 				 smooth_motion=False,orbit_ref=False,bkg_gauss_sigma=4,create_lc=True,center_mask=True,timing=False):
 
 		"""
@@ -171,7 +171,7 @@ class tessreduce():
 		sector : int, optional
 			Sector of observations. The default is None.
 		phot_method : str, optional
-			Select the photometry method used in the reduction. Choose between 'aperture' and 'PSF'. The default is 'aperture'.
+			Select the photometry method used in the reduction: 'aperture', 'psf' (per-frame PRF fit), or 'scene' (single linear PRF + background + neighbour solve across all frames). The default is 'scene'.
 
 		Options
 		-------
@@ -211,6 +211,9 @@ class tessreduce():
 			Path to required catalogs for when using TESSreduce in offline mode. The default is False.
 		prf_path : str, optional
 			Path to local TESS PRF files. The default is currently a specific location on the OzStar supercomputer.
+		refine_shifts : bool, optional
+			After the first reference subtraction, measure the residual translation shared by the bright
+			sources (residual_shifts) and fold it into the shifts before differencing. The default is True.
 		verbose : int, optional
 			Controls the level of verbosity. 0 is silent, 1 (default) prints top-level reduction
 			stage announcements, 2 additionally prints background() sub-step announcements (with
@@ -277,6 +280,7 @@ class tessreduce():
 		self.imaging = imaging
 		self._prf_path = prf_path
 		self._vector_path = vector_path
+		self._refine_shifts = refine_shifts
 
 		# Plotting
 		self.plot = plot
@@ -462,8 +466,11 @@ class tessreduce():
 
 		"""
 		
-		# Get dataframe from Gaia around cutout
-		result = Get_Catalogue(self.ra,self.dec,self.flux.shape, Catalog = 'gaia')
+		# Get dataframe from Gaia around cutout (the local catalogue in offline mode)
+		if self._catalogue_path is not None:
+			result = pd.read_csv(self._catalogue_path)
+		else:
+			result = Get_Catalogue(self.ra,self.dec,self.flux.shape, Catalog = 'gaia')
 		result = result[result.Gmag < maglim]
 		result = result.rename(columns={'RA_ICRS': 'ra',
 								'DE_ICRS': 'dec',
@@ -504,13 +511,13 @@ class tessreduce():
 
 		if isinstance(phot_method, str):
 			method = phot_method.lower()
-			if (method == 'psf') | (method == 'aperture'):
+			if method in ('psf', 'aperture', 'scene'):
 				self.phot_method = method
 			else:
-				m = f'The input method "{method}" is not supported, please select either "psf", or "aperture".'
+				m = f'The input method "{method}" is not supported, please select "psf", "scene", or "aperture".'
 				raise ValueError(m)
 		else:
-			m = 'phot_method must be a string equal to either "psf", or "aperture".'
+			m = 'phot_method must be a string equal to "psf", "scene", or "aperture".'
 			raise ValueError(m)
 
 	def __clean_lk_cache(self,cache_dir=None):
@@ -689,7 +696,10 @@ class tessreduce():
 			self.mask = fullmask | m_second
 		else:
 			self.mask = fullmask
-		self._mask_cat = cat
+		# keep the deepest mask catalogue: later, brighter-limit passes would
+		# otherwise drop the faint sources scene_photometry deblends
+		if getattr(self,'_mask_cat',None) is None or len(cat) >= len(self._mask_cat):
+			self._mask_cat = cat
 
 	def psf_source_mask(self,sigma=5):
 		"""
@@ -725,7 +735,7 @@ class tessreduce():
 			row = 2040
 
 		# Find PRF for cutout (depends on Sector, Camera, CCD, Pixel Row, Pixel Column)
-		if self._catalogue_path is not None:
+		if self._prf_path is not None:
 
 			if self.sector < 4:
 				prf = TESS_PRF(self.camera,self.ccd,self.sector,
@@ -1689,6 +1699,53 @@ class tessreduce():
 					shifted[i] = _shift_one(shifted[i], self.shift[i])
 				self.flux = shifted
 		
+	def residual_shifts(self,min_ref=500,half=2,exclude_radius=6):
+		"""
+		Per-frame residual translation of the difference images, shared by every bright
+		compact source. Each source stamp of the difference cube is modelled as
+		-(ex dR/dx + ey dR/dy) + constant, with (ex, ey) common to all stamps.
+
+		The SepAligner centroids drift slowly with the scattered-light level (~0.002 px/day);
+		on a compact host this leaves a sloping baseline, which this measurement removes.
+
+		Parameters
+		----------
+		min_ref : float, optional
+			Minimum reference peak (counts) for a source to be used. The default is 500.
+		half : int, optional
+			Half-width of each source stamp. The default is 2.
+		exclude_radius : float, optional
+			Sources within this many pixels of the target are not used. The default is 6.
+
+		Returns
+		-------
+		e : np.array
+			(n_frames, 2) residual (ex, ey) in pixels, NaN where it could not be measured.
+		"""
+		from scipy.ndimage import maximum_filter
+		ref = np.nan_to_num(self.ref)
+		gy, gx = np.gradient(ref)
+		ys, xs = np.where((ref == maximum_filter(ref,7)) & (ref > min_ref))
+		tx, ty = [float(np.ravel(v)[0]) for v in self.wcs.all_world2pix(self.ra,self.dec,0)]
+		ok = ((ys > half + 2) & (xs > half + 2) & (ys < ref.shape[0] - half - 3) &
+			  (xs < ref.shape[1] - half - 3) & (np.hypot(xs - tx,ys - ty) > exclude_radius))
+		e = np.full((len(self.flux),2),np.nan)
+		if ok.sum() < 3:
+			return e
+		pix = np.zeros(ref.shape,bool)
+		lab = np.zeros(ref.shape,int)
+		for k,(y,x) in enumerate(zip(ys[ok],xs[ok])):
+			pix[y-half:y+half+1,x-half:x+half+1] = True
+			lab[y-half:y+half+1,x-half:x+half+1] = k
+		# each stamp gets its own constant; the translation is shared
+		A = np.column_stack([-gx[pix],-gy[pix],np.eye(ok.sum())[lab[pix]]])
+		for i in range(len(self.flux)):
+			d = self.flux[i][pix]
+			f = np.isfinite(d)
+			if f.sum() > 10 * ok.sum():
+				e[i] = np.linalg.lstsq(A[f],d[f],rcond=None)[0][:2]
+		return e
+
 	def bin_data(self,lc=None,time_bin=6/24,frames = None):
 		"""
 		Bin a light curve to the desired duration specified by bin_size
@@ -1889,12 +1946,13 @@ class tessreduce():
 			
 		if (ra is not None) & (dec is not None):
 			x,y = self.wcs.all_world2pix(ra,dec,0)
-			x = int(np.round(np.ravel(x)[0],0))
-			y = int(np.round(np.ravel(y)[0],0))
 		elif (x is None) & (y is None):
 			x,y = self.wcs.all_world2pix(self.ra,self.dec,0)
-			x = int(np.round(np.ravel(x)[0],0))
-			y = int(np.round(np.ravel(y)[0],0))
+		# keep the sub-pixel position for the PRF-based methods
+		xf = float(np.ravel(x)[0])
+		yf = float(np.ravel(y)[0])
+		x = int(np.round(xf))
+		y = int(np.round(yf))
 
 		ap_tar = np.zeros_like(data[0])
 		ap_sky = np.zeros_like(data[0])
@@ -1928,11 +1986,19 @@ class tessreduce():
 				tar_err = np.nansum((self.eflux)*ap_tar,axis=(1,2))#sky_std * tar_ap**2
 			else:
 				tar_err = sky_std * tar_ap**2
+			# aperture correction onto the PRF flux scale used by the field calibration
+			ap_frac = self._prf_aperture_fraction(xf,yf,tar_ap)
+			tar = tar / ap_frac
+			tar_err = tar_err / ap_frac
 		if phot_method == 'psf':
 			if psf_snap is None:
 				psf_snap = 'brightest'
 
 			tar, tar_err = self.psf_photometry(x,y,diff=diff,snap=psf_snap,bkg_poly_order=bkg_poly_order)
+		elif phot_method == 'scene':
+			# the target is at a known, aligned position, so hold it fixed rather than refitting it
+			# on a frame that may not contain the transient
+			tar, tar_err = self.scene_photometry(xf,yf,diff=diff,snap='fixed')
 		elif phot_method == 'photutils':
 			if psf_snap is None:
 				psf_snap = 'brightest'
@@ -2698,14 +2764,15 @@ class tessreduce():
 		if diff is None:
 			diff = self.diff
 
+		sub_dxdy = (float(xPix) - int(np.round(xPix)), float(yPix) - int(np.round(yPix)))
 		xPix = int(np.round(xPix))
 		yPix = int(np.round(yPix))
 
-		col = self.tpf.column - int(self.size//2) + xPix + 45
-		row = self.tpf.row - int(self.size//2) + yPix + 1
+		col = self.column - int(self.size//2) + xPix + 45
+		row = self.row - int(self.size//2) + yPix + 1
 		col = int(np.clip(col,45,2090))
 		row = int(np.clip(row,10,2040))
-		prf = sp._prf_cache(self.tpf.camera,self.tpf.ccd,self.tpf.sector,col,row,self._prf_path)
+		prf = sp._prf_cache(self.camera,self.ccd,self.sector,col,row,self._prf_path)
 
 		half = size // 2
 		if diff:
@@ -2733,9 +2800,9 @@ class tessreduce():
 											   poly_order=bkg_poly_order,
 											   include_psf_derivatives=include_psf_derivatives)
 				return A
-			target_dxdy = sp.fit_scene_position(build_A,cutout[ref_ind].ravel(),tol_x=1.0,tol_y=1.0)
+			target_dxdy = sp.fit_scene_position(build_A,cutout[ref_ind].ravel(),tol_x=1.0,tol_y=1.0,x0=sub_dxdy)
 		else:
-			target_dxdy = (0.0,0.0)
+			target_dxdy = sub_dxdy
 
 		# -- neighbours, informed by the calibration catalogue -- #
 		neighbour_dxdys = []
@@ -2754,18 +2821,28 @@ class tessreduce():
 					neighbour_dxdys = list(zip(dcol[sel],drow[sel]))
 					if len(neighbour_dxdys) > 0:
 						if diff:
-							# on a differenced cube a static neighbour's true
-							# amplitude is ~0 (it subtracts out against the
-							# reference), not its catalogue absolute flux --
-							# pulling toward the absolute flux here would bias
-							# the fit. Prior toward zero residual instead.
-							expected_flux = np.zeros(sel.sum())
+							# on a differenced cube a neighbour's amplitude is its
+							# variability relative to the reference, not its
+							# catalogue flux. Leave it unconstrained: a prior toward
+							# zero suppresses variable neighbours and leaks their
+							# signal into the target (e.g. the SN 2020fqv host nucleus).
+							expected_flux = np.full(sel.sum(),np.nan)
 						else:
 							expected_flux = 10**(-0.4*(cat[mag_col].values[sel]-zp))
 			else:
 				warnings.warn('scene_photometry: neighbours=True but no calibration catalogue/zeropoint '
-							   'is set yet (run field_calibrate() or field_calibrate_scene() first); '
-							   'proceeding with neighbours unconstrained.')
+							   'is set yet; deblending with unconstrained neighbours from the Gaia catalogue.')
+			if diff or len(neighbour_dxdys) == 0:
+				# a variable neighbour (e.g. a host nucleus) leaks into the target
+				# unless it is in the model, so deblend against a deeper catalogue
+				# than calibration/masking use, with every neighbour unconstrained
+				ncat = self._scene_neighbour_cat()
+				if ncat is not None:
+					dcol = ncat['x'].values - xPix
+					drow = ncat['y'].values - yPix
+					sel = (np.abs(dcol) <= half) & (np.abs(drow) <= half) & (np.hypot(dcol,drow) > 0.5)
+					neighbour_dxdys = list(zip(dcol[sel],drow[sel]))
+					expected_flux = np.full(sel.sum(),np.nan)
 
 		A, info = sp.build_design_matrix(prf,cent,target_dxdy,neighbour_dxdys,size,
 										  poly_order=bkg_poly_order,
@@ -2788,6 +2865,44 @@ class tessreduce():
 		flux, eflux, coeffs = sp.fit_scene_lightcurve(cutout,A,prior_flux=prior_flux,prior_strength=prior_strength)
 		return flux, eflux
 
+
+	def _scene_neighbour_cat(self,maglim=19.5):
+		"""
+		Gaia sources (pixel x, y) for scene-photometry deblending, cut deeper than the
+		mask and calibration catalogues. Loaded once and cached; falls back to the mask
+		catalogue if the query fails.
+		"""
+		if getattr(self,'_neighbour_cat',None) is not None:
+			return self._neighbour_cat
+		try:
+			if self._catalogue_path is not None:
+				cat = external_load_cat(self._catalogue_path,maglim)
+				x, y = self.wcs.all_world2pix(cat['ra'],cat['dec'],0)
+				cat = pd.DataFrame({'x':x,'y':y,'mag':cat['mag'].values})
+			else:
+				coords, mag = Get_Gaia(self.ra,self.dec,self.wcs,self.flux.shape,magnitude_limit=maglim)
+				cat = pd.DataFrame({'x':coords[:,0],'y':coords[:,1],'mag':mag})
+		except Exception:
+			cat = getattr(self,'_mask_cat',None)
+		self._neighbour_cat = cat
+		return cat
+
+
+	def _prf_aperture_fraction(self,xf,yf,tar_ap,stamp_size=9):
+		"""
+		Fraction of the local PRF, normalised over the calibration stamp, that falls in the
+		tar_ap x tar_ap aperture centred on the pixel containing (xf, yf).
+		"""
+		from . import scene_photom as sp
+		xi, yi = int(np.round(xf)), int(np.round(yf))
+		col = int(np.clip(self.column - int(self.size//2) + xi + 45,45,2090))
+		row = int(np.clip(self.row - int(self.size//2) + yi + 1,1,2040))
+		prf = sp._prf_cache(self.camera,self.ccd,self.sector,col,row,self._prf_path)
+		cent = (stamp_size - 1) / 2.0
+		p = sp.prf_column(prf,cent,xf - xi,yf - yi,stamp_size).reshape(stamp_size,stamp_size)
+		h = tar_ap // 2
+		c = stamp_size // 2
+		return float(np.nansum(p[c-h:c+h+1,c-h:c+h+1]))
 
 	def orbit_ref_subtract(self):
 		"""
@@ -3045,6 +3160,35 @@ class tessreduce():
 					self.stack_ref()
 				self.ref -= np.nanpercentile(self.ref, 1)
 				self.flux -= self.ref
+
+				if self.align and self._refine_shifts:
+					# remove the slow residual translation the aligner leaves, then redo the
+					# shift, reference and subtraction with the corrected shifts. The
+					# finite-difference gradient underestimates the slope of the undersampled
+					# PRF, so one linear step overshoots; iterate to convergence.
+					# the per-frame jitter left above ~0.0005 px still raises the
+					# photometric scatter, so converge well below the slow drift
+					for _ in range(6):
+						e = self.residual_shifts()
+						good = np.isfinite(e).all(axis=1)
+						if (good.sum() == 0) or (np.nanmedian(np.abs(e[good])) < 0.0005):
+							break
+						self.shift[good,0] -= e[good,1]
+						self.shift[good,1] -= e[good,0]
+						self.flux = self.flux_raw / self.qe
+						self.shift_images()
+						self._flux_aligned = deepcopy(self.flux)
+						if test_seed is not None:
+							self.flux += test_seed
+						self.flux[_bad_frames] = np.nan
+						if self._ref_type.lower() == 'single':
+							self.ref = deepcopy(self.flux[self.ref_ind])
+						elif self._ref_type.lower() == 'stack':
+							self.stack_ref()
+						self.ref -= np.nanpercentile(self.ref, 1)
+						self.flux -= self.ref
+						if self.verbose > 0:
+							print('refined shifts: median |residual| %.4f px' % np.nanmedian(np.hypot(e[:,0],e[:,1])))
 
 				# self.ref -= self.bkg[self.ref_ind]
 				self._ref_bkg = self.bkg[self.ref_ind]

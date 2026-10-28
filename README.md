@@ -48,9 +48,10 @@ tess = tr.tessreduce(tpf='file')
 
 # Photometry method
 
-TESSreduce can perform aperture and PSF photometry. The photometry method used is set by the `phot_method` option which can either be `aperture` or `psf`. In general the PSF method appears to be more robust, however, there are cases where aperture still provides a better lightcurve. The default method is `aperture`. Using the example above we can use different photometry methods as follows.
+TESSreduce can perform scene, PSF and aperture photometry, set by the `phot_method` option (`scene`, `psf` or `aperture`). Scene photometry fits the local PRF, its spatial derivatives, a polynomial background and catalogue neighbours in a single linear solve across all frames; it absorbs host-galaxy subtraction residuals that bias aperture photometry and is the default. Using the example above we can use different photometry methods as follows.
 
 ```python
+tess = tr.tessreduce(obs_list=obs,phot_method='scene') # scene photometry (default)
 tess = tr.tessreduce(obs_list=obs,phot_method='psf') # runs PSF photometry for reduction
 tess = tr.tessreduce(obs_list=obs,phot_method='aperture') # runs aperture photometry for reduction
 ```
