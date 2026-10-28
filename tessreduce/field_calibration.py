@@ -16,6 +16,7 @@ sitting alongside (not replacing) `tessreduce.py`'s existing field_calibrate():
 On any failure (too few good stars, fits don't converge) a warning is raised
 and a fixed zp_ab=20.6 fallback is used, rather than raising an exception.
 """
+import os
 import warnings
 import numpy as np
 import pandas as pd
@@ -335,21 +336,29 @@ def calibrate_gaia(tess, mag_lo=11.0, mag_hi=15.5, iso_radius_pix=4.0,
     Vega->AB offset; no extinction correction (matching TESSELLATE, since
     this pathway doesn't reconstruct a synthetic multi-band TESS magnitude).
     """
-    from astroquery.vizier import Vizier
-    Vizier.ROW_LIMIT = -1
-    c1 = SkyCoord(tess.tpf.ra, tess.tpf.dec, frame='icrs', unit='deg')
+    from .catalog_tools import _query_gaia
+    c1 = SkyCoord(tess.ra, tess.dec, frame='icrs', unit='deg')
     pix_scale = 21.0
-    rad = Angle(np.max(tess.tpf.shape[1:]) * pix_scale + 60, 'arcsec')
-    result = Vizier.query_region(c1, catalog=['I/355/gaiadr3'], radius=rad,
-                                  column_filters={'Gmag': '<19'})
-    if result is None or len(result) == 0:
+    rad = Angle(np.max(tess.flux.shape[1:]) * pix_scale + 60, 'arcsec')
+    # a local catalogue (offline mode) takes precedence; otherwise the shared, cached Gaia
+    # query (ESA archive, VizieR fallback) used by the mask and the scene neighbours
+    path = getattr(tess, '_catalogue_path', None)
+    if path is not None and os.path.isfile(path):
+        table = pd.read_csv(path).rename(columns={'ra': 'RA_ICRS', 'dec': 'DE_ICRS'})
+    else:
+        table = _query_gaia(c1, rad)
+    if table is None or len(table) == 0:
         zp_ab, zp_err = _zp_fallback('Gaia DR3 query returned no sources')
         tess.cat = None
         return zp_ab, zp_err
 
-    table = result['I/355/gaiadr3'].to_pandas()
     if 'RPmag' not in table.columns:
         zp_ab, zp_err = _zp_fallback('Gaia DR3 query missing RPmag column')
+        tess.cat = None
+        return zp_ab, zp_err
+    table = table[np.isfinite(table['Gmag']) & (table['Gmag'] < 19)].reset_index(drop=True)
+    if len(table) == 0:
+        zp_ab, zp_err = _zp_fallback('No Gaia DR3 sources with Gmag<19 in field')
         tess.cat = None
         return zp_ab, zp_err
     table = table[np.isfinite(table['RPmag'])].reset_index(drop=True)

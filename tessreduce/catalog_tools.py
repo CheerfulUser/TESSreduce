@@ -51,8 +51,7 @@ def Get_Catalogue(ra,dec,shape, Catalog = 'gaia'):
 	else:
 		raise ValueError(f"{catalog} not recognised as a catalog. Available options: 'gaia', 'dist','ps1'")
 	if Catalog == 'gaia':
-		result = Vizier.query_region(c1, catalog=[catalog],
-							 		 radius=Angle(np.max(shape[1:]) * pix_scale + 60, "arcsec"),column_filters={'Gmag':'<19'})
+		result = _query_gaia(c1, rad)
 	elif Catalog == 'ps1':
 		result = Vizier.query_region(c1, catalog=[catalog],
 									 radius=Angle(np.max(shape[1:]) * pix_scale + 60, "arcsec"))
@@ -64,13 +63,58 @@ def Get_Catalogue(ra,dec,shape, Catalog = 'gaia'):
 		raise no_targets_found_message
 	elif len(result) == 0:
 		raise no_targets_found_message
-	if Catalog != 'skymapper':
+	if Catalog not in ('skymapper', 'gaia'):
 		result = result[catalog].to_pandas()
+	if Catalog == 'gaia':
+		result = result[np.isfinite(result.Gmag) & (result.Gmag < 19)].reset_index(drop=True)
+		if len(result) == 0:
+			raise no_targets_found_message
 	if Catalog == 'ps1':
 		result = result[np.isfinite(result.rmag) & np.isfinite(result.imag)]
 		result = PS1_to_TESS_mag(result)
 	
 	return result 
+
+
+_GAIA_CACHE = {}
+
+
+def _query_gaia(coord, rad):
+	"""
+	Gaia DR3 sources within rad of coord, with the VizieR column names used across the
+	package (Source, RA_ICRS, DE_ICRS, Gmag, BPmag, RPmag). The ESA Gaia archive is queried
+	first and VizieR only if it fails, and the result is cached for the session, so the
+	mask, calibration and scene neighbours of one field share a single query.
+	"""
+	key = (round(coord.ra.deg, 5), round(coord.dec.deg, 5), round(rad.arcsec, 1))
+	if key in _GAIA_CACHE:
+		return _GAIA_CACHE[key].copy()
+	result = None
+	try:
+		from astroquery.gaia import Gaia
+		Gaia.ROW_LIMIT = -1
+		job = Gaia.cone_search_async(coord, radius=rad,
+									 columns=['source_id', 'ra', 'dec', 'phot_g_mean_mag',
+											  'phot_bp_mean_mag', 'phot_rp_mean_mag'])
+		result = job.get_results().to_pandas()
+		result = result.rename(columns={'source_id': 'Source', 'SOURCE_ID': 'Source', 'ra': 'RA_ICRS',
+										'dec': 'DE_ICRS', 'phot_g_mean_mag': 'Gmag',
+										'phot_bp_mean_mag': 'BPmag', 'phot_rp_mean_mag': 'RPmag'})
+	except Exception:
+		from astroquery.vizier import Vizier
+		Vizier.ROW_LIMIT = -1
+		# Server-side column_filters={'Gmag':'<19'} is unreliable here -- it
+		# has been observed to return an empty result even when the same
+		# unfiltered query clearly contains matching sources (confirmed by
+		# re-querying without the filter and checking Gmag client-side).
+		# Filter in pandas instead of relying on Vizier's filter.
+		viz = Vizier.query_region(coord, catalog=['I/355/gaiadr3'], radius=rad)
+		if viz is not None and len(viz) > 0:
+			result = viz['I/355/gaiadr3'].to_pandas()
+	if result is not None:
+		_GAIA_CACHE[key] = result
+		result = result.copy()
+	return result
 
 
 def _get_skymapper(coord,rad):

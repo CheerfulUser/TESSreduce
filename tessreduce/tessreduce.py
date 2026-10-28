@@ -3018,7 +3018,8 @@ class tessreduce():
 		mask and calibration catalogues. Loaded once and cached; falls back to the mask
 		catalogue if the query fails.
 		"""
-		if getattr(self,'_neighbour_cat',None) is not None:
+		# remember failures too, so an unreachable catalogue service is not retried for every light curve
+		if getattr(self,'_neighbour_cat_loaded',False):
 			return self._neighbour_cat
 		try:
 			if self._catalogue_path is not None:
@@ -3031,6 +3032,7 @@ class tessreduce():
 		except Exception:
 			cat = getattr(self,'_mask_cat',None)
 		self._neighbour_cat = cat
+		self._neighbour_cat_loaded = True
 		return cat
 
 
