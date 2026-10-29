@@ -299,6 +299,7 @@ class tessreduce():
 		self.mask = None
 		#self._over_sub = None
 		self.bkg = None
+		self._moving_mask = None
 		# self.flux = None
 		self.flux_raw = None
 		self.quality = None
@@ -377,6 +378,7 @@ class tessreduce():
 			self.row = self.tpf.row
 			self.camera = self.tpf.camera
 			self.ccd = self.tpf.ccd
+			self._fix_cutout_position()
 			self.quality = self.tpf.quality
 			self.flux_raw = deepcopy(self.flux)
 
@@ -434,6 +436,32 @@ class tessreduce():
 	def _joblib_verbose(self):
 		"""joblib Parallel verbosity: 0 unless self.verbose requests joblib output (>=3)."""
 		return 1 if self.verbose >= 3 else 0
+
+	def _fix_cutout_position(self):
+		"""
+		TESScut cutouts carry no CCD position keywords, so lightkurve reports column = row = 0, which misplaces
+		the strap mask and the PRF. Recover the position from the sector's tesswcs WCS: the CCD pixel of the
+		cutout's first pixel is column = x + 1, row = y + 1, with (x, y) the 0-based FFI array position from
+		tesswcs (checked against a SPOC TPF with known column/row, to 0.02 px).
+		"""
+		if self.column or self.row:
+			return
+		try:
+			import logging
+			level = tesswcs.log.level
+			tesswcs.log.setLevel(logging.ERROR)
+			try:
+				w = tesswcs.WCS.from_sector(int(self.sector),int(self.camera),int(self.ccd))
+				ra0, dec0 = self.wcs.all_pix2world(0,0,0)
+				x0, y0 = w.world_to_pixel(SkyCoord(float(ra0),float(dec0),unit='deg'))
+			finally:
+				tesswcs.log.setLevel(level)
+			self.column = int(np.round(float(x0))) + 1
+			self.row = int(np.round(float(y0))) + 1
+			if self.verbose > 0:
+				print(f'cutout CCD position from tesswcs: column {self.column}, row {self.row}')
+		except Exception as err:
+			warnings.warn(f'could not recover the cutout CCD position ({err}); straps and PRF positions may be wrong')
 
 	def check_coord(self):
 		"""
@@ -609,6 +637,7 @@ class tessreduce():
 		self.row = tpf.row
 		self.camera = self.tpf.camera
 		self.ccd = self.tpf.ccd
+		self._fix_cutout_position()
 		self.quality = self.tpf.quality
 		self.flux_raw = deepcopy(self.flux)
 
@@ -684,7 +713,10 @@ class tessreduce():
 		c2 = data.shape[2] // 2
 		cmask = np.zeros_like(data[0],dtype=int)
 		if self._center_mask:
-			cmask[c1-1:c1+2, c2-1:c2+2] = 1
+			# True masks a 3x3 box at the target; an int sets the box size (odd), so the PSF wings of a
+			# transient can be kept out of the background model
+			h = 1 if self._center_mask is True else int(self._center_mask) // 2
+			cmask[c1-h:c1+h+1, c2-h:c2+h+1] = 1
 
 		fullmask = mask | cmask
 		sky = ((fullmask & 1)+1 == 1) * 1.
@@ -700,6 +732,19 @@ class tessreduce():
 		# otherwise drop the faint sources scene_photometry deblends
 		if getattr(self,'_mask_cat',None) is None or len(cat) >= len(self._mask_cat):
 			self._mask_cat = cat
+
+	def _apply_moving_mask(self,m):
+		"""
+		Exclude moving objects (self._moving_mask, bool (T, NY, NX)) from a NaN-where-excluded background mask.
+		Moving objects are never removed by the reference, so they are excluded from every background estimate.
+		Works in place on a 3D mask, so no extra cube is made.
+		"""
+		if self._moving_mask is None:
+			return m
+		if m.ndim == 2:
+			m = np.repeat(m[np.newaxis], len(self._moving_mask), axis=0)
+		m[self._moving_mask] = np.nan
+		return m
 
 	def psf_source_mask(self,sigma=5):
 		"""
@@ -778,9 +823,11 @@ class tessreduce():
 		Calculate the effective quantum efficiency enhancement of the detector from scattered light.
 		'''
 		time = deepcopy(self.mjd)
-		strap_data = (self.flux) * ((self.mask&4) > 0)*(~self.mask&1)
+		# only unmasked strap pixels measure the QE; everything else is NaN, not 0, so the per-column median
+		# is not pulled to 0 (and then floored to QE = 1) when most of a strap column is covered by sources
+		strap_pix = ((self.mask & 4) > 0) & ((self.mask & 1) == 0)
 		with np.errstate(divide='ignore', invalid='ignore'):
-			qe = strap_data / self.bkg
+			qe = np.where(strap_pix, self.flux / self.bkg, np.nan)
 		qe[~np.isfinite(qe)] = np.nan
 		m,med,std = sigma_clipped_stats(qe,axis=1,sigma_upper=2)
 		qes = np.ones_like(qe)
@@ -874,6 +921,7 @@ class tessreduce():
 			sm = self.psf_source_mask()
 			sm[sm==0] = np.nan
 			m = sm * m
+		m = self._apply_moving_mask(m)
 		self._bkgmask = m
 		_times['mask creation'] = time.perf_counter() - _t
 
@@ -907,10 +955,11 @@ class tessreduce():
 						strap_mask = strap_mask[0]
 					if strap_iso:
 						over_sub[strap_mask] = 0
-					if source_hunt | (len(self.mask.shape) == 3):
+					if m.ndim == 3:
 						m[:,over_sub[:,:]] = 1
 					else:
 						m[over_sub] = 1
+					m = self._apply_moving_mask(m)
 					self._bkgmask = m
 					if self.verbose >= 2:
 						print('smooth background rerun (negative correction)...')
@@ -963,13 +1012,14 @@ class tessreduce():
 					filtered[:, :2] = 0
 					filtered[:, -2:] = 0
 					resid_mask = filtered
-					if source_hunt | (len(self.mask.shape) == 3):
+					if source_hunt:
 						new_mask = deepcopy(sm)
 						new_mask[:,resid_mask[:,:]] = np.nan
 					else:
 						new_mask = deepcopy(resid_mask) * 1.0
 						new_mask[new_mask == 1] = np.nan
 						new_mask = abs(new_mask - 1)
+					new_mask = self._apply_moving_mask(new_mask)
 					self._bkgmask = new_mask
 					bkg_s1 = np.array(bkg_smth)
 					if self.verbose >= 2:
@@ -1041,25 +1091,30 @@ class tessreduce():
 			f = deepcopy(self.flux)
 			f -= self.bkg
 			# m, med, std = sigma_clipped_stats(f - self.bkg, axis=(1, 2))
-			bkg2d_mask = np.isnan(np.asarray(self._bkgmask))
+			excluded = np.isnan(np.asarray(self._bkgmask))
+			if self._moving_mask is not None:
+				# collapse only the static/source-hunt part over time; the moving part stays per frame
+				excluded &= ~self._moving_mask
+			bkg2d_mask = excluded
 			if bkg2d_mask.ndim == 3:
 				bkg2d_mask = np.any(bkg2d_mask, axis=0)
+			if self._moving_mask is not None:
+				bkg2d_mask = bkg2d_mask | self._moving_mask
 			bkg_corr = parallel_background2d(f, box_size=9, filter_size=3,
 											sigma=3, maxiters=5, n_jobs=self.num_cores,
 											mask=bkg2d_mask, backend=self.backend, verbose=self._joblib_verbose)
 			self.bkg += bkg_corr
 
-			bkgmask_arr = np.asarray(self._bkgmask)
 			if len(self.mask.shape) == 3:
-				if bkgmask_arr.ndim == 3:
-					new_sources = np.isnan(bkgmask_arr)
+				if excluded.ndim == 3:
+					new_sources = excluded
 				else:
-					new_sources = np.isnan(bkgmask_arr)[np.newaxis, :, :]
+					new_sources = excluded[np.newaxis, :, :]
 			else:
-				if bkgmask_arr.ndim == 3:
-					new_sources = np.any(np.isnan(bkgmask_arr), axis=0)
+				if excluded.ndim == 3:
+					new_sources = np.any(excluded, axis=0)
 				else:
-					new_sources = np.isnan(bkgmask_arr)
+					new_sources = excluded
 			self.mask = self.mask | (new_sources.astype(self.mask.dtype) * 8)
 			_times['final residual correction'] = time.perf_counter() - _t
 
@@ -2837,7 +2892,9 @@ class tessreduce():
 					dcol = cat['col'].values - xPix
 					drow = cat['row'].values - yPix
 					in_stamp = (np.abs(dcol) <= half) & (np.abs(drow) <= half)
-					is_target = np.hypot(dcol,drow) <= 0.5
+					# the target's own catalogue entry (matched to the sub-pixel target position, not the
+					# stamp centre) must not become a free neighbour: two PRFs at one position are degenerate
+					is_target = np.hypot(dcol - target_dxdy[0],drow - target_dxdy[1]) < 1.0
 					sel = in_stamp & ~is_target
 					neighbour_dxdys = list(zip(dcol[sel],drow[sel]))
 					if len(neighbour_dxdys) > 0:
@@ -2861,7 +2918,8 @@ class tessreduce():
 				if ncat is not None:
 					dcol = ncat['x'].values - xPix
 					drow = ncat['y'].values - yPix
-					sel = (np.abs(dcol) <= half) & (np.abs(drow) <= half) & (np.hypot(dcol,drow) > 0.5)
+					sel = ((np.abs(dcol) <= half) & (np.abs(drow) <= half)
+						   & (np.hypot(dcol - target_dxdy[0],drow - target_dxdy[1]) >= 1.0))
 					neighbour_dxdys = list(zip(dcol[sel],drow[sel]))
 					if diff:
 						# on a difference cube free neighbours can also pass other sources' misfit
@@ -3192,10 +3250,7 @@ class tessreduce():
 				self.mask = mask
 				_mask_msg = 'assigned source mask'
 			if moving_mask is not None:
-					moving_mask = moving_mask > 0
-					temp = np.zeros_like(self.flux,dtype=int)
-					temp[:,:,:] = self.mask
-					self.mask = temp | moving_mask
+					self._moving_mask = moving_mask > 0		# held apart from self.mask, which stays 2D
 			_times['source mask'] = time.perf_counter() - _t
 			if self.verbose > 0:
 				print(f'{_mask_msg} ({_times["source mask"]:.2f}s)')
@@ -3241,13 +3296,20 @@ class tessreduce():
 					self.fit_shift(smooth=self._smooth_motion)
 				elif self._shift_method == 'sep_core':
 					from .sep_aligner import SepAligner
-					aligner = SepAligner.from_tessreduce(self)
-					aligner.run(verbose=self._joblib_verbose)
-					if self._smooth_motion:
-						aligner.smooth_shift(time=self.mjd,
-											 gap_thresh=0.5, # days
-											 update_shift=True)
-					self.shift = aligner.shift
+					try:
+						aligner = SepAligner.from_tessreduce(self)
+						aligner.run(verbose=self._joblib_verbose)
+						if self._smooth_motion:
+							aligner.smooth_shift(time=self.mjd,
+												 gap_thresh=0.5, # days
+												 update_shift=True)
+						self.shift = aligner.shift
+					except RuntimeError as err:
+						# too few usable stars to measure shifts (e.g. a sparse or saturated field): carry on
+						# unaligned rather than abandoning the reduction
+						warnings.warn(f'{err}; continuing without image alignment')
+						self.align = False
+						self.shift = np.zeros((len(self.flux),2))
 				else:
 					m = f'Shift method {self._shift_method} is not supported, choose from:\ncentroid\ndifference\nsep_core'
 					raise ValueError(m)
@@ -3356,10 +3418,7 @@ class tessreduce():
 				#mask = convolve(self.mask,np.ones((3,3))) > 1
 				#elf.mask = mask
 				if moving_mask is not None:
-					moving_mask = moving_mask > 0
-					temp = np.zeros_like(self.flux,dtype=int)
-					temp[:,:,:] = self.mask
-					self.mask = temp | moving_mask
+					self._moving_mask = moving_mask > 0		# held apart from self.mask, which stays 2D
 				_times['difference imaging setup'] = time.perf_counter() - _t
 				if self.verbose > 0:
 					print(f'diff setup done ({_times["difference imaging setup"]:.2f}s)')
@@ -3398,7 +3457,7 @@ class tessreduce():
 				_t = time.perf_counter()
 				if self.verbose > 0:
 					print('field calibration...')
-				self.field_calibrate()
+				self.field_calibrate_scene()
 				_times['field calibration'] = time.perf_counter() - _t
 				if self.verbose > 0:
 					print(f'field calibration done ({_times["field calibration"]:.2f}s)')
@@ -4311,7 +4370,7 @@ class tessreduce():
 
 		return
 
-	def field_calibrate_scene(self,catalog='ps1',mag_lo=None,mag_hi=None,plot=False,**kwargs):
+	def field_calibrate_scene(self,catalog='gaia',mag_lo=None,mag_hi=None,plot=False,**kwargs):
 		"""
 		Scene-modelling photometric calibration.
 
@@ -4395,7 +4454,7 @@ class tessreduce():
 			zp = self.zp
 			zp_e = self.zp_e
 		elif (zp is None) & (self.zp is None):
-			self.field_calibrate()
+			self.field_calibrate_scene()
 			zp = self.zp
 			zp_e = self.zp_e
 
@@ -4456,7 +4515,7 @@ class tessreduce():
 			zp_e = self.zp_e
 		elif (zp is None) & (self.zp is None):
 			print('Calculating field star zeropoint')
-			self.field_calibrate()
+			self.field_calibrate_scene()
 			zp = self.zp
 			zp_e = self.zp_e
 

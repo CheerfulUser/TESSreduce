@@ -195,9 +195,10 @@ def _background2d_frame(frame, box_size, filter_size, sigma, maxiters, mask=None
 		return np.full_like(frame, np.nanmedian(frame))
 
 def parallel_background2d(cube, box_size=5, filter_size=3, sigma=3, maxiters=5, n_jobs=-1, mask=None, backend='loky', verbose=0):
+	masks = mask if np.ndim(mask) == 3 else [mask] * len(cube)   # 3D mask: one per frame
 	return np.array(Parallel(n_jobs=n_jobs, backend=backend, verbose=verbose)(
-		delayed(_background2d_frame)(frame, box_size, filter_size, sigma, maxiters, mask)
-		for frame in cube))
+		delayed(_background2d_frame)(frame, box_size, filter_size, sigma, maxiters, mk)
+		for frame, mk in zip(cube, masks)))
 
 def Smooth_bkg(data, gauss_smooth=0, interpolate=False, extrapolate=True):
 	"""
