@@ -146,7 +146,7 @@ class tessreduce():
 			  	 flux=None,mjd=None,wcs=None,camera=None,ccd=None,shifts=None,
 				 reduce=True,align=True,diff=True,corr_correction=False,kernel_match=False,calibrate=True,sourcehunt=True,
 				 phot_method='scene',imaging=False,parallel=True,num_cores=-1,backend='loky',diagnostic_plot=False,plot=True,
-				 savename=None,quality_bitmask='hard',cache_dir=None,cache=True,catalogue_path=False,
+				 savename=None,quality_bitmask='default',cache_dir=None,cache=True,catalogue_path=False,
 				 shift_method='sep_core',use_error_image=False,prf_path=None,verbose=1,col_offset=0,
 				 bkg_temporal_window=501,ref_ind=None,ref_type='stack',ref_time_window=2,vector_path=None,refine_shifts=True,
 				 smooth_motion=False,orbit_ref=False,bkg_gauss_sigma=4,create_lc=True,center_mask=True,timing=False):
@@ -3133,26 +3133,35 @@ class tessreduce():
 			orbs, counts = np.unique(segments, return_counts=True)
 			print(f'Orbit ref subtraction: {dict(zip(orbs, counts))} frames per orbit')
 
-	def kernel_matching(self,size=7,diff=True):
-		from .delta_function_fitting import parallel_delta_diff
-		if diff:
-			flux = deepcopy(self.flux + self.ref)
-		else:
-			flux = deepcopy(self.flux)
-		mask = self.mask == 1 
+	def kernel_matching(self,size=5,diff=True,target_radius=4):
+		"""
+		Match the reference PSF to each frame with a delta-function basis kernel (Bramich 2008) and re-subtract.
+		The kernel is fitted on source pixels in the reference, excluding the target and the strap columns, so
+		changes in PSF shape between frames (e.g. after re-acquisition at an orbit start) are removed from the
+		difference images without absorbing the target's own flux.
 
-		if self.parallel:
-			d, kernel = zip(*Parallel(n_jobs=self.num_cores, backend=self.backend, verbose=self._joblib_verbose)(delayed(parallel_delta_diff)(frame,self.ref,mask,size) for frame in flux))
-		else:
-			d = []
-			kernel = []
-			for frame in flux:
-				tmp = parallel_delta_diff(frame,self.ref,mask,size)
-				d += [tmp[0]]
-				kernel += [tmp[1]]
-		d = np.array(d)
-		self.delta_kernel = np.array(kernel)
-		self.flux = d
+		Parameters
+		----------
+		size : int, optional
+			Kernel width in pixels. The default is 5.
+		diff : bool, optional
+			If True self.flux holds difference images and the reference is added back before matching.
+		target_radius : float, optional
+			Pixels within this distance of the target are excluded from the kernel fit. The default is 4.
+		"""
+		from .delta_function_fitting import match_kernels
+		images = self.flux + self.ref if diff else deepcopy(self.flux)
+		ny, nx = self.ref.shape
+		h = size // 2
+		x, y = self.wcs.all_world2pix(self.ra, self.dec, 0)
+		yy, xx = np.mgrid[:ny, :nx]
+		fit_pix = ((self.mask & 1) > 0) & ((self.mask & 4) == 0)
+		fit_pix &= np.hypot(xx - float(x), yy - float(y)) > target_radius
+		fit_pix &= (yy >= h) & (yy < ny - h) & (xx >= h) & (xx < nx - h)
+		d, kernel, bkg = match_kernels(images, self.ref, fit_pix, size=size)
+		self.delta_kernel = kernel
+		self.kernel_bkg = bkg
+		self.flux = d if diff else d + self.ref
 
 
 	def reduce(self, aper = None, align = None, parallel = None, calibrate=None,
@@ -4520,7 +4529,7 @@ class tessreduce():
 			zp_e = self.zp_e
 
 		if flux_type.lower() == 'mjy':
-			flux_zp = 8.4
+			flux_zp = 16.4
 		elif flux_type.lower() == 'jy':
 			flux_zp = 8.9
 		elif (flux_type.lower() == 'erg') | (flux_type.lower() == 'cgs'):
@@ -4544,7 +4553,7 @@ class tessreduce():
 
 
 		if flux_type.lower() == 'mjy':
-			self.zp = self.zp * 0 + 8.4
+			self.zp = self.zp * 0 + 16.4
 			self.zp_e = 0
 			self.lc_units = 'mJy'
 		if flux_type.lower() == 'jy':
